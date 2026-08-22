@@ -87,9 +87,12 @@ Work in progress. What's in and working:
 - [x] Rooftops you can ride a lift to and walk on
 - [x] Collision, traffic that stops at junctions, crowds that gather
 - [x] Baked lighting, canal reflections, animated neon
-- [x] Live-generated modal-jazz soundtrack
+- [x] Live-generated modal-jazz soundtrack, spatial — it plays from THE BLUE ROOM, a jazz bar you can walk into in every city
+- [x] Two-tier renderer: detailed raycast to 46 units, cheap far skyline out to 120
+- [x] Smoothed mouse/key look (camera eases toward a target orientation)
+- [x] Matrix-style boot sequence that constructs the view column by column
 - [ ] Facade readability at close range — still tuning
-- [ ] Enterable interiors (needs a ceiling plane in the renderer)
+- [ ] More interiors beyond the bar (shops, lobbies)
 - [ ] Day/night cycle — built, currently held at night on purpose
 
 ## License
