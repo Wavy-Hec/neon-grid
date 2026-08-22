@@ -851,6 +851,10 @@ function mkProp(x,y,kind){
              "A hundred paper tags, each with a name the city forgot."];
     e.h=0.9;e.glow=1;
     e.light=mkLight(x,y,5,[255,200,150],.95,4,1.6);
+  }else if(kind==='lift'){
+    e.ch=C_('I');e.col=[190,235,255];e.name='SERVICE LIFT';e.prompt='RIDE';
+    e.h=1.5;e.glow=1;
+    e.light=mkLight(x,y,5,[150,215,255],.9,1,2.6);
   }else if(kind==='fixer'){
     e.ch=C_('$');e.col=[255,205,90];e.name=pick(NAMES);e.prompt='TALK';
     e.lines=["\"Everything's for sale. Even the stuff that isn't.\"",
