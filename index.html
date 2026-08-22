@@ -744,6 +744,7 @@ function carveBar(){
   const dx=bx0+2;
   set(dx,dWall,G.SP,[64,48,34],0); T.hgt[dWall*W+dx]=0;        /* doorway */
   for(let xx=bx0+2;xx<=bx1-2;xx++){                             /* counter */
+    if(xx===dx) continue;          /* pass-through in line with the door */
     set(xx,bIn,G.S2,[92,58,34],SOLID); setH(xx,bIn,xx,bIn,0.9);
     T.wc[bIn*W+xx]=0;
   }
