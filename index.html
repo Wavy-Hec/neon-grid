@@ -147,7 +147,7 @@
       <div><kbd>Shift</kbd> run &nbsp; <kbd>E</kbd> interact with anything that glows</div>
       <div class="r" style="margin:-4px 0 4px 32px">find a <b>service lift</b> (I) and ride it — then look down</div>
       <div><kbd>N</kbd> new city &nbsp; <kbd>B</kbd> bloom &nbsp; <kbd>R</kbd> rain &nbsp; <kbd>F</kbd> fps</div>
-      <div><kbd>M</kbd> music &nbsp;<span class="r">— a live modal-jazz trio, generated bar by bar</span></div>
+      <div><kbd>M</kbd> mute &nbsp;<span class="r">— somewhere out there is a jazz bar. Follow the sound of the trumpet; the blue sign marks the door.</span></div>
       <div><kbd>-</kbd><kbd>=</kbd> resolution &nbsp; <kbd>?</kbd> help &nbsp; <kbd>Esc</kbd> close</div>
       <div style="margin-top:14px" class="r">
         Running rough? Press <kbd>-</kbd> for a coarser grid or <kbd>B</kbd> to kill the bloom.
@@ -628,6 +628,7 @@ function genCity(seed){
   }
 
   populate(vr,hr);
+  carveBar();
   bakeLight();
   buildMinimap();
 }
@@ -700,6 +701,65 @@ function plaza(x0,y0,x1,y1,D){
     for(let k=0;k<3&&sx+k<=x1;k++){ set(sx+k,sy,G.S2,col,SOLID|EMIT); setH(sx+k,sy,sx+k,sy,1.1); }
     mkLight(sx+1,sy,ri(6,9),col,1.3,chance(.3)?2:1,rf(2,6));
     if(walkable(sx+1,sy+1)) ents.push(mkProp(sx+1,sy+1,'food'));
+  }
+}
+let barRoom=null;
+function inBar(){
+  if(!barRoom||P.roof>0) return false;
+  return P.x>=barRoom.x0&&P.x<=barRoom.x1+1&&P.y>=barRoom.y0&&P.y<=barRoom.y1+1;
+}
+/* THE BLUE ROOM - the one door in the city you can actually walk through.
+   A pocket carved out of an existing building: wood floor, a counter, warm
+   lamps, a barkeep, patrons, and the band. The tall shell stays, so inside
+   reads as a dim atrium with the city's rain far overhead. */
+function carveBar(){
+  barRoom=null;
+  const x0s=ri(10,W-24), y0s=ri(10,H-20);
+  outer:
+  for(let k=0;k<W*H;k++){
+    const x=10+((x0s+k*7)%(W-24)), y=10+((y0s+(k>>3)*5)%(H-20));
+    for(let yy=y;yy<=y+6;yy++)for(let xx=x;xx<=x+8;xx++)
+      if(!(T.flag[yy*W+xx]&SOLID)) continue outer;
+    let street=false;
+    for(let xx=x+2;xx<=x+6;xx++) if(flagAt(xx,y+7)&(ROAD|WALK)) street=true;
+    if(!street) continue;
+    const bx0=x,by0=y,bx1=x+8,by1=y+6;
+    /* shell keeps its height; suppress windows on it */
+    for(let yy=by0;yy<=by1;yy++)for(let xx=bx0;xx<=bx1;xx++){
+      if(xx===bx0||xx===bx1||yy===by0||yy===by1){ T.wc[yy*W+xx]=0; continue; }
+      set(xx,yy,G.SP,[52+ri(-4,4),40+ri(-4,4),30+ri(-3,3)],0);   /* wood */
+    }
+    const dx=bx0+4;
+    set(dx,by1,G.SP,[64,48,34],0); T.hgt[by1*W+dx]=0;            /* doorway */
+    for(let xx=bx0+2;xx<=bx1-2;xx++){                             /* counter */
+      set(xx,by0+2,G.S2,[92,58,34],SOLID); setH(xx,by0+2,xx,by0+2,0.9);
+      T.wc[(by0+2)*W+xx]=0;
+    }
+    mkLight(bx0+2,by1-2,4,[255,170,96],.9,4,1.7);
+    mkLight(bx1-2,by1-2,4,[255,170,96],.9,4,1.7);
+    mkLight(bx0+2,by0+1,4,[140,180,255],.85,1,1.6);              /* stage */
+    mkLight(dx,by1+1,6,[110,160,255],1.1,1,2.2);                 /* spill */
+    const li=mkLight(dx,by1+0.5,9,[100,170,255],1.5,1,2.6);
+    const word='BLUE';
+    for(let k2=0;k2<4;k2++) set(bx1-4+k2,by1,word.charCodeAt(k2),[100,170,255],EMIT|SOLID,li);
+    /* barkeep behind the counter */
+    const bk=mkProp(bx0+3,by0+1,'fixer');
+    bk.name='BARKEEP'; bk.ch=C_('&'); bk.col=[228,200,170];
+    bk.lines=['"House rule: the trumpet talks, you listen."',
+              '"Rain like this is good for business. Nobody leaves."',
+              '"The band? They only know one tune. It never ends and it never repeats."'];
+    ents.push(bk);
+    /* patrons at the counter */
+    for(let i2=0;i2<4;i2++){
+      const px2=bx0+2+((i2*2)%5), py2=by0+3+(i2%2);
+      ents.push({kind:'npc',x:px2+.5,y:py2+.5,ch:C_('&'),
+        col:hsl(215+ri(-25,25),.16,.34),name:pick(NAMES),prompt:'TALK',
+        lines:[pick(BARKS)],h:0.9,zoff:0,solid:true,rad:0.20,
+        draw:{x:bx0+3.5,y:by0+3.5},vx:0,vy:0,spd:0.5,t:rnd()*3});
+    }
+    barRoom={x0:bx0+1,y0:by0+1,x1:bx1-1,y1:by1-1,
+             cx:(bx0+bx1)/2,cy:(by0+by1)/2,door:{x:dx,y:by1}};
+    return;
   }
 }
 function roadNear(x,y,dx,dy){
@@ -1153,15 +1213,20 @@ if(('ontouchstart' in window)||navigator.maxTouchPoints>0){
 /* ══════════════════════════════════════════════════════════════════
    7. audio
    ══════════════════════════════════════════════════════════════════ */
-let AC=null,masterGain=null,rainGain=null,musicGain=null,noiseBuf=null;
+let AC=null,masterGain=null,rainGain=null,musicGain=null,musicLP=null,noiseBuf=null;
+let dly=null,dlyMix=null;
 let barT=0,bar=0,schedId=null;
 
-/* An original modal-jazz bed, generated live — walking bass, brushed ride
-   and a sparse muted-trumpet line over D dorian. Written in that idiom
-   rather than reproducing any recording. */
-const SCALE=[0,2,3,5,7,9,10];                 /* dorian */
-const ROOT=146.83/2;                          /* D2 */
-const BPM=74, BEAT=60/BPM, SWING=0.62;
+/* A sparse modal bed in the Kind-of-Blue idiom. Slow two-feel bass, brushes
+   whispering on 2 and 4, a quartal piano stab every couple of bars, and a
+   harmon-muted trumpet that speaks rarely and mostly falls. Space is the
+   instrument: everything runs through a dark feedback delay. The band lives
+   inside THE BLUE ROOM - out on the street you only catch it muffled
+   through the wall, growing as you find the door. Original material in that
+   idiom; no recordings, no samples. */
+const SCALE=[0,2,3,5,7,9,10];              /* dorian */
+const ROOT=146.83/2;                       /* D2 */
+const BPM=58, BEAT=60/BPM;
 const deg=n=>ROOT*Math.pow(2,(SCALE[((n%7)+7)%7]+12*Math.floor(n/7))/12);
 
 function env(node,t,a,d,peak){
@@ -1170,108 +1235,121 @@ function env(node,t,a,d,peak){
   g.exponentialRampToValueAtTime(peak,t+a);
   g.exponentialRampToValueAtTime(0.0001,t+a+d);
 }
-function bass(t,n){
+function out(node,send){
+  node.connect(musicGain);
+  if(send>0&&dly){const g=AC.createGain();g.gain.value=send;node.connect(g);g.connect(dly);}
+}
+function bass(t,n,dur){
   const o=AC.createOscillator(),g=AC.createGain(),lp=AC.createBiquadFilter();
   o.type='triangle';o.frequency.setValueAtTime(deg(n),t);
-  lp.type='lowpass';lp.frequency.value=420;
-  env(g,t,0.02,BEAT*0.85,0.34);
-  o.connect(lp);lp.connect(g);g.connect(musicGain);o.start(t);o.stop(t+BEAT*1.1);
+  lp.type='lowpass';lp.frequency.value=300;
+  env(g,t,0.04,dur,0.24);
+  o.connect(lp);lp.connect(g);out(g,0.06);o.start(t);o.stop(t+dur+0.2);
 }
 function ride(t,vel){
-  const s=AC.createBufferSource(),g=AC.createGain(),hp=AC.createBiquadFilter();
-  s.buffer=noiseBuf;s.playbackRate.value=1.6+Math.random()*0.3;
-  hp.type='highpass';hp.frequency.value=6200;
-  env(g,t,0.006,0.16,0.05*vel);
-  s.connect(hp);hp.connect(g);g.connect(musicGain);s.start(t);s.stop(t+0.3);
+  const src=AC.createBufferSource(),g=AC.createGain(),hp=AC.createBiquadFilter();
+  src.buffer=noiseBuf;src.playbackRate.value=1.4+Math.random()*0.2;
+  hp.type='highpass';hp.frequency.value=7000;
+  env(g,t,0.008,0.22,0.020*vel);
+  src.connect(hp);hp.connect(g);out(g,0.15);src.start(t);src.stop(t+0.35);
 }
-function brush(t){
-  const s=AC.createBufferSource(),g=AC.createGain(),bp=AC.createBiquadFilter();
-  s.buffer=noiseBuf;s.playbackRate.value=0.7;
-  bp.type='bandpass';bp.frequency.value=2100;bp.Q.value=0.6;
-  env(g,t,0.05,0.34,0.028);
-  s.connect(bp);bp.connect(g);g.connect(musicGain);s.start(t);s.stop(t+0.5);
+function chord(t,root){
+  /* stacked fourths, the So-What voicing shape, barely breathed */
+  for(const iv of [0,3,6,9]){
+    const o=AC.createOscillator(),g=AC.createGain();
+    o.type='sine';o.frequency.setValueAtTime(deg(root+iv)*2,t);
+    env(g,t,0.35,3.8,0.020);
+    o.connect(g);out(g,0.4);o.start(t);o.stop(t+4.4);
+  }
 }
 function horn(t,n,dur){
   const o=AC.createOscillator(),g=AC.createGain(),bp=AC.createBiquadFilter(),
         vib=AC.createOscillator(),vg=AC.createGain();
   o.type='sawtooth';o.frequency.setValueAtTime(deg(n)*4,t);
-  vib.type='sine';vib.frequency.value=5.2;vg.gain.value=3.4;
+  vib.type='sine';vib.frequency.value=4.6;
+  vg.gain.setValueAtTime(0,t);
+  vg.gain.linearRampToValueAtTime(2.6,t+dur*0.5);   /* vibrato blooms late */
   vib.connect(vg);vg.connect(o.frequency);
-  bp.type='bandpass';bp.frequency.value=1150;bp.Q.value=2.6;   /* harmon-mute colour */
+  bp.type='bandpass';bp.frequency.value=1100;bp.Q.value=2.8;
   g.gain.setValueAtTime(0.0001,t);
-  g.gain.exponentialRampToValueAtTime(0.12,t+0.07);
-  g.gain.setValueAtTime(0.12,t+dur*0.7);
+  g.gain.exponentialRampToValueAtTime(0.065,t+0.14);
+  g.gain.setValueAtTime(0.065,t+Math.max(0.14,dur*0.6));
   g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
-  o.connect(bp);bp.connect(g);g.connect(musicGain);
-  o.start(t);vib.start(t);o.stop(t+dur+0.05);vib.stop(t+dur+0.05);
-}
-function rhodes(t,n){
-  for(const iv of [0,2,4,6]){
-    const o=AC.createOscillator(),g=AC.createGain();
-    o.type='sine';o.frequency.setValueAtTime(deg(n+iv)*2,t);
-    env(g,t,0.12,2.2,0.035);
-    o.connect(g);g.connect(musicGain);o.start(t);o.stop(t+2.6);
-  }
+  o.connect(bp);bp.connect(g);out(g,0.55);
+  o.start(t);vib.start(t);o.stop(t+dur+0.1);vib.stop(t+dur+0.1);
 }
 function scheduleBar(t){
-  const walk=[0,4,2,6,0,3,4,1][bar%8];
-  for(let b=0;b<4;b++){
-    const bt=t+b*BEAT;
-    bass(bt,walk+[0,1,2,-1][b]);
-    ride(bt,b%2?0.7:1);
-    if(b===0||b===2) ride(bt+BEAT*SWING,0.5);
-    if(b===1||b===3) brush(bt);
+  const off=((bar>>2)&1);                    /* 4 bars home, 4 lifted a step */
+  if(bar%4===3){
+    for(let b=0;b<4;b++) bass(t+b*BEAT,off+b,BEAT*0.9);       /* walk-up */
+  }else{
+    bass(t,off,BEAT*1.85);
+    bass(t+2*BEAT,off+(Math.random()<0.3?4:0),BEAT*1.85);     /* two-feel */
   }
-  if(bar%4===0) rhodes(t,walk);
-  if(bar%2===1&&Math.random()<0.75){
-    let n=7+Math.floor(Math.random()*5);
-    const phrase=2+Math.floor(Math.random()*4);
-    let off=Math.random()<0.5?0:BEAT;
-    for(let i=0;i<phrase;i++){
-      const d=(Math.random()<0.35?BEAT*0.5:BEAT*0.75);
-      horn(t+off,n,d*0.92);
-      off+=d; n+=[-2,-1,1,1,2][Math.floor(Math.random()*5)];
-      if(off>BEAT*3.4)break;
+  ride(t+BEAT,0.8); ride(t+3*BEAT,1);
+  if(Math.random()<0.25) ride(t+2*BEAT+BEAT*0.66,0.45);
+  if(bar%2===0) chord(t+BEAT*(Math.random()<0.5?1.5:0.5),off);
+  if(bar%4===1&&Math.random()<0.5){
+    let n=9+((Math.random()*4)|0);
+    let o2=BEAT*(0.5+Math.random());
+    const notes=2+((Math.random()*3)|0);
+    for(let i=0;i<notes;i++){
+      const d=BEAT*(1.2+Math.random()*1.6);
+      horn(t+o2,n,d*0.92);
+      o2+=d+(i?BEAT*0.25:0);
+      n-=Math.random()<0.75?1:2;             /* phrases mostly fall */
+      if(o2>BEAT*3.6) break;
     }
   }
   bar++;
 }
 function pump(){
   if(!AC||!optSound)return;
-  /* Catch-up clamp. After a sleep/resume or a long stall, barT can fall far
-     behind and the loop schedules every missed bar at a past timestamp —
-     they all fire at once as one burst. */
   if(barT<AC.currentTime) barT=AC.currentTime+0.05;
-  while(barT<AC.currentTime+1.2){ scheduleBar(barT); barT+=BEAT*4; }
+  while(barT<AC.currentTime+1.6){ scheduleBar(barT); barT+=BEAT*4; }
 }
 function initAudio(){
   if(AC)return;
   try{AC=new (window.AudioContext||window.webkitAudioContext)();}catch(e){return;}
   masterGain=AC.createGain();masterGain.gain.value=0;masterGain.connect(AC.destination);
-  musicGain=AC.createGain();musicGain.gain.value=0.85;musicGain.connect(masterGain);
+
+  /* music bus: instruments -> musicGain -> lowpass (the wall) -> master */
+  musicGain=AC.createGain();musicGain.gain.value=0.15;
+  musicLP=AC.createBiquadFilter();musicLP.type='lowpass';musicLP.frequency.value=900;
+  musicGain.connect(musicLP);musicLP.connect(masterGain);
+
+  /* the room: a dark feedback delay everything leans on */
+  dly=AC.createDelay(1.2);dly.delayTime.value=0.46;
+  const fb=AC.createGain();fb.gain.value=0.34;
+  const dlp=AC.createBiquadFilter();dlp.type='lowpass';dlp.frequency.value=2100;
+  dly.connect(dlp);dlp.connect(fb);fb.connect(dly);
+  dlyMix=AC.createGain();dlyMix.gain.value=0.55;
+  dlp.connect(dlyMix);dlyMix.connect(musicGain);
 
   const len=AC.sampleRate*2;
   noiseBuf=AC.createBuffer(1,len,AC.sampleRate);
   const d=noiseBuf.getChannelData(0);
   for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*.5;
 
+  /* rain: quiet, dark, and it breathes with the weather instead of hissing
+     nonstop - mist is close to silence */
   const noise=AC.createBufferSource();noise.buffer=noiseBuf;noise.loop=true;
-  const bp=AC.createBiquadFilter();bp.type='bandpass';bp.frequency.value=2400;bp.Q.value=.4;
-  rainGain=AC.createGain();rainGain.gain.value=.05;
+  const bp=AC.createBiquadFilter();bp.type='bandpass';bp.frequency.value=1500;bp.Q.value=.35;
+  rainGain=AC.createGain();rainGain.gain.value=.01;
   noise.connect(bp);bp.connect(rainGain);rainGain.connect(masterGain);noise.start();
 
-  /* room tone under the band */
-  const sub=AC.createGain();sub.gain.value=.05;
+  /* room tone, felt more than heard */
+  const sub=AC.createGain();sub.gain.value=.022;
   for(const f of [55,55.4]){
     const o=AC.createOscillator();o.type='sawtooth';o.frequency.value=f;
-    const lp=AC.createBiquadFilter();lp.type='lowpass';lp.frequency.value=140;
+    const lp=AC.createBiquadFilter();lp.type='lowpass';lp.frequency.value=120;
     o.connect(lp);lp.connect(sub);o.start();
   }
   sub.connect(masterGain);
 
   barT=AC.currentTime+0.15;
   if(schedId) clearInterval(schedId);
-  schedId=setInterval(pump,260);
+  schedId=setInterval(pump,300);
 }
 function toggleSound(){
   initAudio();
@@ -1312,7 +1390,16 @@ function update(dt){
   clock=(clock+dt*1.6)%1440;
   updateTOD();
   rainPow=clamp(.36+.44*Math.sin(time*0.035)+.18*Math.sin(time*0.11),0,1);
-  if(rainGain&&AC) rainGain.gain.value=.02+rainPow*.05;
+  if(rainGain&&AC) rainGain.gain.value=rainPow*rainPow*0.045;
+  /* the band plays in THE BLUE ROOM: full and open inside, muffled through
+     the wall nearby, gone a couple of blocks away */
+  if(AC&&musicGain&&musicLP){
+    const inB=inBar();
+    const d=barRoom?Math.hypot(P.x-barRoom.cx,P.y-barRoom.cy):60;
+    const tgt=optSound?(inB?0.95:clamp(0.5-d*0.016,0.04,0.4)):0;
+    musicGain.gain.setTargetAtTime(tgt,AC.currentTime,0.5);
+    musicLP.frequency.setTargetAtTime(inB?15000:clamp(2400-d*60,420,2000),AC.currentTime,0.5);
+  }
 
   /* turn */
   let turn=0;
@@ -1383,7 +1470,7 @@ function update(dt){
   hudTimer-=dt;
   if(hudTimer<=0){
     hudTimer=.2;
-    elHud.d.textContent=DISTRICTS[dmap[clamp(Math.floor(P.y),0,H-1)*W+clamp(Math.floor(P.x),0,W-1)]].name;
+    elHud.d.textContent=inBar()?'THE BLUE ROOM':DISTRICTS[dmap[clamp(Math.floor(P.y),0,H-1)*W+clamp(Math.floor(P.x),0,W-1)]].name;
     elHud.t.textContent=String(Math.floor(clock/60)).padStart(2,'0')+':'+String(Math.floor(clock%60)).padStart(2,'0');
     elHud.r.textContent=rainPow<.3?'MIST':(rainPow<.6?'STEADY':'HEAVY');
     elHud.c.textContent=P.cred;
