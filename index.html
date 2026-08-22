@@ -722,7 +722,7 @@ function carveBar(){
      the city is too dense to offer one. Door on whichever of south/north
      faces street, walkway or alley. */
   let bw=0,bh=0,cands=null;
-  for(const wh of [[10,7],[8,6]]){
+  for(const wh of [[10,7],[9,6],[8,6]]){
     const w2=wh[0],h2=wh[1],c2=[];
     for(let y=6;y<H-h2-2;y++){
       row:
@@ -769,7 +769,7 @@ function carveBar(){
 
   /* candle-lit tables, kept off the door corridor — a solid obstacle only
      goes where the room stays walkable around it */
-  const tXs=bw>=10?[bx0+4,bx0+6]:[bx0+4];
+  const tXs=bw>=9?[bx0+4,bx0+6]:[bx0+4];
   for(const txx of tXs){
     set(txx,mid,G.S2,[74,46,30],SOLID); setH(txx,mid,txx,mid,0.55);
     T.wc[mid*W+txx]=0;
@@ -794,7 +794,7 @@ function carveBar(){
   ents.push(bk);
 
   /* the trio, crammed into the front corner the way basement clubs do */
-  const stage=bw>=10?[[bx1-1,dIn,'BASS','"...", he does not look up. The bassline answers for him.'],
+  const stage=bw>=9?[[bx1-1,dIn,'BASS','"...", he does not look up. The bassline answers for him.'],
                      [bx1-2,dIn,'DRUMS','"Brushes only after midnight. House rule number two."'],
                      [bx1-1,mid,'TRUMPET','He lowers the harmon mute an inch. "Requests? The tune decides, friend."']]
                    :[[bx1-1,dIn,'BASS','"...", he does not look up. The bassline answers for him.'],
@@ -815,12 +815,13 @@ function carveBar(){
   seats.push([bx0+1,bIn+dyO]);                    /* standing at the rail */
   for(const sPos of seats){
     if(!walkable(sPos[0],sPos[1])) continue;
+    if(sPos[0]===bx1-1&&sPos[1]===mid) continue; /* trumpet stands there */
     ents.push({kind:'npc',x:sPos[0]+.5,y:sPos[1]+.5,ch:C_('&'),
       col:hsl(215+ri(-25,25),.16,.34),name:pick(NAMES),prompt:'TALK',
       lines:[pick(BARLINES)],h:0.9,zoff:0,solid:true,rad:0.20,
       draw:{x:sPos[0]+.5,y:sPos[1]+.5},vx:0,vy:0,spd:0,t:1e9});
   }
-  const wander=bw>=10?2:1;
+  const wander=bw>=9?2:1;
   for(let i2=0;i2<wander;i2++){
     const wx2=bx0+1+i2, wy2=dIn;
     if(!walkable(wx2,wy2)) continue;
