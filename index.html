@@ -71,7 +71,8 @@
   #help kbd{display:inline-block;min-width:22px;text-align:center;border:1px solid var(--edge);padding:0 5px;margin-right:6px;color:#fff;background:rgba(94,242,255,.07)}
   #help .r{color:var(--dim)}
 
-  #boot{position:absolute;inset:0;z-index:20;display:grid;place-items:center;background:#01030a;cursor:pointer}
+  #boot{position:absolute;inset:0;z-index:20;display:grid;place-items:center;cursor:pointer;
+    background:radial-gradient(120% 90% at 50% 45%,rgba(1,3,10,.28) 0%,rgba(1,3,10,.66) 100%)}
   #boot .inner{text-align:center;padding:24px;user-select:none;max-width:min(560px,86vw)}
   #boot .mark{
     font-size:clamp(26px,5.2vw,58px);font-weight:300;
@@ -85,6 +86,7 @@
   #boot .wip{margin-top:12px;font-size:9.5px;letter-spacing:.28em;text-transform:uppercase;
     color:#7a5a3a;border:1px solid rgba(255,180,85,.28);display:inline-block;padding:3px 10px}
   #boot .seed{margin-top:26px;font-size:11px;letter-spacing:.2em;color:var(--amber);opacity:.9}
+  #boot .keys{margin-top:16px;font-size:9px;letter-spacing:.22em;color:#37505c}
   #boot .go{margin-top:34px;font-size:10.5px;letter-spacing:.34em;text-transform:uppercase;color:#43606b;animation:pulse 2.6s ease-in-out infinite}
   @keyframes pulse{0%,100%{opacity:.35}50%{opacity:.9}}
 
@@ -166,6 +168,7 @@
       <div class="wip">work in progress</div>
       <div class="seed" id="bSeed">—</div>
       <div class="go">press any key</div>
+      <div class="keys">w a s d walk &nbsp;&middot;&nbsp; e touch &nbsp;&middot;&nbsp; m mute</div>
     </div>
   </div>
 </div>
@@ -376,7 +379,7 @@ function resize(){
   /* /78 put ~10.6k cells on a 1280x800 laptop and tripped the quality
      governor, which then dropped bloom AND coarsened the grid — auto-ugly.
      Better to start inside the budget than to degrade into it. */
-  const budget=clamp(Math.round(vw*vh/165),2600,8200);
+  const budget=clamp(Math.round(vw*vh/185),2400,7200);
 
   const metrics=f=>{
     const w=Math.max(4,Math.round(measureFont(f)));
@@ -1029,13 +1032,17 @@ const elLog=$('log'),elPrompt=$('prompt'),elTalk=$('talk'),
       elWho=$('tWho'),elTxt=$('tTxt'),elFps=$('fps'),elHelp=$('help');
 
 let logLines=[];
-function say(text,cls){
-  logLines.push({t:text,c:cls||''});
-  if(logLines.length>4) logLines.shift();
+function renderLog(){
   let h='';
   for(const l of logLines)
     h+='<div class="'+l.c+'">'+l.t.replace(/[<>&]/g,m=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[m]))+'</div>';
   elLog.innerHTML=h;
+  elLog.style.display=logLines.length?'block':'none';
+}
+function say(text,cls){
+  logLines.push({t:text,c:cls||'',ts:time});
+  if(logLines.length>3) logLines.shift();
+  renderLog();
 }
 
 let dlg=null;
@@ -1070,8 +1077,8 @@ addEventListener('keydown',e=>{
   if(k==='escape'){ if(dlg) closeDialogue(); else elHelp.style.display='none'; }
   if(k==='?'||k==='/'){elHelp.style.display=elHelp.style.display==='grid'?'none':'grid';e.preventDefault();}
   if(k==='e'||k===' '){ if(dlg) advDialogue(); else interact(); e.preventDefault(); }
-  if(k==='b'){optBloom=!optBloom;say('bloom '+(optBloom?'on':'off'),'sys');}
-  if(k==='r'){optRain=!optRain;say('rain '+(optRain?'on':'off'),'sys');}
+  if(k==='b'){optBloom=!optBloom;}
+  if(k==='r'){optRain=!optRain;}
   if(k==='f'){optFps=!optFps;elFps.style.display=optFps?'block':'none';}
   if(k==='m'){toggleSound();}
   if(k==='n'){newCity();}
@@ -1369,6 +1376,9 @@ function update(dt){
   }
   for(const e of nearEnts) updateEnt(e,dt);
   tickDialogue(dt);
+
+  /* messages fade away instead of squatting in the corner forever */
+  if(logLines.length&&time-logLines[0].ts>8){ logLines.shift(); renderLog(); }
 
   hudTimer-=dt;
   if(hudTimer<=0){
@@ -1803,7 +1813,10 @@ function render(){
          against still resolves into characters. Without it a close wall
          shows less than one storey, no window grid fires, the brightness
          ramp saturates and you get a flat slab of colour. */
-      const tf=clamp(30/dist,7,110);
+      /* Texture scale in power-of-two steps. A continuous 30/dist rescaled
+         the facade grain every frame as you moved, which read as the whole
+         wall swimming and stretching. Discrete steps hold steady. */
+      const tf=clamp(Math.pow(2,Math.round(Math.log2(30/Math.max(0.5,dist)))),8,64);
       /* haze is constant down a wall column — one distance per ray */
       const hz=(1-fog)*HAZE_K, keep=1-hz;
       const hzR=HAZE[0]*hz, hzG=HAZE[1]*hz, hzB=HAZE[2]*hz;
@@ -1847,7 +1860,10 @@ function render(){
              occupied at all, a second which panes on it are lit. Deciding
              per-pane gave confetti with no dark bands — and dark bands are
              the strongest "this is a building" cue there is. */
-          const floorLit=hash3(hitX*11+hitY*29,cv,17)<0.55;
+          /* A lit storey used to run the FULL width of a building - on a
+             long low block that was a glowing stripe wall-to-wall. Segment
+             the decision every 8 panes so light comes in patches. */
+          const floorLit=hash3(hitX*11+hitY*29+(cu>>3)*53,cv,17)<0.55;
           if(pane&&v>1.35&&T.wc[ti]!==0&&floorLit&&hash3(hitX*7+cu,hitY*7+cv,cv)<0.58){
             /* Interior depth: a bright core falling off toward the frame,
                plus a lift toward the head of the pane. A pane filled with
@@ -2296,13 +2312,16 @@ function drawMini(){
    ══════════════════════════════════════════════════════════════════ */
 let last=0,fpsAcc=0,fpsN=0,emaMs=6,tight=0,degrade=0;
 function stepDown(){
+  /* Only ever drop bloom, silently. Coarsening the grid mid-walk rescaled
+     every glyph under the player's feet — that WAS the distortion, and the
+     chatty log line just rubbed it in. */
   degrade++;
-  if(degrade===1){optBloom=false;say('Frame budget tight — bloom off. [B] forces it back.','sys');}
-  else{zoom=clamp(zoom+2,-3,8);resize();say('Frame budget tight — coarser grid. [=] sharpens it.','sys');}
+  optBloom=false;
 }
 function frame(ts){
   requestAnimationFrame(frame);
-  if(!started) return;
+  /* The city renders behind the title screen — a live view sells the game
+     better than any tagline, and the overlay is translucent for it. */
   if(document.hidden){last=ts;return;}
   const dt=clamp((ts-last)/1000||0,0,0.05);
   last=ts;
@@ -2312,10 +2331,8 @@ function frame(ts){
   miniTimer-=dt;
   if(miniTimer<=0){miniTimer=.12;drawMini();}
   emaMs=emaMs*0.92+(performance.now()-t0)*0.08;
-  if(degrade<2){
-    /* Less trigger-happy: 60fps is 16.7ms, so 15.5 fired on any frame that
-       was merely close, and the cure looked worse than the disease. */
-    if(emaMs>21){tight+=dt;if(tight>4){tight=0;stepDown();}}
+  if(degrade<1){
+    if(emaMs>23){tight+=dt;if(tight>4){tight=0;stepDown();}}
     else tight=Math.max(0,tight-dt*0.8);
   }
   if(optFps){
@@ -2364,6 +2381,16 @@ function boot(){
   started=true;
   $('boot').style.display='none';
   say('Rain over '+DISTRICTS[dmap[Math.floor(P.y)*W+Math.floor(P.x)]].name+'. Nobody is waiting for you. Walk.','amb');
+  /* The keypress that boots is the user gesture browsers require, so the
+     jazz bed can start right here. M still mutes. */
+  initAudio();
+  if(AC){
+    if(AC.state==='suspended') AC.resume();
+    optSound=true;
+    masterGain.gain.setTargetAtTime(.5,AC.currentTime,.6);
+    barT=Math.max(barT,AC.currentTime+0.2);
+    pump();
+  }
   say('W/S walk · A/D strafe · arrows or mouse to look · E to touch anything that glows','sys');
   last=performance.now();
 }
