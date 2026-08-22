@@ -112,7 +112,6 @@
   <div id="hud" class="panel">
     <div><span class="k">LOC</span> <span class="dist" id="hDist">—</span></div>
     <div><span class="k">TIME</span> <b id="hTime">00:00</b> <span class="k">RAIN</span> <b id="hRain">—</b></div>
-    <div><span class="k">SHARDS</span> <span class="sh" id="hShard">0 / 0</span></div>
     <div><span class="k">CR</span> <b id="hCred">0</b></div>
   </div>
 
@@ -804,7 +803,6 @@ const BARKS=[
   "Sign says OPEN. Sign has said OPEN for eleven years.",
   "You walk like somebody who still has an address.",
   "Buy something or keep moving, choom. Preferably the first one.",
-  "Every shard you pull off the grid is a minute somebody else lived.",
   "The rain isn't following you. Probably.",
   "Careful. Half the neon out here is load-bearing."
 ];
@@ -853,19 +851,10 @@ function mkProp(x,y,kind){
              "A hundred paper tags, each with a name the city forgot."];
     e.h=0.9;e.glow=1;
     e.light=mkLight(x,y,5,[255,200,150],.95,4,1.6);
-  }else if(kind==='shard'){
-    e.ch=C_('*');e.col=[120,255,255];e.name='DATA SHARD';e.prompt='JACK IN';
-    e.pulse=rnd()*6;e.h=0.4;e.zoff=0.45;e.glow=1;
-    e.light=mkLight(x,y,5,[120,255,255],1.0,1,3.4);
-    shardTotal++;
-  }else if(kind==='lift'){
-    e.ch=C_('I');e.col=[190,235,255];e.name='SERVICE LIFT';e.prompt='RIDE';
-    e.h=1.5;e.glow=1;
-    e.light=mkLight(x,y,5,[150,215,255],.9,1,2.6);
   }else if(kind==='fixer'){
     e.ch=C_('$');e.col=[255,205,90];e.name=pick(NAMES);e.prompt='TALK';
     e.lines=["\"Everything's for sale. Even the stuff that isn't.\"",
-             "\"You find shards? Bring 'em here. I'll pretend to be surprised.\""];
+             "\"Everything in this city is for sale except a way out.\""];
     e.h=0.95;e.glow=1;
     e.light=mkLight(x,y,4,[255,205,90],.8,1,2.4);
   }
@@ -931,7 +920,6 @@ function populate(vr,hr){
   }
   for(const [kind,n] of [['food',34],['vend',34],['term',22],['shrine',12],['fixer',12]])
     for(let i=0;i<n;i++){const s=findOpen((x,y)=>near(x,y)&&roomy(x,y));if(s)ents.push(mkProp(s.x,s.y,kind));}
-  for(let i=0;i<26;i++){const s=findOpen(null);if(s)ents.push(mkProp(s.x,s.y,'shard'));}
 
 
   /* Service lifts: a pavement tile beside a tall building, remembering that
@@ -959,7 +947,7 @@ function populate(vr,hr){
     const s=findOpen(near);if(!s)continue;      /* on pavement, where you'll see them */
     const enf=chance(.09);
     ents.push({kind:'npc',x:s.x+.5,y:s.y+.5,ch:enf?C_('!'):C_('&'),
-      col:enf?[220,80,80]:hsl(215+ri(-25,25),.14,.55),
+      col:enf?[190,70,70]:hsl(215+ri(-25,25),.16,.34),
       name:enf?'ENFORCER':pick(NAMES),prompt:'TALK',lines:[pick(BARKS)],
       h:0.9,zoff:0,solid:true,rad:0.20,draw:null,
       vx:0,vy:0,spd:enf?1.9:rf(1.0,1.9),t:rnd()*2});
@@ -1032,7 +1020,7 @@ let optBloom=true,optRain=true,optFps=false,optSound=false;
 const reduceMotion=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const $=id=>document.getElementById(id);
-const elHud={d:$('hDist'),t:$('hTime'),r:$('hRain'),s:$('hShard'),c:$('hCred')};
+const elHud={d:$('hDist'),t:$('hTime'),r:$('hRain'),c:$('hCred')};
 const elLog=$('log'),elPrompt=$('prompt'),elTalk=$('talk'),
       elWho=$('tWho'),elTxt=$('tTxt'),elFps=$('fps'),elHelp=$('help');
 
@@ -1384,7 +1372,6 @@ function update(dt){
     elHud.d.textContent=DISTRICTS[dmap[clamp(Math.floor(P.y),0,H-1)*W+clamp(Math.floor(P.x),0,W-1)]].name;
     elHud.t.textContent=String(Math.floor(clock/60)).padStart(2,'0')+':'+String(Math.floor(clock%60)).padStart(2,'0');
     elHud.r.textContent=rainPow<.3?'MIST':(rainPow<.6?'STEADY':'HEAVY');
-    elHud.s.textContent=P.shards+' / '+shardTotal;
     elHud.c.textContent=P.cred;
   }
 
@@ -1476,8 +1463,6 @@ function updateEnt(e,dt){
       if(!blocked(P.x,ny)) P.y=ny;
       if(!e.hit){ e.hit=1; say('Clipped by traffic. The driver does not slow down.','hot'); beep(300,.2,.06); }
     }else if(cdx*cdx+cdy*cdy>9) e.hit=0;
-  }else if(e.kind==='shard'){
-    e.pulse+=dt;
   }
 }
 
@@ -1493,16 +1478,6 @@ function findTarget(){
 function interact(){
   const t=findTarget();
   if(!t)return;
-  if(t.kind==='shard'){
-    P.shards++;P.cred+=ri(6,22);
-    let i=ents.indexOf(t);if(i>=0)ents.splice(i,1);
-    i=nearEnts.indexOf(t);if(i>=0)nearEnts.splice(i,1);
-    if(t.light!==undefined){lights[t.light].rad=0;bakeLight();}
-    beep(1180,.10,.06);setTimeout(()=>beep(1560,.12,.05),70);
-    say('Shard absorbed. '+P.shards+' / '+shardTotal+"  ·  someone else's memory, briefly yours.",'amb');
-    if(P.shards===shardTotal) say('Every shard on the grid is yours. The rain does not care.','hot');
-    return;
-  }
   if(t.kind==='lift'){
     if(P.roof>0){
       P.roof=0; P.z=0.5; P.x=t.x; P.y=t.y;
@@ -1890,6 +1865,13 @@ function render(){
             code=WINCH[(wg*WINCH.length)|0];
             const cellK=0.62+wg*0.50;
             r*=cellK; g*=cellK; b*=cellK;
+            /* Up close a single pane covers a big patch of screen and reads
+               as a quilt square. Subdivide with fine mullions so the glass
+               keeps a window grid at any distance. */
+            if(dist<7){
+              const su=(iu*3)%1, sv=(iv*3)%1;
+              if(su<0.16||sv<0.18){ r*=0.22;g*=0.22;b*=0.22; code=G.S2; }
+            }
           }else if(v<1.35&&T.wc[ti]!==0&&streetSide&&
                    hash3(hitX*7,hitY*13,hitSide)<0.72){
             /* Shopfront band. The bottom storey is where you spend the whole
@@ -1925,9 +1907,10 @@ function render(){
                 code=wt2<0.5?G.S1:G.S2;
               }
             }else if(bayU>0.34&&bayU<0.66&&shopH<0.42){
-              const wg=0.30+0.70*Math.max(0,1-v*0.8);
+              const dg=hash3((bayU*tf)|0,(v*tf)|0,bay+9);
+              const wg=(0.30+0.70*Math.max(0,1-v*0.8))*(0.66+dg*0.5);
               r=255*wg;g=196*wg;b=126*wg;                  /* open doorway */
-              code=v<0.22?G.FULL:(hash3(bay,(v*tf)|0,7)<0.5?G.S3:G.S2);
+              code=v<0.22?G.FULL:(dg<0.45?G.S3:(dg<0.8?G.S2:G.S1));
             }else{
               /* Glazing with grain at SCREEN resolution, in glyph AND
                  level. Colour was constant per bay, so one bay up close
@@ -2171,9 +2154,12 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
        past ~95% of viewport height alpha ramps to a 0.25 floor (~19 tone
        steps below full, far above the 1/64 alpha quantum), and past 3.5
        screens you are inside it and nothing is readable, so skip. */
+    /* People fade much sooner and further than props: a pedestrian filling
+       the frame reads as a glitch, not a person. */
     const ov=hh*L1/rows;
-    if(ov>3.5) continue;
-    const nearFade=ov<=0.95?1:Math.max(0.25,1-(ov-0.95)*0.52);
+    const ovCap=figure?2.0:3.5, ovOn=figure?0.55:0.95, ovFloor=figure?0.10:0.25;
+    if(ov>ovCap) continue;
+    const nearFade=ov<=ovOn?1:Math.max(ovFloor,1-(ov-ovOn)*(figure?0.85:0.52));
     const kr=e.col[0]*lr*fog*pulse*nearFade,kg=e.col[1]*lg*fog*pulse*nearFade,kb=e.col[2]*lb*fog*pulse*nearFade;
     const span=Math.max(1,y1-y0);
 
@@ -2219,8 +2205,8 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
           if(v<0.18)      { if(au>0.46) continue; code=G.S3; }
           else if(v<0.30) { if(au>0.62) continue; code=G.S3; }
           else if(v<0.58) { if(au>0.98) continue; code=G.S3; }
-          else if(v<0.66) { if(au>0.66) continue; code=G.S2; }
-          else            { if(au>0.62||au<0.16) continue; code=G.S2; }
+          else if(v<0.66) { if(au>0.66) continue; code=G.S3; }
+          else            { if(au>0.62||au<0.16) continue; code=G.S3; }
         }else if(shaped){
           /* Same (u,v) trick as the silhouette, per prop kind - every other
              kind filled its whole box and read as a slab up close. */
@@ -2253,8 +2239,9 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
           /* Texture for big fills: drop ~8% of cells and knock ~20% down
              one FULL ramp glyph - a 25-point fill change. Alpha grain under
              the 1/64 tone quantum was invisible; glyph steps are not. */
+          /* texture by glyph step only - punching random holes made people
+             look moth-eaten, which the user called out immediately */
           const gz=hash3((u+1)*3.5,v*9,gseed);
-          if(gz<0.08) continue;
           if(gz>0.80) code=code===G.FULL?G.S3:(code===G.S3?G.S2:G.S1);
         }
         put(code,xp,ys[y],kr,kg,kb);
@@ -2288,8 +2275,6 @@ function buildMinimap(){
 function drawMini(){
   mctx.clearRect(0,0,W,H);
   mctx.drawImage(miniBase,0,0);
-  mctx.fillStyle='rgba(255,63,181,.9)';
-  for(const e of ents) if(e.kind==='shard') mctx.fillRect(Math.floor(e.x)-1,Math.floor(e.y)-1,2,2);
   /* view cone */
   mctx.strokeStyle='rgba(94,242,255,.45)';mctx.lineWidth=1;
   mctx.beginPath();
@@ -2356,7 +2341,7 @@ function newCity(){
   closeDialogue();
   $('bSeed').textContent='seed / '+s;
   say('New city compiled from seed "'+s+'".','sys');
-  say('Neon on. '+shardTotal+' shards scattered. Walk.','amb');
+  say('Neon on. The streets are full. Walk.','amb');
 }
 
 let params={};
@@ -2374,7 +2359,7 @@ function boot(){
   if(started)return;
   started=true;
   $('boot').style.display='none';
-  say('Rain over '+DISTRICTS[dmap[Math.floor(P.y)*W+Math.floor(P.x)]].name+'. '+shardTotal+' shards on the grid.','amb');
+  say('Rain over '+DISTRICTS[dmap[Math.floor(P.y)*W+Math.floor(P.x)]].name+'. Nobody is waiting for you. Walk.','amb');
   say('W/S walk · A/D strafe · arrows or mouse to look · E to touch anything that glows','sys');
   last=performance.now();
 }
