@@ -425,9 +425,14 @@ function resize(){
   for(let i=0;i<=cols;i++) xs[i]=i*ACW;
   for(let i=0;i<=rows;i++) ys[i]=i*ACH;
 
-  bcv.width=Math.max(2,Math.round(cv.width/5));
-  bcv.height=Math.max(2,Math.round(cv.height/5));
+  /* Bloom texel ~0.45 cell: halo width fixed in CELL units, not device
+     px — a fixed /5 was ~1 full cell of bleed on a large window, wide
+     enough to bridge every dark mullion and turn facades to mid-tone. */
+  const bs=Math.max(3,Math.round(ACW*0.45));
+  bcv.width=Math.max(2,Math.round(cv.width/bs));
+  bcv.height=Math.max(2,Math.round(cv.height/bs));
   bctx=bcv.getContext('2d');
+  bctx.imageSmoothingQuality='high';
   buildRain();
 }
 
@@ -1885,21 +1890,31 @@ function render(){
           const rfog=Math.max(0,1-dist/VIEW);
           const rhz=(1-rfog)*HAZE_K, rkeep=1-rhz;
           const o=ti*3;
-          /* LM is a ground-plane light map — street lamps and signs never
-             reach a rooftop, so lit only by AMB these fell below put()'s
-             threshold and drew nothing at all. Roofs sit under the open
-             overcast, so give them skyglow instead. */
-          const sky=1.0;
-          const lr2=(AMB[0]+sky*0.95+LM[o])*rfog,
-                lg2=(AMB[1]+sky*0.92+LM[o+1])*rfog,
-                lb2=(AMB[2]+sky*1.05+LM[o+2])*rfog;
-          const gr=T.r[ti]*lr2*2.4*rkeep+HAZE[0]*rhz,
-                gg=T.g[ti]*lg2*2.4*rkeep+HAZE[1]*rhz,
-                gb=T.b[ti]*lb2*2.4*rkeep+HAZE[2]*rhz;
-          const le2=(gr+gg+gb)/765;
+          /* Skyglow ONLY. LM is ground light — a tower's own sign splatted
+             its colour onto its roof tiles, and the 2.4x gain rendered every
+             roof as a washed pale slab. Night concrete is DIM: per-tile
+             panel variance + cell grain give it a surface instead. */
+          /* Constant concrete albedo — the baked per-tile jitter flips
+             put()'s 6-level hue key at these dim levels (tile-sized tint
+             slabs) while its brightness effect is below one alpha quantum.
+             Texture is explicit instead: bands that jump a full ramp step,
+             per-tile panel variance, and a bright parapet lip on the row
+             where the roof actually ends. */
+          const rvar=0.86+hash2(mapX*13,mapY*29)*0.24;
+          const lr2=(AMB[0]+0.27*rvar)*rfog,
+                lg2=(AMB[1]+0.29*rvar)*rfog,
+                lb2=(AMB[2]+0.34*rvar)*rfog;
+          const gr=56*lr2*rkeep+HAZE[0]*rhz,
+                gg=60*lg2*rkeep+HAZE[1]*rhz,
+                gb=66*lb2*rkeep+HAZE[2]*rhz;
+          const pxE=mapX-(hitSide===0?stX:0), pyE=mapY-(hitSide===1?stY:0);
+          const redge=!inb(pxE,pyE)||Math.abs(T.hgt[pyE*W+pxE]*0.25-hgt)>0.5;
           for(let y=ry0;y<=ry1;y++){
             const tex=hash3(mapX*3+((y*7)&3),mapY*3,y);
-            put(FRAMP[clamp(((le2/(le2+0.18))*9+tex*1.8-0.3)|0,1,10)],xpx,ys[y],gr,gg,gb);
+            const gk=(redge&&y===ry1)?2.2:(tex<0.14?0.55:(tex>0.86?1.45:1.0));
+            const r2=gr*gk,g2=gg*gk,b2=gb*gk;
+            const le2b=(r2+g2+b2)/765;
+            put(FRAMP[clamp(((le2b/(le2b+0.18))*9+0.5)|0,1,10)],xpx,ys[y],r2,g2,b2);
           }
           if(zb===FAR){ zb=dist; nearBase=yNear; wy1=ry1; }
           wy0=ry0; yCeil=ry0;
@@ -1957,9 +1972,15 @@ function render(){
       const fog=1-dist/VIEW;
       const shade=sideDim*fog*fog;
 
-      let lr=(AMB[0]+LM[o]+lamp)*shade;
-      let lg=(AMB[1]+LM[o+1]+lamp*0.97)*shade;
-      let lb=(AMB[2]+LM[o+2]+lamp*0.88)*shade;
+      /* Split the facade light. A skyglow floor fading LINEARLY with
+         distance keeps near bodies just-visible; the STREET light (LM +
+         player lamp) pools at ground level and must not ride thirty
+         storeys up the face — per-tile lamp colours painted over whole
+         towers were the mottled patchwork. Street part falls off with
+         height v inside the row loop. */
+      const skB=sideDim*fog;
+      const lrB=(AMB[0]+0.16)*skB, lgB=(AMB[1]+0.155)*skB, lbB=(AMB[2]+0.18)*skB;
+      const lrS=(LM[o]+lamp)*shade, lgS=(LM[o+1]+lamp*0.97)*shade, lbS=(LM[o+2]+lamp*0.88)*shade;
 
       const ar=T.r[ti],ag=T.g[ti],ab=T.b[ti];
       const y0=Math.max(0,Math.ceil(top)),y1=Math.min(yCeil-1,Math.floor(bottom));
@@ -2020,13 +2041,20 @@ function render(){
       /* Texture scale in power-of-two steps. A continuous 30/dist rescaled
          the facade grain every frame as you moved, which read as the whole
          wall swimming and stretching. Discrete steps hold steady. */
-      const tf=clamp(Math.pow(2,Math.round(Math.log2(30/Math.max(0.5,dist)))),8,64);
+      /* One grain hash cell ~= one screen column at ANY grid size (the
+         convention the floor already uses). The old hard-coded 30 meant one
+         grain cell spanned ~4 screen cells on a large window — every pane
+         got ONE glyph and ONE brightness, which is where the big soft
+         rounded rectangles came from. */
+      const tf=clamp(Math.pow(2,Math.round(Math.log2(fqBase/Math.max(0.5,dist)))),8,256);
       /* haze is constant down a wall column — one distance per ray */
       const hz=(1-fog)*HAZE_K, keep=1-hz;
       const hzR=HAZE[0]*hz, hzG=HAZE[1]*hz, hzB=HAZE[2]*hz;
       const invL1=1/L1;
       for(let y=y0;y<=y1;y++){
         const v=(bottom-y)*invL1;           /* height up the face, world units */
+        const sF=v<1.6?1:1/(1+(v-1.6)*0.75);
+        const lr=lrB+lrS*sF, lg=lgB+lgS*sF, lb=lbB+lbS*sF;
         let code,r,g,b;
         if(emit&&Math.abs(v-sMid)<sHalf){
           const sr=sgL?sgL.cr*255:ar, sgg=sgL?sgL.cg*255:ag, sb=sgL?sgL.cb*255:ab;
@@ -2037,12 +2065,12 @@ function render(){
           const dead=hash3(hitX,hitY,seg+((time*0.6)|0))<0.06?0.16:1;
           /* panel dim, letter hot — at equal brightness the filler drowned
              the glyph and the word never read as a word */
-          const onLetter=letterCol&&y===yLetter;
+          const onLetter=letterCol&&y===yLetter&&dist<24;
           /* daylight drowns neon — a sign at full night brightness under an
              overcast noon sky reads as a bug, not as a sign */
-          const k=flick*chase*dead*(onLetter?1.6:0.10)*(1-dayF*0.62);
+          const k=flick*chase*dead*(onLetter?1.6:0.55)*(1-dayF*0.62);
           r=sr*k+10;g=sgg*k+10;b=sb*k+10;
-          code=onLetter?T.ch[ti]:G.S1;
+          code=onLetter?T.ch[ti]:(dead<1?G.S2:G.S3);
         }else if(y===y0&&top>=0){
           /* Parapet. Without a cap the top row takes whatever the ramp
              happened to land on, and two overlapping towers merge into
@@ -2064,11 +2092,15 @@ function render(){
              occupied at all, a second which panes on it are lit. Deciding
              per-pane gave confetti with no dark bands — and dark bands are
              the strongest "this is a building" cue there is. */
-          /* A lit storey used to run the FULL width of a building - on a
-             long low block that was a glowing stripe wall-to-wall. Segment
-             the decision every 8 panes so light comes in patches. */
-          const floorLit=hash3(hitX*11+hitY*29+(cu>>3)*53,cv,17)<0.55;
-          if(pane&&v>1.35&&T.wc[ti]!==0&&floorLit&&hash3(hitX*7+cu,hitY*7+cv,cv)<0.58){
+          /* (cu>>3) was DEAD CODE — cu is the pane index within one tile
+             (0..6) so it was always 0, collapsing the '8-pane segment' to
+             an uncorrelated 55% coin per tile-storey: the camouflage
+             mosaic. Real segments need a pane index continuous along the
+             whole face, and most segments must be DARK. */
+          const along=hitSide===0?hitY:hitX, across=hitSide===0?hitX:hitY;
+          const cuG=along*WINU+cu;
+          const floorLit=hash3(across*31+(cuG>>3)*53,cv,hitSide*7+17)<0.33;
+          if(pane&&v>1.35&&T.wc[ti]!==0&&floorLit&&hash3(hitX*7+cu,hitY*7+cv,cv)<0.50){
             /* Interior depth: a bright core falling off toward the frame,
                plus a lift toward the head of the pane. A pane filled with
                one flat colour reads as a sticker; this reads as a lit room
@@ -2076,7 +2108,7 @@ function render(){
             const du=iu-0.5,dv=iv-0.5;
             const inset=clamp(1.18-(du*du+dv*dv)*2.2,0.42,1);
             const ceil=0.86+0.30*(1-iv);
-            const wk=(0.44+hash3(hitX+cu,hitY+cv,3)*0.42)*fog*inset*ceil*(1-dayF*0.55);
+            const wk=(0.70+hash3(hitX+cu,hitY+cv,3)*0.42)*fog*inset*ceil*(1-dayF*0.55);
             const wcol=winCol(T.wc[ti],hash3(cu,cv,hitX+hitY));
             r=wcol[0]*wk;g=wcol[1]*wk;b=wcol[2]*wk;
             /* Grain INSIDE the pane, at screen resolution. One glyph per pane
@@ -2086,9 +2118,16 @@ function render(){
                and a single colour turned it into a flat slab of teal. That
                is what those huge rectangles were. */
             const wg=hash3((wallU*tf)|0,(v*tf)|0,cu*7+cv);
-            code=WINCH[(wg*WINCH.length)|0];
-            const cellK=0.62+wg*0.50;
-            r*=cellK; g*=cellK; b*=cellK;
+            if(dist>7){
+              /* a pane out here is <=2 cells wide: one solid bright glyph
+                 per cell, per-PANE brightness only — grain inside a
+                 sub-cell pane just punches holes in the window */
+              code=wg<0.6?G.FULL:G.S3;
+              const cellK=0.88+wg*0.24; r*=cellK;g*=cellK;b*=cellK;
+            }else{
+              code=WINCH[(wg*WINCH.length)|0];
+              const cellK=0.62+wg*0.50; r*=cellK;g*=cellK;b*=cellK;
+            }
             /* Up close a single pane covers a big patch of screen and reads
                as a quilt square. Subdivide with fine mullions so the glass
                keeps a window grid at any distance. */
@@ -2154,7 +2193,7 @@ function render(){
                step — so a close wall resolved to a single character at a
                single colour. That was the flat slab. Now it spans 3-4 steps,
                and the colour breaks per cell too, the way the floor does. */
-            const kk=(iv<0.16?0.5:1)*(pane?1:0.74)*(0.62+wt*0.72);
+            const kk=(iv<0.16?0.5:1)*(pane?0.38:0.74)*(0.30+wt*0.72);
             r=ar*lr*kk;g=ag*lg*kk;b=ab*lb*kk;
             const le=(r+g+b)/765;
             code=corner?G.V:WRAMP[clamp(((le/(le+0.055))*4.4+wt*2.4-1.0)|0,1,6)];
@@ -2223,20 +2262,32 @@ function render(){
       if(tx<0||ty<0||tx>=W||ty>=H) continue;
       const ti=ty*W+tx,o=ti*3;
       const fog=onRoof?Math.max(0,1-rowDist/VIEW):fogT[y];
-      const lamp=lampT[y];
-      /* Weight the baked lights over flat ambient. Equal weighting made the
-         whole road one mid-grey field of static; this gives dark asphalt with
-         the neon actually pooling on it. */
-      let lr=(AMB[0]*0.45+LM[o]*1.28+lamp)*fog,
-          lg=(AMB[1]*0.45+LM[o+1]*1.28+lamp*0.97)*fog,
-          lb=(AMB[2]*0.45+LM[o+2]*1.28+lamp*0.88)*fog;
+      let lr,lg,lb;
+      if(onRoof){
+        /* Bare concrete under the overcast — skyglow only. The street light
+           map, the player's lamp haze and the wet-neon smear are all ground
+           phenomena; leaking them up here was the washed pale blanket every
+           rooftop turned into. Per-tile variance breaks it into panels. */
+        const rvar=0.78+hash2(tx*13,ty*29)*0.36;
+        lr=(AMB[0]+0.30*rvar)*fog;
+        lg=(AMB[1]+0.29*rvar)*fog;
+        lb=(AMB[2]+0.34*rvar)*fog;
+      }else{
+        const lamp=lampT[y];
+        /* Weight the baked lights over flat ambient. Equal weighting made
+           the whole road one mid-grey field of static; this gives dark
+           asphalt with the neon actually pooling on it. */
+        lr=(AMB[0]*0.45+LM[o]*1.28+lamp)*fog;
+        lg=(AMB[1]*0.45+LM[o+1]*1.28+lamp*0.97)*fog;
+        lb=(AMB[2]*0.45+LM[o+2]*1.28+lamp*0.88)*fog;
+      }
 
       /* Wet asphalt: smear light from a few tiles further down the ray back
          toward the viewer. That is roughly what a reflection does, and it
          costs one extra lookup — it is what turns a flat grey street into
          a mirror full of neon. */
       const mx2=Math.floor(fx+rx*2.6),my2=Math.floor(fy+ry*2.6);
-      if(mx2>=0&&my2>=0&&mx2<W&&my2<H){
+      if(!onRoof&&mx2>=0&&my2>=0&&mx2<W&&my2<H){
         const o2=(my2*W+mx2)*3;
         /* world-anchored puddle mask: standing water mirrors hard, damp
            asphalt between puddles barely - vertical smears with dark gaps
@@ -2253,7 +2304,7 @@ function render(){
       }
       const hz=(1-fog)*HAZE_K*0.55,keep=1-hz;
       /* roofs are bare concrete under open sky, not wet neon-lit asphalt */
-      const gain=onRoof?1.15:0.85;
+      const gain=onRoof?1.0:0.85;
       /* Grain frequency tracks distance so one hash cell stays about one
          screen cell — a fixed world frequency makes the near rows collapse
          into long identical runs. */
@@ -2275,10 +2326,20 @@ function render(){
           if(T.flag[ti]&WALK){tk=1.35;bump=0.4;}
           else if(T.flag[ti]&(ROAD|ALLEY)){tk=0.55;bump=-0.5;}
         }
+      }else if(onRoof){
+        /* concrete panel joints, and a bright parapet lip wherever the roof
+           actually ends — the edge cue that makes height read as height */
+        const fxf=fx-tx,fyf=fy-ty;
+        const hh0=T.hgt[ti];
+        if((fxf<0.13&&tx>0&&T.hgt[ti-1]!==hh0)||(fxf>0.87&&tx<W-1&&T.hgt[ti+1]!==hh0)||
+           (fyf<0.13&&ty>0&&T.hgt[ti-W]!==hh0)||(fyf>0.87&&ty<H-1&&T.hgt[ti+W]!==hh0)){
+          tk=1.85;bump=1.2;
+        }else if(fxf<0.06||fyf<0.06){tk=0.55;bump=-0.6;}
       }
-      const r=(T.r[ti]*lr*gain*keep+HAZE[0]*hz)*tk,
-            g=(T.g[ti]*lg*gain*keep+HAZE[1]*hz)*tk,
-            b=(T.b[ti]*lb*gain*keep+HAZE[2]*hz)*tk;
+      const aR=onRoof?56:T.r[ti],aG=onRoof?60:T.g[ti],aB=onRoof?66:T.b[ti];
+      const r=(aR*lr*gain*keep+HAZE[0]*hz)*tk,
+            g=(aG*lg*gain*keep+HAZE[1]*hz)*tk,
+            b=(aB*lb*gain*keep+HAZE[2]*hz)*tk;
       const le=(r+g+b)/765;
       let gch=FRAMP[clamp(((le/(le+0.30))*10+bump+tex*0.8-0.4)|0,0,8)];
       /* ~1.5% of road tiles carry a grate mark in the tile centre */
@@ -2322,10 +2383,18 @@ function render(){
     /* The 5x downscale IS the low-pass. ctx.filter='blur' allocates a whole
        extra Skia image-filter layer and pass on top of it for very little
        visible gain — smoothing the upscale instead is far cheaper. */
+    bctx.globalCompositeOperation='source-over';
     bctx.drawImage(cv,0,0,bcv.width,bcv.height);
+    /* v -> v*v: additive 0.28x of the AVERAGE lifted every near-black cell
+       next to anything lit — that was the low-contrast mud. Squaring
+       crushes the dim DC and keeps the hot cores, so neon pops MORE while
+       dark streets stay dark. */
+    bctx.globalCompositeOperation='multiply';
+    bctx.drawImage(bcv,0,0);
+    bctx.globalCompositeOperation='source-over';
     ctx.imageSmoothingEnabled=true;          /* restored by ctx.restore() */
     ctx.globalCompositeOperation='lighter';
-    ctx.globalAlpha=0.28;
+    ctx.globalAlpha=0.40;
     ctx.drawImage(bcv,0,0,cv.width,cv.height);
     ctx.restore();
   }
@@ -2371,6 +2440,11 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
     else{
       let lamp=dist<7.5?(1-dist/7.5):0;lamp=lamp*lamp*0.6;
       lr=AMB[0]+LM[o]+lamp;lg=AMB[1]+LM[o+1]+lamp;lb=AMB[2]+LM[o+2]+lamp;
+      /* A figure standing in a sign's light pool used to blow out to full
+         white. People are the darkest thing on the street — cap the light
+         so a person never outshines a lit window. */
+      const lmx=Math.max(lr,lg,lb), gcap=figure?0.65:1.10;
+      if(lmx>gcap){const ks=gcap/lmx;lr*=ks;lg*=ks;lb*=ks;}
     }
     const pulse=e.kind==='shard'?(0.6+0.4*Math.sin(e.pulse*3)):1;
     /* Height was uncapped: a vend at one tile projects ~1.6 screens tall
@@ -2381,9 +2455,9 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
     /* People fade much sooner and further than props: a pedestrian filling
        the frame reads as a glitch, not a person. */
     const ov=hh*L1/rows;
-    const ovCap=figure?2.0:3.5, ovOn=figure?0.55:0.95, ovFloor=figure?0.10:0.25;
+    const ovCap=figure?1.8:3.5, ovOn=figure?0.40:0.95, ovFloor=figure?0.08:0.25;
     if(ov>ovCap) continue;
-    const nearFade=ov<=ovOn?1:Math.max(ovFloor,1-(ov-ovOn)*(figure?0.85:0.52));
+    const nearFade=ov<=ovOn?1:Math.max(ovFloor,1-(ov-ovOn)*(figure?1.05:0.52));
     const kr=e.col[0]*lr*fog*pulse*nearFade,kg=e.col[1]*lg*fog*pulse*nearFade,kb=e.col[2]*lb*fog*pulse*nearFade;
     const span=Math.max(1,y1-y0);
 
