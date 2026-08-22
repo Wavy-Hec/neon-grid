@@ -379,7 +379,10 @@ function resize(){
   /* /78 put ~10.6k cells on a 1280x800 laptop and tripped the quality
      governor, which then dropped bloom AND coarsened the grid — auto-ugly.
      Better to start inside the budget than to degrade into it. */
-  const budget=clamp(Math.round(vw*vh/185),2400,7200);
+  /* Raised toward the reference's 180x80 — the single biggest 'looks more
+     detailed' change. The governor still only sheds bloom if this is too
+     much for the machine. */
+  const budget=clamp(Math.round(vw*vh/120),2400,12000);
 
   const metrics=f=>{
     const w=Math.max(4,Math.round(measureFont(f)));
@@ -703,7 +706,7 @@ function plaza(x0,y0,x1,y1,D){
     if(walkable(sx+1,sy+1)) ents.push(mkProp(sx+1,sy+1,'food'));
   }
 }
-let barRoom=null;
+let barRoom=null,wasInBar=false;
 function inBar(){
   if(!barRoom||P.roof>0) return false;
   return P.x>=barRoom.x0&&P.x<=barRoom.x1+1&&P.y>=barRoom.y0&&P.y<=barRoom.y1+1;
@@ -714,62 +717,119 @@ function inBar(){
    atrium with the rain far overhead. The band's sound lives here. */
 function carveBar(){
   barRoom=null;
-  /* exhaustive scan for an 8x6 all-solid shell with a street or alley on
-     its south or north side - the sparse first version found nothing */
-  const cands=[];
-  for(let y=6;y<H-8;y++){
-    row:
-    for(let x=6;x<W-9;x++){
-      for(let yy=y;yy<y+6;yy++)for(let xx=x;xx<x+8;xx++)
-        if(!(T.flag[yy*W+xx]&SOLID)) continue row;
-      let south=false,north=false;
-      for(let xx=x+1;xx<x+7;xx++){
-        if(flagAt(xx,y+6)&(ROAD|WALK|ALLEY)) south=true;
-        if(flagAt(xx,y-1)&(ROAD|WALK|ALLEY)) north=true;
+  /* Prefer a 10x7 shell — a real room with tables and a corner stage, the
+     way a Village basement club actually feels — and fall back to 8x6 when
+     the city is too dense to offer one. Door on whichever of south/north
+     faces street, walkway or alley. */
+  let bw=0,bh=0,cands=null;
+  for(const wh of [[10,7],[8,6]]){
+    const w2=wh[0],h2=wh[1],c2=[];
+    for(let y=6;y<H-h2-2;y++){
+      row:
+      for(let x=6;x<W-w2-1;x++){
+        for(let yy=y;yy<y+h2;yy++)for(let xx=x;xx<x+w2;xx++)
+          if(!(T.flag[yy*W+xx]&SOLID)) continue row;
+        let south=false,north=false;
+        for(let xx=x+1;xx<x+w2-1;xx++){
+          if(flagAt(xx,y+h2)&(ROAD|WALK|ALLEY)) south=true;
+          if(flagAt(xx,y-1)&(ROAD|WALK|ALLEY)) north=true;
+        }
+        if(south||north) c2.push([x,y,south]);
       }
-      if(south||north) cands.push([x,y,south]);
     }
+    if(c2.length){bw=w2;bh=h2;cands=c2;break;}
   }
-  if(!cands.length) return;
-  const [bx0,by0,south]=cands[(rnd()*cands.length)|0];
-  const bx1=bx0+7, by1=by0+5;
-  const dWall=south?by1:by0;                 /* wall with the door */
-  const dIn  =south?by1-1:by0+1;             /* row just inside it  */
-  const bWall=south?by0:by1;                 /* back wall           */
-  const bIn  =south?by0+2:by1-2;             /* counter row         */
+  if(!cands) return;
+  const pickc=cands[(rnd()*cands.length)|0];
+  const bx0=pickc[0], by0=pickc[1], south=pickc[2];
+  const bx1=bx0+bw-1, by1=by0+bh-1;
+  const dWall=south?by1:by0;                 /* wall with the door      */
+  const dIn  =south?by1-1:by0+1;             /* row just inside it      */
+  const bIn  =south?by0+2:by1-2;             /* counter row             */
+  const bkRow=south?by0+1:by1-1;             /* barkeep, behind the bar */
+  const mid  =south?Math.min(dIn-1,by0+3):Math.max(dIn+1,by1-3); /* tables */
+  const dyO  =south?1:-1;
+
+  /* Shell: one constant warm brick — any per-tile jitter here goes through
+     put()'s hue quantiser and comes out as the saturated-lottery camo.
+     Interior: checkerboard parquet, TWO constant albedos alternating. */
   for(let yy=by0;yy<=by1;yy++)for(let xx=bx0;xx<=bx1;xx++){
-    if(xx===bx0||xx===bx1||yy===by0||yy===by1){ T.wc[yy*W+xx]=0; continue; }
-    set(xx,yy,G.SP,[52+ri(-4,4),40+ri(-4,4),30+ri(-3,3)],0);   /* wood */
+    if(xx===bx0||xx===bx1||yy===by0||yy===by1){
+      set(xx,yy,G.S2,[64,34,30],SOLID); T.wc[yy*W+xx]=0; continue;
+    }
+    set(xx,yy,G.SP,((xx+yy)&1)?[58,44,32]:[44,33,25],0);
   }
   const dx=bx0+2;
   set(dx,dWall,G.SP,[64,48,34],0); T.hgt[dWall*W+dx]=0;        /* doorway */
   for(let xx=bx0+2;xx<=bx1-2;xx++){                             /* counter */
-    if(xx===dx) continue;          /* pass-through in line with the door */
+    if(xx===dx) continue;                    /* pass-through at the door  */
     set(xx,bIn,G.S2,[92,58,34],SOLID); setH(xx,bIn,xx,bIn,0.9);
     T.wc[bIn*W+xx]=0;
   }
-  const dyO=south?1:-1;
-  mkLight(bx0+2,dIn,4,[255,170,96],.9,4,1.7);
-  mkLight(bx1-2,dIn,4,[255,170,96],.9,4,1.7);
-  mkLight(bx0+1,south?by0+1:by1-1,4,[140,180,255],.85,1,1.6);  /* stage */
-  mkLight(dx,dWall+dyO,6,[110,160,255],1.1,1,2.2);             /* spill */
+
+  /* candle-lit tables, kept off the door corridor — a solid obstacle only
+     goes where the room stays walkable around it */
+  const tXs=bw>=10?[bx0+4,bx0+6]:[bx0+4];
+  for(const txx of tXs){
+    set(txx,mid,G.S2,[74,46,30],SOLID); setH(txx,mid,txx,mid,0.55);
+    T.wc[mid*W+txx]=0;
+    mkLight(txx,mid,2.4,[255,150,70],.5,4,1.4);                /* candle  */
+  }
+
+  /* light plot: warm room, cool wash behind the bar, one spot on the band */
+  mkLight(bx0+1,dIn,3.5,[255,170,96],.8,4,1.6);
+  mkLight(bx0+3,bIn,3.5,[255,170,96],.8,4,1.6);
+  mkLight(bx0+1,bkRow,4,[140,180,255],.7,1,1.5);
+  mkLight(bx1-1,dIn,5,[255,205,135],.95,1,2.0);                /* stage   */
+  mkLight(dx,dWall+dyO,6,[110,160,255],1.1,1,2.2);             /* spill   */
   const li=mkLight(dx,dWall+dyO*0.5,9,[100,170,255],1.5,1,2.6);
   const word='BLUE';
   for(let k2=0;k2<4;k2++) set(bx0+3+k2,dWall,word.charCodeAt(k2),[100,170,255],EMIT|SOLID,li);
-  const bk=mkProp(bx0+3,south?by0+1:by1-1,'fixer');
+
+  const bk=mkProp(bx0+3,bkRow,'fixer');
   bk.name='BARKEEP'; bk.ch=C_('&'); bk.col=[228,200,170];
   bk.lines=['"House rule: the trumpet talks, you listen."',
             '"Rain like this is good for business. Nobody leaves."',
             '"The band? They only know one tune. It never ends and it never repeats."'];
   ents.push(bk);
-  for(let i2=0;i2<4;i2++){
-    const px2=bx0+1+((i2*2)%6), py2=south?by0+3+(i2%2):by0+2+(i2%2);
-    if(!walkable(px2,py2)) continue;
-    ents.push({kind:'npc',x:px2+.5,y:py2+.5,ch:C_('&'),
-      col:hsl(215+ri(-25,25),.16,.34),name:pick(NAMES),prompt:'TALK',
-      lines:[pick(BARKS)],h:0.9,zoff:0,solid:true,rad:0.20,
-      draw:{x:bx0+3.5,y:(south?by0+3.5:by1-2.5)},vx:0,vy:0,spd:0.5,t:rnd()*3});
+
+  /* the trio, crammed into the front corner the way basement clubs do */
+  const stage=bw>=10?[[bx1-1,dIn,'BASS','"...", he does not look up. The bassline answers for him.'],
+                     [bx1-2,dIn,'DRUMS','"Brushes only after midnight. House rule number two."'],
+                     [bx1-1,mid,'TRUMPET','He lowers the harmon mute an inch. "Requests? The tune decides, friend."']]
+                   :[[bx1-1,dIn,'BASS','"...", he does not look up. The bassline answers for him.'],
+                     [bx1-2,dIn,'TRUMPET','He lowers the harmon mute an inch. "Requests? The tune decides, friend."']];
+  for(const m of stage){
+    ents.push({kind:'npc',x:m[0]+.5,y:m[1]+.5,ch:C_('&'),col:[206,178,150],
+      name:m[2],prompt:'LISTEN',lines:[m[3]],h:0.95,zoff:0,solid:true,rad:0.20,
+      draw:{x:m[0]+.5,y:m[1]+.5},vx:0,vy:0,spd:0,t:1e9});
   }
+
+  /* patrons: seated at the tables and standing at the rail, one drifter */
+  const BARLINES=['"Quiet tonight. Good."',
+    '"You hear that? One tune all night. I keep waiting for it to resolve."',
+    '"I came in for the rain. Stayed for the bass."',
+    '"Two credits says the trumpet player never shows his face."'];
+  const seats=[];
+  for(const txx of tXs){ seats.push([txx-1,mid]); seats.push([txx+1,mid]); }
+  seats.push([bx0+1,bIn+dyO]);                    /* standing at the rail */
+  for(const sPos of seats){
+    if(!walkable(sPos[0],sPos[1])) continue;
+    ents.push({kind:'npc',x:sPos[0]+.5,y:sPos[1]+.5,ch:C_('&'),
+      col:hsl(215+ri(-25,25),.16,.34),name:pick(NAMES),prompt:'TALK',
+      lines:[pick(BARLINES)],h:0.9,zoff:0,solid:true,rad:0.20,
+      draw:{x:sPos[0]+.5,y:sPos[1]+.5},vx:0,vy:0,spd:0,t:1e9});
+  }
+  const wander=bw>=10?2:1;
+  for(let i2=0;i2<wander;i2++){
+    const wx2=bx0+1+i2, wy2=dIn;
+    if(!walkable(wx2,wy2)) continue;
+    ents.push({kind:'npc',x:wx2+.5,y:wy2+.5,ch:C_('&'),
+      col:hsl(215+ri(-25,25),.16,.34),name:pick(NAMES),prompt:'TALK',
+      lines:[pick(BARLINES)],h:0.9,zoff:0,solid:true,rad:0.20,
+      draw:{x:(bx0+bx1)/2,y:mid+dyO*0.5},vx:0,vy:0,spd:0.45,t:rnd()*3});
+  }
+
   barRoom={x0:bx0+1,y0:by0+1,x1:bx1-1,y1:by1-1,
            cx:(bx0+bx1)/2,cy:(by0+by1)/2,door:{x:dx,y:dWall}};
 }
@@ -1080,7 +1140,7 @@ function populate(vr,hr){
     if(walkable(x,y)&&(flagAt(x,y)&(ROAD|WALK))&&!occupied(x+.5,y+.5)) start={x:x,y:y};
   }
   if(!start) start=findOpen()||{x:W>>1,y:H>>1};
-  P.x=start.x+.5;P.y=start.y+.5;P.a=rnd()*TAU;
+  P.x=start.x+.5;P.y=start.y+.5;P.a=rnd()*TAU;P.aT=P.a;
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1090,7 +1150,7 @@ function populate(vr,hr){
    you're standing on (0 = street). Everything in the projection reads z, so
    getting onto a roof is just moving the camera up and swapping which plane
    the floor pass casts against. */
-const P={x:0,y:0,a:0,cred:0,shards:0,bob:0,pitch:0,z:0.5,roof:0,jam:0};
+const P={x:0,y:0,a:0,aT:0,cred:0,shards:0,bob:0,pitch:0,pitchT:0,z:0.5,roof:0,jam:0};
 const keys=Object.create(null);
 let touchMove={x:0,y:0};
 let time=0,clock=22*60,rainPow=.55,started=false;
@@ -1169,10 +1229,12 @@ cv.addEventListener('click',()=>{
 document.addEventListener('pointerlockchange',()=>{locked=(document.pointerLockElement===cv);});
 addEventListener('mousemove',e=>{
   if(!locked) return;
-  P.a+=e.movementX*0.0022;
-  /* Pitch is just a horizon offset in a raycaster — and without it you
-     physically cannot take in a 40-unit tower from the pavement. */
-  P.pitch=clamp(P.pitch-e.movementY*0.06,-rows*0.55,rows*0.95);
+  /* The mouse steers a TARGET orientation the camera eases toward each
+     frame instead of snapping the angle directly. Raw deltas made every
+     small hand tremor a full-screen jolt; the easing is what makes the
+     world feel stable while glyphs re-quantise under it. */
+  P.aT+=e.movementX*0.0022;
+  P.pitchT=clamp(P.pitchT-e.movementY*0.06,-rows*0.55,rows*0.95);
 });
 
 /* touch: left half walks, right half looks */
@@ -1411,18 +1473,31 @@ function update(dt){
     musicGain.gain.setTargetAtTime(tgt,AC.currentTime,0.5);
     musicLP.frequency.setTargetAtTime(inB?15000:clamp(2400-d*60,420,2000),AC.currentTime,0.5);
   }
+  const ib=inBar();
+  if(ib!==wasInBar){
+    say(ib?'THE BLUE ROOM. Cover is two credits — nobody has ever collected it.'
+          :'Back out into the rain.',ib?'amb':'sys');
+    wasInBar=ib;
+  }
 
   /* turn */
   let turn=0;
   if(keys['arrowleft']||keys['q'])turn-=1;
   if(keys['arrowright'])turn+=1;
-  P.a+=turn*2.6*dt;
-  if(P.a>TAU)P.a-=TAU; if(P.a<0)P.a+=TAU;
+  P.aT+=turn*2.6*dt;
+
+  /* arrows are the full look control: left/right turn, up/down crane */
+  if(keys['arrowup'])   P.pitchT=Math.min(P.pitchT+dt*rows*0.85, rows*0.95);
+  if(keys['arrowdown']) P.pitchT=Math.max(P.pitchT-dt*rows*0.85,-rows*0.55);
+
+  /* ease the camera toward its target — shortest way round the circle */
+  let da=(P.aT-P.a)%TAU;
+  if(da>Math.PI)da-=TAU; if(da<-Math.PI)da+=TAU;
+  P.a+=da*Math.min(1,dt*12);
+  P.pitch+=(P.pitchT-P.pitch)*Math.min(1,dt*10);
+  if(P.a>TAU){P.a-=TAU;P.aT-=TAU;} if(P.a<0){P.a+=TAU;P.aT+=TAU;}
 
   /* walk */
-  /* arrows are the full look control: left/right turn, up/down crane */
-  if(keys['arrowup'])   P.pitch=Math.min(P.pitch+dt*rows*0.85, rows*0.95);
-  if(keys['arrowdown']) P.pitch=Math.max(P.pitch-dt*rows*0.85,-rows*0.55);
 
   let fwd=0,strafe=0;
   if(keys['w'])fwd+=1;
@@ -1599,11 +1674,11 @@ function interact(){
       say('Roof. '+Math.round(t.roofH*3)+' metres of city underneath you.','amb');
       /* Arrive already looking down. Level from up here is mostly empty sky,
          which reads as broken rather than as height. */
-      P.pitch=-rows*0.30;
+      P.pitch=P.pitchT=-rows*0.30;
       beep(660,.12,.05); setTimeout(()=>beep(880,.14,.045),110);
       return;
     }
-    P.pitch=0; beep(660,.12,.05); setTimeout(()=>beep(880,.14,.045),110);
+    P.pitch=P.pitchT=0; beep(660,.12,.05); setTimeout(()=>beep(880,.14,.045),110);
     return;
   }
   if(t.kind==='vend') P.cred=Math.max(0,P.cred-2);
@@ -1657,7 +1732,8 @@ function winCol(hueByte,jit){
   winPal.set(key,c);
   return c;
 }
-const VIEW=46;                 /* draw distance — far enough to see a skyline */
+const VIEW=46;                 /* detailed raycast range */
+const FAR=120;                 /* cheap far tier — height, colour, a few windows */
 /* Aerial perspective: distance fades toward the city's own smog, not to
    black. Fading to black only makes things dim; fading to a lit haze is
    what actually reads as depth, because it also kills saturation. */
@@ -1780,19 +1856,20 @@ function render(){
     if(ry<0){stY=-1;sdY=(py-mapY)*ddY;}else{stY=1;sdY=(mapY+1-py)*ddY;}
 
     let yCeil=rows;              /* everything at/below this row is painted */
-    let nearBase=-1e9, zb=VIEW;
+    let nearBase=-1e9, zb=FAR;
     let wy0=1,wy1=0;             /* painted span, for canal reflections */
     let hitSide=0, dist=0;
 
     for(let mstep=0;mstep<300&&yCeil>0;mstep++){
       if(sdX<sdY){dist=sdX;sdX+=ddX;mapX+=stX;hitSide=0;}
       else{dist=sdY;sdY+=ddY;mapY+=stY;hitSide=1;}
-      if(dist>VIEW) break;
+      if(dist>FAR) break;
       if(mapX<0||mapY<0||mapX>=W||mapY>=H) break;
       const ti=mapY*W+mapX;
       if(!(T.flag[ti]&SOLID)) continue;
       const hgt=T.hgt[ti]*0.25||1;
       if(hgt<eyeH){
+        if(dist>VIEW) continue;   /* far tier is skyline only — no rooftops */
         /* Roof face. Standing above a building we see its TOP, not its side,
            and skipping these left holes where the neighbouring rooftops
            should be. The tile spans dist (where the ray entered) to the next
@@ -1823,7 +1900,7 @@ function render(){
             const tex=hash3(mapX*3+((y*7)&3),mapY*3,y);
             put(FRAMP[clamp(((le2/(le2+0.18))*9+tex*1.8-0.3)|0,1,10)],xpx,ys[y],gr,gg,gb);
           }
-          if(zb===VIEW){ zb=dist; nearBase=yNear; wy1=ry1; }
+          if(zb===FAR){ zb=dist; nearBase=yNear; wy1=ry1; }
           wy0=ry0; yCeil=ry0;
         }
         continue;
@@ -1833,6 +1910,34 @@ function render(){
       const top=bottom-hgt*L1;
       if(top>=yCeil) continue;         /* fully hidden behind nearer mass */
       const hitX=mapX, hitY=mapY;
+
+      /* ---- far tier ----
+         Past the detailed range, a column of skyline only needs height,
+         hue and a few window dots. Marching every ray to FAR at full
+         facade detail would burn the frame budget on towers occupying a
+         handful of cells; this cheap pass carries the skyline out ~2.6x
+         for a fraction of the cost. */
+      if(dist>VIEW){
+        const y0f=Math.max(0,Math.ceil(top)), y1f=Math.min(yCeil-1,Math.floor(bottom));
+        if(y1f>=y0f){
+          const fade=1-(dist-VIEW)/(FAR-VIEW);
+          const wcb=T.wc[ti];
+          const b0=wcb?winCol(wcb,0.5):[T.r[ti],T.g[ti],T.b[ti]];
+          const br=b0[0]*0.16*fade+HAZE[0]*0.42,
+                bg=b0[1]*0.16*fade+HAZE[1]*0.42,
+                bb=b0[2]*0.16*fade+HAZE[2]*0.42;
+          for(let y=y0f;y<=y1f;y++){
+            const wv=hash3(hitX*13,hitY*7,y);
+            if(wcb&&wv<0.085){
+              const wcl=winCol(wcb,wv*11), wk=0.30+0.45*fade;
+              put(G.DOT,xpx,ys[y],wcl[0]*wk,wcl[1]*wk,wcl[2]*wk);
+            }else put(wv<0.5?G.S1:G.DOT,xpx,ys[y],br,bg,bb);
+          }
+          if(zb===FAR) zb=dist;
+          yCeil=y0f;
+        }
+        continue;
+      }
 
       /* where along the face did we land */
       let wallU=hitSide===0?(py+dist*ry):(px+dist*rx);
@@ -2060,7 +2165,7 @@ function render(){
         put(code,xpx,ys[y],fr,fg,fb);
       }
       /* nearest slice defines the z-buffer and where the street starts */
-      if(zb===VIEW){ zb=dist; nearBase=bottom; wy1=y1; }
+      if(zb===FAR){ zb=dist; nearBase=bottom; wy1=y1; }
       wy0=y0;
       yCeil=y0;
     }
@@ -2416,6 +2521,32 @@ function stepDown(){
   degrade++;
   optBloom=false;
 }
+/* The opening: rather than fading the city in, the terminal 'constructs'
+   your view — green code rains down each column and the live render is
+   revealed behind the falling head. Pure post-pass, runs ~2.6s, costs
+   nothing afterwards. */
+let introT=0;
+function drawIntro(){
+  const pr=1-(introT-time)/2.6;
+  ctx.font=Math.max(6,Math.round(ACH*0.92))+'px '+FONTFAM;
+  ctx.textBaseline='alphabetic';
+  const tick=(time*24)|0;
+  for(let sx=0;sx<cols;sx++){
+    const sp=0.72+hash2(sx*7,13)*0.75;
+    const hy=Math.floor(pr*1.45*sp*rows);
+    if(hy>=rows) continue;
+    const cy=ys[Math.min(rows-1,hy+1)];
+    ctx.fillStyle='#000';
+    ctx.fillRect(xs[sx],cy,ACW+1,cv.height-cy);
+    for(let k=0;k<5;k++){
+      const y=hy-k; if(y<0||y>=rows) continue;
+      const ch=CHARS[1+((hash3(sx,y,tick)*(CHARS.length-2))|0)];
+      ctx.fillStyle=k===0?'rgba(200,255,205,0.95)':'rgba(50,220,100,'+(0.55-k*0.12).toFixed(2)+')';
+      ctx.fillText(ch,xs[sx],ys[y]+ACH*0.82);
+    }
+  }
+}
+
 function frame(ts){
   requestAnimationFrame(frame);
   /* The city renders behind the title screen — a live view sells the game
@@ -2426,6 +2557,7 @@ function frame(ts){
   const t0=performance.now();
   update(dt);
   render();
+  if(time<introT) drawIntro();
   miniTimer-=dt;
   if(miniTimer<=0){miniTimer=.12;drawMini();}
   emaMs=emaMs*0.92+(performance.now()-t0)*0.08;
@@ -2478,6 +2610,7 @@ function boot(){
   if(started)return;
   started=true;
   $('boot').style.display='none';
+  introT=time+2.6;
   say('Rain over '+DISTRICTS[dmap[Math.floor(P.y)*W+Math.floor(P.x)]].name+'. Nobody is waiting for you. Walk.','amb');
   /* The keypress that boots is the user gesture browsers require, so the
      jazz bed can start right here. M still mutes. */
