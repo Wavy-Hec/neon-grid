@@ -1,0 +1,2298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"/>
+<meta name="color-scheme" content="dark"/>
+<title>NEON GRID // a walkable ASCII city</title>
+<meta name="description" content="A procedurally generated first-person ASCII cyberpunk city you can walk through. One HTML file, no dependencies."/>
+<style>
+  :root{
+    --neon:#5ef2ff; --hot:#ff3fb5; --amber:#ffb455; --dim:#2a4a55;
+    --panel:rgba(4,10,16,.62); --edge:rgba(94,242,255,.28);
+  }
+  *{box-sizing:border-box}
+  html,body{
+    margin:0;padding:0;height:100%;background:#000;overflow:hidden;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"DejaVu Sans Mono",monospace;
+    color:var(--neon);-webkit-font-smoothing:antialiased;
+    touch-action:none;overscroll-behavior:none;
+  }
+  #stage{position:fixed;inset:0;overflow:hidden}
+  canvas#c{position:absolute;inset:0;width:100%;height:100%;display:block;background:#01030a;cursor:crosshair}
+
+  #crt{
+    position:absolute;inset:0;pointer-events:none;z-index:5;
+    background:
+      repeating-linear-gradient(to bottom,rgba(0,0,0,.30) 0 1px,rgba(0,0,0,0) 1px 3px),
+      radial-gradient(130% 105% at 50% 50%,rgba(0,0,0,0) 40%,rgba(0,0,0,.78) 100%);
+  }
+
+  .panel{
+    position:absolute;z-index:8;pointer-events:none;
+    background:var(--panel);border:1px solid var(--edge);
+    padding:7px 10px;font-size:12px;line-height:1.55;
+    letter-spacing:.04em;text-shadow:0 0 8px rgba(94,242,255,.35);
+  }
+  #hud{top:10px;left:10px;min-width:190px}
+  #hud b{color:#fff;font-weight:600}
+  #hud .k{color:var(--dim)}
+  #hud .dist{color:var(--hot);text-shadow:0 0 10px rgba(255,63,181,.5)}
+  #hud .sh{color:var(--amber)}
+
+  #minwrap{top:10px;right:10px;padding:6px}
+  #mini{display:block;image-rendering:pixelated;width:176px;height:auto;opacity:.92}
+  #minlbl{font-size:10px;color:var(--dim);letter-spacing:.16em;margin-top:4px;text-align:right}
+
+  #log{left:10px;bottom:10px;max-width:min(560px,64vw);min-height:22px}
+  #log div{opacity:.92;white-space:pre-wrap}
+  #log div.sys{color:var(--dim)}
+  #log div.hot{color:var(--hot)}
+  #log div.amb{color:var(--amber)}
+
+  #prompt{
+    left:50%;bottom:calc(10px + 96px);transform:translateX(-50%);
+    border-color:rgba(255,180,85,.45);color:var(--amber);
+    text-shadow:0 0 10px rgba(255,180,85,.45);display:none;white-space:nowrap;
+  }
+  #talk{
+    left:50%;bottom:80px;transform:translateX(-50%);
+    width:min(640px,88vw);display:none;border-color:rgba(255,63,181,.42);padding:11px 14px;
+  }
+  #talk .who{color:var(--hot);font-size:11px;letter-spacing:.18em;margin-bottom:5px}
+  #talk .txt{color:#dff8ff;font-size:13px;line-height:1.6;min-height:2.9em}
+  #talk .cont{color:var(--dim);font-size:10px;letter-spacing:.14em;margin-top:7px}
+
+  #fps{right:10px;bottom:10px;font-size:11px;color:var(--dim);display:none}
+
+  #help{position:absolute;inset:0;z-index:12;display:none;place-items:center;background:rgba(1,3,10,.88)}
+  #help .box{border:1px solid var(--edge);background:rgba(4,10,16,.92);padding:20px 24px;max-width:580px;font-size:12.5px;line-height:1.85}
+  #help h2{margin:0 0 12px;font-size:13px;letter-spacing:.3em;color:var(--hot)}
+  #help kbd{display:inline-block;min-width:22px;text-align:center;border:1px solid var(--edge);padding:0 5px;margin-right:6px;color:#fff;background:rgba(94,242,255,.07)}
+  #help .r{color:var(--dim)}
+
+  #boot{position:absolute;inset:0;z-index:20;display:grid;place-items:center;background:#01030a;cursor:pointer}
+  #boot .inner{text-align:center;padding:24px;user-select:none;max-width:min(560px,86vw)}
+  #boot .mark{
+    font-size:clamp(26px,5.2vw,58px);font-weight:300;
+    letter-spacing:.3em;text-indent:.3em;color:#eafcff;line-height:1;
+  }
+  #boot .rule{
+    height:1px;margin:22px 0 18px;
+    background:linear-gradient(to right,transparent,rgba(94,242,255,.5) 22%,rgba(255,63,181,.5) 78%,transparent);
+  }
+  #boot .tag{font-size:10.5px;letter-spacing:.26em;text-transform:uppercase;color:#5c7f8c}
+  #boot .seed{margin-top:26px;font-size:11px;letter-spacing:.2em;color:var(--amber);opacity:.9}
+  #boot .go{margin-top:34px;font-size:10.5px;letter-spacing:.34em;text-transform:uppercase;color:#43606b;animation:pulse 2.6s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:.35}50%{opacity:.9}}
+
+  #touch{position:absolute;inset:0;z-index:7;display:none}
+  #tbtn{position:absolute;right:18px;bottom:100px;width:74px;height:74px;border-radius:50%;
+    border:1px solid rgba(255,180,85,.5);background:rgba(255,180,85,.09);color:var(--amber);
+    display:grid;place-items:center;font:600 12px/1 ui-monospace,monospace;letter-spacing:.12em}
+  #stick{position:absolute;width:104px;height:104px;border-radius:50%;border:1px solid var(--edge);
+    background:rgba(94,242,255,.05);display:none;margin-left:-52px;margin-top:-52px;pointer-events:none}
+  #stick i{position:absolute;left:50%;top:50%;width:38px;height:38px;margin:-19px 0 0 -19px;
+    border-radius:50%;background:rgba(94,242,255,.22);border:1px solid var(--edge)}
+
+  @media (prefers-reduced-motion:reduce){ #boot .go{animation:none} }
+  @media (max-width:640px){
+    #minwrap{padding:4px} #mini{width:112px}
+    #log{max-width:70vw;font-size:11px} #hud{font-size:11px;min-width:0}
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="c"></canvas>
+  <div id="crt"></div>
+
+  <div id="hud" class="panel">
+    <div><span class="k">LOC</span> <span class="dist" id="hDist">—</span></div>
+    <div><span class="k">TIME</span> <b id="hTime">00:00</b> <span class="k">RAIN</span> <b id="hRain">—</b></div>
+    <div><span class="k">SHARDS</span> <span class="sh" id="hShard">0 / 0</span></div>
+    <div><span class="k">CR</span> <b id="hCred">0</b></div>
+  </div>
+
+  <div id="minwrap" class="panel">
+    <canvas id="mini"></canvas>
+    <div id="minlbl">SAT-LINK</div>
+  </div>
+
+  <div id="log" class="panel"></div>
+  <div id="prompt" class="panel"></div>
+
+  <div id="talk" class="panel">
+    <div class="who" id="tWho"></div>
+    <div class="txt" id="tTxt"></div>
+    <div class="cont">[E / SPACE] CONTINUE &nbsp;·&nbsp; [ESC] LEAVE</div>
+  </div>
+
+  <div id="fps" class="panel"></div>
+
+  <div id="touch">
+    <div id="stick"><i></i></div>
+    <div id="tbtn">USE</div>
+  </div>
+
+  <div id="help">
+    <div class="box">
+      <h2>NEON GRID</h2>
+      <div><kbd>W</kbd><kbd>S</kbd> walk &nbsp; <kbd>A</kbd><kbd>D</kbd> strafe</div>
+      <div><kbd>&larr;</kbd><kbd>&rarr;</kbd> turn &nbsp; <kbd>&uarr;</kbd><kbd>&darr;</kbd> look up / down</div>
+      <div class="r" style="margin:-4px 0 4px 32px">click the view for mouse-look · crane up, the towers are 40 storeys</div>
+      <div><kbd>Shift</kbd> run &nbsp; <kbd>E</kbd> interact with anything that glows</div>
+      <div class="r" style="margin:-4px 0 4px 32px">find a <b>service lift</b> (I) and ride it — then look down</div>
+      <div><kbd>N</kbd> new city &nbsp; <kbd>B</kbd> bloom &nbsp; <kbd>R</kbd> rain &nbsp; <kbd>F</kbd> fps</div>
+      <div><kbd>M</kbd> music &nbsp;<span class="r">— a live modal-jazz trio, generated bar by bar</span></div>
+      <div><kbd>-</kbd><kbd>=</kbd> resolution &nbsp; <kbd>?</kbd> help &nbsp; <kbd>Esc</kbd> close</div>
+      <div style="margin-top:14px" class="r">
+        Running rough? Press <kbd>-</kbd> for a coarser grid or <kbd>B</kbd> to kill the bloom.
+        The city drops quality on its own if frames get expensive.
+      </div>
+      <div style="margin-top:10px" class="r">
+        Every street, sign and tower comes from the seed in the corner.
+        Add <b>?seed=yourname</b> to the URL for a city that is only yours.
+      </div>
+    </div>
+  </div>
+
+  <div id="boot">
+    <div class="inner">
+      <div class="mark">NEON GRID</div>
+      <div class="rule"></div>
+      <div class="tag">every street rebuilt from a single number</div>
+      <div class="seed" id="bSeed">—</div>
+      <div class="go">press any key</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+'use strict';
+
+/* ══════════════════════════════════════════════════════════════════
+   0. utilities
+   ══════════════════════════════════════════════════════════════════ */
+const clamp=(v,a,b)=>v<a?a:(v>b?b:v);
+const lerp=(a,b,t)=>a+(b-a)*t;
+const TAU=Math.PI*2;
+
+function xmur3(str){
+  let h=1779033703^str.length;
+  for(let i=0;i<str.length;i++){h=Math.imul(h^str.charCodeAt(i),3432918353);h=(h<<13)|(h>>>19);}
+  return function(){h=Math.imul(h^(h>>>16),2246822507);h=Math.imul(h^(h>>>13),3266489909);return (h^=h>>>16)>>>0;};
+}
+function mulberry32(a){
+  return function(){a|=0;a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);
+    t=(t+Math.imul(t^(t>>>7),61|t))^t;return ((t^(t>>>14))>>>0)/4294967296;};
+}
+let rnd=Math.random;
+const ri=(a,b)=>a+Math.floor(rnd()*(b-a+1));
+const rf=(a,b)=>a+rnd()*(b-a);
+const pick=a=>a[Math.floor(rnd()*a.length)];
+const chance=p=>rnd()<p;
+function hash1(n){const s=Math.sin(n*127.1)*43758.5453;return s-Math.floor(s);}
+/* Integer hashes, not sin-based. These run once or twice per cell in the
+   floor and sky passes — at ~10k cells a frame the trig showed up. */
+function hash2(x,y){
+  let h=(Math.floor(x)*374761393+Math.floor(y)*668265263)|0;
+  h=Math.imul(h^(h>>>13),1274126177);
+  return ((h^(h>>>16))>>>0)/4294967296;
+}
+function hash3(x,y,z){
+  let h=(Math.floor(x)*374761393+Math.floor(y)*668265263+Math.floor(z)*1442695041)|0;
+  h=Math.imul(h^(h>>>13),1274126177);
+  return ((h^(h>>>16))>>>0)/4294967296;
+}
+
+function hsl(h,s,l){
+  h=((h%360)+360)/360;
+  const q=l<.5?l*(1+s):l+s-l*s,p=2*l-q;
+  const f=t=>{if(t<0)t+=1;if(t>1)t-=1;
+    if(t<1/6)return p+(q-p)*6*t; if(t<1/2)return q;
+    if(t<2/3)return p+(q-p)*(2/3-t)*6; return p;};
+  return [Math.round(f(h+1/3)*255),Math.round(f(h)*255),Math.round(f(h-1/3)*255)];
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   1. glyph atlas
+   Glyphs are baked once per quantised colour into an offscreen strip
+   and blitted with drawImage; brightness rides on globalAlpha, so a
+   handful of atlases covers a continuous range of light.
+   Blocks and box-drawing are drawn procedurally, so faces tile with
+   no seams whatever font the browser happens to have.
+   ══════════════════════════════════════════════════════════════════ */
+const CHARS=" !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"+
+            "█▓▒░▀▄▌▐─│┌┐└┘├┤┬┴┼═║╔╗╚╝•·";
+/* Flat lookup table instead of a Map — this is hit once per drawn cell,
+   ~10k times a frame, and Map.get showed up next to the blits. */
+const CLUT=new Int16Array(9800).fill(-1);
+for(let i=0;i<CHARS.length;i++){const c=CHARS.charCodeAt(i);if(c<9800)CLUT[c]=i;}
+const C_=s=>s.charCodeAt(0);
+const G={
+  FULL:C_("█"),S3:C_("▓"),S2:C_("▒"),S1:C_("░"),
+  UP:C_("▀"),DN:C_("▄"),LF:C_("▌"),RT:C_("▐"),
+  H:C_("─"),V:C_("│"),TL:C_("┌"),TR:C_("┐"),BL:C_("└"),BR:C_("┘"),
+  VR:C_("├"),VL:C_("┤"),HD:C_("┬"),HU:C_("┴"),X:C_("┼"),
+  DH:C_("═"),DV:C_("║"),DTL:C_("╔"),DTR:C_("╗"),DBL:C_("╚"),DBR:C_("╝"),
+  DOT:C_("·"),BIG:C_("•"),SP:32
+};
+/* brightness ramps */
+const RAMP=[G.SP,C_('.'),G.DOT,C_(':'),C_('-'),C_('='),C_('+'),C_('*'),C_('#'),C_('%'),C_('@'),G.FULL];
+/* Ground ramp: dots into shade blocks. The symbol ramp above reads as typed
+   characters on a page; this reads as a surface getting brighter. */
+const FRAMP=[G.SP,G.SP,C_('.'),G.DOT,C_(':'),C_('-'),G.S1,G.S1,G.S2,G.S3,G.FULL];
+const WRAMP=[G.SP,G.S1,G.S1,G.S2,G.S2,G.S3,G.S3,G.FULL];
+
+let CW=9,CH=19,FS=16,BASE=15,AS=1,FONT="16px monospace";
+
+function ditherFill(g,ox,w,h,level){
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+    let on;
+    if(level===2) on=((x+y)&1)===0;
+    else if(level===1) on=(x&1)===0&&(y&1)===0;
+    else on=!((x&1)===1&&(y&1)===1);
+    if(on) g.fillRect(ox+x,y,1,1);
+  }
+}
+function drawGlyph(g,code,ox){
+  const w=CW,h=CH;
+  const lw=Math.max(1,Math.round(w/7));
+  const cx=Math.floor(w/2)-Math.floor(lw/2);
+  const cy=Math.floor(h/2)-Math.floor(lw/2);
+  const d=lw+1;
+  const hs=(x0,x1,yy)=>g.fillRect(ox+x0,yy===undefined?cy:yy,x1-x0,lw);
+  const vs=(y0,y1,xx)=>g.fillRect(ox+(xx===undefined?cx:xx),y0,lw,y1-y0);
+  switch(code){
+    case G.FULL:g.fillRect(ox,0,w,h);return;
+    case G.S3:ditherFill(g,ox,w,h,3);return;
+    case G.S2:ditherFill(g,ox,w,h,2);return;
+    case G.S1:ditherFill(g,ox,w,h,1);return;
+    case G.UP:g.fillRect(ox,0,w,Math.ceil(h/2));return;
+    case G.DN:g.fillRect(ox,Math.floor(h/2),w,Math.ceil(h/2));return;
+    case G.LF:g.fillRect(ox,0,Math.ceil(w/2),h);return;
+    case G.RT:g.fillRect(ox+Math.floor(w/2),0,Math.ceil(w/2),h);return;
+    case G.H:hs(0,w);return;
+    case G.V:vs(0,h);return;
+    case G.TL:hs(cx,w);vs(cy,h);return;
+    case G.TR:hs(0,cx+lw);vs(cy,h);return;
+    case G.BL:hs(cx,w);vs(0,cy+lw);return;
+    case G.BR:hs(0,cx+lw);vs(0,cy+lw);return;
+    case G.VR:vs(0,h);hs(cx,w);return;
+    case G.VL:vs(0,h);hs(0,cx+lw);return;
+    case G.HD:hs(0,w);vs(cy,h);return;
+    case G.HU:hs(0,w);vs(0,cy+lw);return;
+    case G.X:hs(0,w);vs(0,h);return;
+    case G.DH:hs(0,w,cy-d);hs(0,w,cy+d);return;
+    case G.DV:vs(0,h,cx-d);vs(0,h,cx+d);return;
+    case G.DTL:hs(cx-d,w,cy-d);vs(cy-d,h,cx-d);hs(cx+d,w,cy+d);vs(cy+d,h,cx+d);return;
+    case G.DTR:hs(0,cx+d+lw,cy-d);vs(cy-d,h,cx+d);hs(0,cx-d+lw,cy+d);vs(cy+d,h,cx-d);return;
+    case G.DBL:hs(cx-d,w,cy+d);vs(0,cy+d+lw,cx-d);hs(cx+d,w,cy-d);vs(0,cy-d+lw,cx+d);return;
+    case G.DBR:hs(0,cx+d+lw,cy+d);vs(0,cy+d+lw,cx+d);hs(0,cx-d+lw,cy-d);vs(0,cy-d+lw,cx-d);return;
+    case G.BIG:g.beginPath();g.arc(ox+w/2,h/2,w*0.29,0,TAU);g.fill();return;
+    case G.DOT:g.beginPath();g.arc(ox+w/2,h/2,Math.max(.85,w*0.13),0,TAU);g.fill();return;
+    default:{
+      const s=String.fromCharCode(code);
+      const adv=g.measureText(s).width;
+      const sc=adv>w?w/adv:1;
+      if(sc!==1){g.save();g.translate(ox+(w-adv*sc)/2,0);g.scale(sc,1);g.fillText(s,0,BASE);g.restore();}
+      else g.fillText(s,ox+(w-adv)/2,BASE);
+    }
+  }
+}
+/* ONE sheet, not 91 separate canvases. put() switches colour on nearly every
+   cell, and Skia only batches consecutive drawImage calls that share a source
+   texture — interleaving 91 textures meant ~10,000 GPU draw calls a frame
+   instead of a handful. Colours become rows of a single sheet, baked lazily.
+   put() normalises so the max channel always quantises to 5, so only
+   6^3-5^3 = 91 keys are reachable. */
+const SHEET_ROWS=91;
+const sheetRow=new Int16Array(216).fill(-1);
+let sheet=null,sctx=null,sheetN=0;
+
+function resetSheet(){
+  /* Bake and sample on the SAME integer pitch. Drawing at logical i*CW puts
+     glyph i at device i*CW*AS while put() reads i*round(CW*AS) — at a
+     fractional dpr those diverge half a pixel per glyph, so by the
+     box-drawing range you sample a different character entirely. Invisible
+     at dpr 1, wrong on every 1.25x/1.5x display. */
+  ACW=Math.max(1,Math.round(CW*AS));
+  ACH=Math.max(1,Math.round(CH*AS));
+  sheet=document.createElement('canvas');
+  sheet.width=Math.max(1,CHARS.length*ACW);
+  sheet.height=Math.max(1,SHEET_ROWS*ACH);
+  sctx=sheet.getContext('2d');
+  sctx.textBaseline='alphabetic';sctx.textAlign='left';
+  sheetRow.fill(-1);sheetN=0;
+}
+function bakeRow(key){
+  const row=sheetN<SHEET_ROWS?sheetN++:0;
+  sheetRow[key]=row;
+  const qr=Math.round(Math.floor(key/36)/5*255);
+  const qg=Math.round((Math.floor(key/6)%6)/5*255);
+  const qb=Math.round((key%6)/5*255);
+  const g=sctx;
+  g.setTransform(AS,0,0,AS,0,row*ACH);   /* e,f are device px */
+  g.font=FONT;
+  const col='rgb('+qr+','+qg+','+qb+')';
+  g.fillStyle=col;g.strokeStyle=col;
+  const pitch=ACW/AS;
+  for(let i=1;i<CHARS.length;i++) drawGlyph(g,CHARS.charCodeAt(i),i*pitch);
+  return row;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   2. canvas + metrics
+   ══════════════════════════════════════════════════════════════════ */
+const FONTFAM='ui-monospace,SFMono-Regular,Menlo,Consolas,"DejaVu Sans Mono",monospace';
+const cv=document.getElementById('c');
+const ctx=cv.getContext('2d',{alpha:false});
+let dpr=1,cols=100,rows=36,VW=0,VH=0,zoom=0;
+let bcv=document.createElement('canvas'),bctx=bcv.getContext('2d');
+const canFilter=(typeof bctx.filter==='string');
+let zbuf=new Float32Array(1);
+let rdT=new Float32Array(1),fogT=new Float32Array(1),lampT=new Float32Array(1),rdRoofT=new Float32Array(1);
+let fqT=new Float32Array(1),skyThr=new Float32Array(1),skyR=new Float32Array(1),skyG=new Float32Array(1),skyB=new Float32Array(1),skyCh=new Uint16Array(1);
+let wcR=new Float32Array(1),wcG=new Float32Array(1),wcB=new Float32Array(1),wcC=new Uint16Array(1);
+let xs=new Float64Array(1),ys=new Float64Array(1);
+
+function measureFont(px){
+  ctx.save();ctx.font=px+'px '+FONTFAM;
+  const w=ctx.measureText('MMMMMMMMMM').width/10;
+  ctx.restore();return w;
+}
+
+function resize(){
+  const vw=Math.max(300,window.innerWidth|0),vh=Math.max(220,window.innerHeight|0);
+  dpr=clamp(window.devicePixelRatio||1,1,1.5);
+  /* a first-person ASCII view reads well chunky, and every cell is a
+     draw call — so the budget is deliberately modest */
+  /* Density is the look. The reference cityscapes are hundreds of columns
+     of fine glyphs, not dozens of chunky ones. */
+  /* /78 put ~10.6k cells on a 1280x800 laptop and tripped the quality
+     governor, which then dropped bloom AND coarsened the grid — auto-ugly.
+     Better to start inside the budget than to degrade into it. */
+  const budget=clamp(Math.round(vw*vh/135),3000,10000);
+
+  const metrics=f=>{
+    const w=Math.max(4,Math.round(measureFont(f)));
+    const h=Math.max(7,Math.round(f*1.15));
+    return {w:w,h:h,c:Math.ceil(vw/w),r:Math.ceil(vh/h)};
+  };
+  let fs=clamp(Math.round(Math.sqrt(vw*vh/(budget*1.35))),7,32);
+  for(let i=0;i<44;i++){const m=metrics(fs);if((m.c*m.r<=budget&&m.c<=340)||fs>=32)break;fs++;}
+  fs=clamp(fs+zoom,7,38);
+  for(let i=0;i<44;i++){const m=metrics(fs);if(m.c*m.r<=budget*1.8||fs>=38)break;fs++;}
+  const fin=metrics(fs);
+  FS=fs;CW=fin.w;CH=fin.h;
+  BASE=Math.round(CH*0.79);
+  FONT=FS+'px '+FONTFAM;
+  AS=clamp(dpr,1,1.5);
+  resetSheet();
+
+  VW=vw;VH=vh;
+  cv.width=Math.round(vw*dpr);cv.height=Math.round(vh*dpr);
+  cv.style.width=vw+'px';cv.style.height=vh+'px';
+  /* Identity transform + device-pixel geometry. With a scale transform the
+     source cell is round(CW*dpr) px but the destination is CW*dpr px, so at a
+     fractional dpr every one of ~10k blits took the resampling path instead
+     of a straight copy. */
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.imageSmoothingEnabled=false;
+
+  /* Grid spacing IS the blit size, so cells tile exactly with no seam and no
+     sub-pixel drift. ACW/ACH are set by resetSheet() just above. */
+  cols=Math.ceil(cv.width/ACW);rows=Math.ceil(cv.height/ACH);
+  zbuf=new Float32Array(cols);
+  rdT=new Float32Array(rows+2);fogT=new Float32Array(rows+2);lampT=new Float32Array(rows+2);
+  rdRoofT=new Float32Array(rows+2);
+  fqT=new Float32Array(rows+2);skyThr=new Float32Array(rows+2);
+  skyR=new Float32Array(rows+2);skyG=new Float32Array(rows+2);skyB=new Float32Array(rows+2);
+  skyCh=new Uint16Array(rows+2);
+  wcR=new Float32Array(rows+2);wcG=new Float32Array(rows+2);
+  wcB=new Float32Array(rows+2);wcC=new Uint16Array(rows+2);
+  xs=new Float64Array(cols+1);ys=new Float64Array(rows+1);
+  for(let i=0;i<=cols;i++) xs[i]=i*ACW;
+  for(let i=0;i<=rows;i++) ys[i]=i*ACH;
+
+  bcv.width=Math.max(2,Math.round(cv.width/5));
+  bcv.height=Math.max(2,Math.round(cv.height/5));
+  bctx=bcv.getContext('2d');
+  buildRain();
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   3. world data
+   ══════════════════════════════════════════════════════════════════ */
+const W=204,H=142;
+const SOLID=1,EMIT=2,ROAD=4,WALK=8,WATER=16,ALLEY=32;
+const T={
+  ch:new Uint16Array(W*H),
+  r:new Uint8Array(W*H),g:new Uint8Array(W*H),b:new Uint8Array(W*H),
+  flag:new Uint8Array(W*H),sign:new Int16Array(W*H),
+  hgt:new Uint8Array(W*H),           /* height in 1/4 world units (max 63) */
+  wc:new Uint8Array(W*H)             /* per-building window hue, 0..255 -> 0..360 */
+};
+const LM=new Float32Array(W*H*3);     /* baked light, one bake per city */
+const dmap=new Uint8Array(W*H);
+let lights=[],ents=[],nearEnts=[],shardTotal=0;
+
+const DISTRICTS=[
+  {name:'KOWLOON SPRAWL',hues:[300,326,192,268]},
+  {name:'GINZA-9',hues:[188,206,46,320]},
+  {name:'RUST CANAL',hues:[18,34,160,4]},
+  {name:'THE ARCOLOGY',hues:[204,262,178,286]},
+  {name:'FLATLINE ROW',hues:[348,286,54,196]}
+];
+const WORDS=['SUSHI','RAMEN','NOODLE','CHROME','SYNTH','VOID','ORBITAL','PACHINKO','NEURO',
+  'ZAIBATSU','BLACKICE','GRID','HEX','LOVE','HOTEL','CYBERWARE','CLINIC','ARMS','404','DATA',
+  'DREAM','ANALOG','KIRIN','MOTEL','WIRE','PAWN','TOKEN','GHOST','STIM','FLUX','ONI','LOTUS',
+  'BATTERY','RELAY','SPINE','MOON','ASH','RAIN','9MM','OPEN','24HR','CASH','TAROT','FIX'];
+
+function inb(x,y){return x>=0&&y>=0&&x<W&&y<H;}
+function set(x,y,ch,col,flag,sg){
+  if(!inb(x,y))return;
+  const i=y*W+x;
+  T.ch[i]=ch;T.r[i]=col[0];T.g[i]=col[1];T.b[i]=col[2];
+  T.flag[i]=flag||0;T.sign[i]=(sg===undefined?-1:sg);
+}
+function flagAt(x,y){return inb(x,y)?T.flag[y*W+x]:SOLID;}
+function solidAt(x,y){
+  const xi=Math.floor(x),yi=Math.floor(y);
+  if(xi<0||yi<0||xi>=W||yi>=H) return true;
+  /* On a roof the rule inverts: the building top is the floor, and anything
+     that isn't part of it — street, or a neighbour at a different height —
+     is a parapet you can't cross. Blocking at the edge rather than dropping
+     you keeps it safe without needing a fall state. */
+  if(P.roof>0){
+    const i=yi*W+xi;
+    return !((T.flag[i]&SOLID)&&Math.abs(T.hgt[i]*0.25-P.roof)<0.35);
+  }
+  return (T.flag[yi*W+xi]&(SOLID|WATER))!==0;
+}
+function blocked(x,y){
+  const r=0.26;
+  return solidAt(x-r,y-r)||solidAt(x+r,y-r)||solidAt(x-r,y+r)||solidAt(x+r,y+r);
+}
+function walkable(x,y){return inb(x,y)&&(T.flag[y*W+x]&(SOLID|WATER))===0;}
+/* Entity collision. Only the handful already cached in nearEnts is tested,
+   and it runs twice per frame (once per movement axis), so the cost is
+   negligible next to the render. */
+function entBlocked(x,y){
+  for(let i=0;i<nearEnts.length;i++){
+    const e=nearEnts[i];
+    if(!e.solid) continue;
+    const dx=x-e.x,dy=y-e.y,r=e.rad+0.22;
+    if(dx*dx+dy*dy<r*r) return true;
+  }
+  return false;
+}
+function free(x,y){ return !blocked(x,y)&&!entBlocked(x,y); }
+function setH(x0,y0,x1,y1,h){
+  const v=clamp(Math.round(h*4),0,255);
+  for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++) if(inb(x,y)) T.hgt[y*W+x]=v;
+}
+
+function mkLight(x,y,rad,col,pow,fl,fs,ph){
+  const m=Math.max(1,Math.max(col[0],Math.max(col[1],col[2])));
+  lights.push({x:x+0.5,y:y+0.5,rad:rad,cr:col[0]/m,cg:col[1]/m,cb:col[2]/m,
+    pow:pow===undefined?1:pow,fl:fl===undefined?0:fl,fs:fs===undefined?2:fs,
+    ph:ph===undefined?rnd()*100:ph,k:1});
+  return lights.length-1;
+}
+function flickerOf(l,t){
+  switch(l.fl){
+    case 1:return 0.86+0.14*Math.sin(t*l.fs+l.ph);
+    case 2:{const f=hash1(Math.floor(t*9)+l.ph);return f<0.11?0.13:0.92+0.08*Math.sin(t*34+l.ph);}
+    case 3:return 0.34+0.66*Math.pow(Math.abs(Math.sin(t*l.fs+l.ph)),3);
+    case 4:return 0.72+0.28*Math.sin(t*l.fs+l.ph)*Math.sin(t*l.fs*0.37+l.ph);
+    default:return 1;
+  }
+}
+
+/* One bake per city. Everything the renderer needs to know about how a
+   surface is lit is already in LM, so no per-frame light splatting. */
+function bakeLight(){
+  LM.fill(0);
+  for(const l of lights){
+    if(l.rad<=0) continue;
+    const R=l.rad,R2=R*R,inv=1/R;
+    const cr=l.cr*l.pow,cg=l.cg*l.pow,cb=l.cb*l.pow;
+    const x0=Math.max(0,Math.ceil(l.x-R)),x1=Math.min(W-1,Math.floor(l.x+R));
+    const y0=Math.max(0,Math.ceil(l.y-R)),y1=Math.min(H-1,Math.floor(l.y+R));
+    for(let y=y0;y<=y1;y++){
+      const dy=y+0.5-l.y,row=y*W;
+      for(let x=x0;x<=x1;x++){
+        const dx=x+0.5-l.x,d2=dx*dx+dy*dy;
+        if(d2>R2) continue;
+        let a=1-Math.sqrt(d2)*inv;a*=a;
+        const o=(row+x)*3;
+        LM[o]+=cr*a;LM[o+1]+=cg*a;LM[o+2]+=cb*a;
+      }
+    }
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   4. city generation
+   ══════════════════════════════════════════════════════════════════ */
+let seedStr='';
+
+function genCity(seed){
+  seedStr=seed;
+  rnd=mulberry32(xmur3(seed)());
+  T.ch.fill(G.SP);T.flag.fill(0);T.sign.fill(-1);T.hgt.fill(0);T.wc.fill(0);
+  T.r.fill(0);T.g.fill(0);T.b.fill(0);
+  lights=[];ents=[];nearEnts=[];shardTotal=0;
+
+  const dseeds=[];
+  for(let i=0;i<DISTRICTS.length;i++) dseeds.push({x:ri(12,W-12),y:ri(12,H-12),i:i});
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    let best=0,bd=1e9;
+    for(const s of dseeds){const dx=x-s.x,dy=y-s.y,d=dx*dx+dy*dy;if(d<bd){bd=d;best=s.i;}}
+    dmap[y*W+x]=best;
+  }
+
+  /* sea rim */
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    if(x<3||y<3||x>=W-3||y>=H-3)
+      set(x,y,chance(.5)?C_('~'):G.SP,[18+ri(-4,6),36+ri(-6,8),54+ri(-8,12)],WATER);
+  }
+
+  const vr=[],hr=[];
+  let x=ri(6,10);
+  while(x<W-10){const w=chance(.20)?5:(chance(.45)?3:2);vr.push({p:x,w:w});x+=w+ri(10,21);}
+  let y=ri(5,9);
+  while(y<H-9){const w=chance(.18)?4:(chance(.45)?3:2);hr.push({p:y,w:w});y+=w+ri(8,18);}
+
+  /* wet asphalt: near-neutral so it takes the colour of the neon above it */
+  const asphalt=()=>[48+ri(-7,7),46+ri(-7,7),49+ri(-7,10)];
+  function paintRoad(x0,y0,x1,y1){
+    for(let yy=y0;yy<=y1;yy++)for(let xx=x0;xx<=x1;xx++){
+      if(!inb(xx,yy)||(T.flag[yy*W+xx]&WATER))continue;
+      set(xx,yy,G.SP,asphalt(),ROAD);
+    }
+  }
+  for(const r of vr) paintRoad(r.p,3,r.p+r.w-1,H-4);
+  for(const r of hr) paintRoad(3,r.p,W-4,r.p+r.w-1);
+
+  /* centre-line dashes, as a brighter albedo so the floor pass picks
+     them up without needing to know where the roads are */
+  const paint=[168,148,96];
+  for(const r of vr) if(r.w>=3){
+    const c=r.p+(r.w>>1);
+    for(let yy=4;yy<H-4;yy++) if((yy%4)<2&&(T.flag[yy*W+c]&ROAD)) set(c,yy,G.SP,paint,ROAD);
+  }
+  for(const r of hr) if(r.w>=3){
+    const c=r.p+(r.w>>1);
+    for(let xx=4;xx<W-4;xx++) if((xx%5)<2&&(T.flag[c*W+xx]&ROAD)) set(xx,c,G.SP,paint,ROAD);
+  }
+
+  /* canal */
+  if(hr.length>2){
+    const ci=ri(1,hr.length-2),cr=hr[ci];
+    const y0=cr.p-1,y1=cr.p+cr.w;
+    for(let yy=y0;yy<=y1;yy++)for(let xx=4;xx<W-4;xx++)
+      set(xx,yy,chance(.6)?C_('~'):G.SP,[38+ri(-6,8),52+ri(-8,12),68+ri(-10,16)],WATER);
+    for(const r of vr) for(let yy=y0;yy<=y1;yy++)for(let xx=r.p;xx<r.p+r.w;xx++)
+      set(xx,yy,G.SP,[96,92,96],ROAD);
+    cr.water=true;
+  }
+
+  function spans(list,max){
+    const out=[];let prev=4;
+    for(const r of list){if(r.p-1>=prev)out.push([prev,r.p-1]);prev=r.p+r.w;}
+    if(max-5>=prev)out.push([prev,max-5]);
+    return out;
+  }
+  const xS=spans(vr,W),yS=spans(hr,H);
+  for(const a of xS)for(const b of yS) carveBlock(a[0],b[0],a[1],b[1]);
+
+  /* landmark megatowers */
+  for(let i=0;i<4;i++){
+    const bx=ri(14,W-24),by=ri(12,H-22);
+    const bw=ri(8,11),bh=ri(8,11);
+    let clear=true;
+    for(let yy=by;yy<=by+bh&&clear;yy++)for(let xx=bx;xx<=bx+bw;xx++)
+      if(!inb(xx,yy)||(T.flag[yy*W+xx]&(ROAD|WATER))){clear=false;break;}
+    if(clear) building(bx,by,bx+bw,by+bh,dmap[by*W+bx],'mega');
+  }
+
+  populate(vr,hr);
+  bakeLight();
+  buildMinimap();
+}
+
+function carveBlock(x0,y0,x1,y1){
+  if(x1-x0<1||y1-y0<1)return;
+  const D=dmap[Math.floor((y0+y1)/2)*W+Math.floor((x0+x1)/2)];
+  const pave=()=>[72+ri(-12,12),69+ri(-12,12),72+ri(-12,14)];
+  for(let yy=y0;yy<=y1;yy++)for(let xx=x0;xx<=x1;xx++)
+    if(xx===x0||xx===x1||yy===y0||yy===y1) set(xx,yy,G.SP,pave(),WALK);
+
+  const lx0=x0+1,ly0=y0+1,lx1=x1-1,ly1=y1-1;
+  if(lx1-lx0<1||ly1-ly0<1)return;
+  const w=lx1-lx0+1,h=ly1-ly0+1,roll=rnd();
+  if(w>=5&&h>=4&&roll<.07){park(lx0,ly0,lx1,ly1);return;}
+  if(w>=6&&h>=5&&roll<.13){plaza(lx0,ly0,lx1,ly1,D);return;}
+
+  const lots=[];
+  bsp(lx0,ly0,lx1,ly1,0,lots);
+  for(const l of lots){
+    if(l.x1-l.x0<1||l.y1-l.y0<1) continue;
+    if((l.x1-l.x0)<2&&(l.y1-l.y0)<2&&chance(.5)) continue;
+    building(l.x0,l.y0,l.x1,l.y1,D,null);
+  }
+}
+function bsp(x0,y0,x1,y1,d,out){
+  const w=x1-x0+1,h=y1-y0+1;
+  if(w<4||h<4||d>4||(w<10&&h<10&&chance(.42))){out.push({x0:x0,y0:y0,x1:x1,y1:y1});return;}
+  if(w>=h){
+    const cut=x0+ri(Math.max(2,Math.floor(w*.32)),Math.max(2,Math.floor(w*.66)));
+    alley(cut,cut,y0,y1);bsp(x0,y0,cut-1,y1,d+1,out);bsp(cut+1,y0,x1,y1,d+1,out);
+  }else{
+    const cut=y0+ri(Math.max(2,Math.floor(h*.32)),Math.max(2,Math.floor(h*.66)));
+    alley(x0,x1,cut,cut);bsp(x0,y0,x1,cut-1,d+1,out);bsp(x0,cut+1,x1,y1,d+1,out);
+  }
+}
+function alley(x0,x1,y0,y1){
+  for(let yy=y0;yy<=y1;yy++)for(let xx=x0;xx<=x1;xx++){
+    set(xx,yy,G.SP,[36+ri(-7,9),34+ri(-7,9),37+ri(-7,10)],ALLEY);
+    if(chance(.05)){
+      const col=hsl(ri(160,340),.9,.6);
+      mkLight(xx,yy,ri(3,5),col,.8,2,3,rnd()*90);
+    }
+  }
+}
+function park(x0,y0,x1,y1){
+  /* open ground. Filling a park with solid foliage tiles turns it into a
+     flat green wall straight across the view — the trees have to be sparse
+     columns you can see between. */
+  for(let yy=y0;yy<=y1;yy++)for(let xx=x0;xx<=x1;xx++)
+    set(xx,yy,G.SP,[34+ri(-9,10),64+ri(-12,18),40+ri(-10,14)],0);
+  const n=Math.max(1,Math.floor((x1-x0+1)*(y1-y0+1)*0.09));
+  for(let i=0;i<n;i++){
+    const tx=ri(x0,x1),ty=ri(y0,y1);
+    set(tx,ty,G.S2,[28+ri(-6,8),72+ri(-10,16),42+ri(-8,12)],SOLID);
+    setH(tx,ty,tx,ty,rf(1.7,2.8));
+  }
+  const px=Math.floor((x0+x1)/2),py=Math.floor((y0+y1)/2);
+  if(walkable(px,py)) mkLight(px,py,7,[120,220,255],1.05,1,1.5);
+}
+function plaza(x0,y0,x1,y1,D){
+  for(let yy=y0;yy<=y1;yy++)for(let xx=x0;xx<=x1;xx++)
+    set(xx,yy,G.SP,[76+ri(-12,10),73+ri(-12,10),78+ri(-12,12)],WALK);
+  const n=ri(2,4);
+  for(let i=0;i<n;i++){
+    const sx=ri(x0,Math.max(x0,x1-2)),sy=ri(y0,y1);
+    const col=hsl(pick(DISTRICTS[D].hues)+ri(-20,20),.95,.62);
+    for(let k=0;k<3&&sx+k<=x1;k++){ set(sx+k,sy,G.S2,col,SOLID|EMIT); setH(sx+k,sy,sx+k,sy,1.1); }
+    mkLight(sx+1,sy,ri(6,9),col,1.3,chance(.3)?2:1,rf(2,6));
+    if(walkable(sx+1,sy+1)) ents.push(mkProp(sx+1,sy+1,'food'));
+  }
+}
+function roadNear(x,y,dx,dy){
+  for(let k=1;k<=3;k++){
+    const f=flagAt(x+dx*k,y+dy*k);
+    if(f&(ROAD|WALK))return true;
+    if(f&SOLID)return false;
+  }
+  return false;
+}
+
+function building(x0,y0,x1,y1,D,force){
+  const w=x1-x0+1,h=y1-y0+1;
+  if(w<2||h<2)return;
+  const dist=DISTRICTS[D];
+  const style=force||((w>=6&&h>=6&&chance(.58))?'tower':(w<=3||h<=3)?'shop':'block');
+  const hue=pick(dist.hues)+ri(-14,14);
+  const tall=style==='tower'||style==='mega';
+  /* Real skyline scale. At the old 4-13 you only ever saw two low boxes
+     up the street; the towers have to run off the top of the frame. */
+  const height=style==='mega'?rf(24,46):style==='tower'?rf(14,30):style==='shop'?rf(1.8,3.4):rf(7,17);
+
+  /* dark concrete. The facade is a backdrop — lit windows and neon are
+     what the eye should land on, and they only read against something dim */
+  /* One signature hue per building, carried on every tile of it — and the
+     concrete is a dark version of the same hue. That is what makes a tower
+     read as "the red one" whole, instead of grey mass speckled with
+     unrelated warm and cool windows. */
+  /* Districts are the palette. Reaching past dist.hues to a global rainbow
+     made every neighbour a different hue family, so no block ever read as
+     one place. */
+  const wHue=pick(dist.hues)+ri(-10,10);
+  /* max(1,...): 0 is the "not a building" sentinel. Trees are SOLID with a
+     height but never get a wc, so at 0 they were being given hue-0 windows
+     and every tree lit up with a grid of red panes. */
+  const wByte=Math.max(1,Math.round((((wHue%360)+360)%360)/360*255));
+  const wall=hsl(wHue+ri(-8,8),rf(.20,.38),tall?rf(.085,.125):rf(.075,.11));
+  for(let yy=y0;yy<=y1;yy++)for(let xx=x0;xx<=x1;xx++){
+    /* ±6 on an albedo near 30 is a ±20% per-tile swing — once the facade
+       renders as a coherent surface that reads as blotches, not texture. */
+    set(xx,yy,G.S2,[wall[0]+ri(-2,2),wall[1]+ri(-2,2),wall[2]+ri(-2,2)],SOLID);
+    T.wc[yy*W+xx]=wByte;
+  }
+  setH(x0,y0,x1,y1,height);
+
+  /* rooftop beacon on anything tall enough to matter on the skyline */
+  if(tall&&w>=5&&h>=5){
+    const bx=Math.floor((x0+x1)/2),by=Math.floor((y0+y1)/2);
+    mkLight(bx,by,ri(5,8),[255,54,54],0.9,3,rf(1.1,2.0));
+  }
+
+  /* signage on faces that see a street */
+  const faces=[];
+  const mx=Math.floor((x0+x1)/2),my=Math.floor((y0+y1)/2);
+  if(roadNear(mx,y0,0,-1))faces.push('N');
+  if(roadNear(mx,y1,0,1))faces.push('S');
+  if(roadNear(x0,my,-1,0))faces.push('W');
+  if(roadNear(x1,my,1,0))faces.push('E');
+  if(!faces.length)return;
+
+  const nSigns=(style==='mega')?ri(2,3):(chance(.78)?1:(chance(.5)?2:0));
+  for(let s=0;s<nSigns&&faces.length;s++){
+    /* splice: nothing consumed `faces`, so a mega tower could place two
+       signs on the same wall, the second overwriting the first's glyphs
+       while the first's light stayed baked into LM with nothing behind it */
+    const face=faces.splice(Math.floor(rnd()*faces.length),1)[0];
+    /* weighted to the genre's cyan / magenta tension */
+    const shue=chance(.24)?hue+ri(-30,30):pick([318,318,326,190,190,196,46,268,352,168,286,206]);
+    const col=hsl(shue,rf(.92,1),rf(.58,.70));
+    const word=pick(WORDS);
+    const fl=chance(.26)?2:(chance(.45)?1:0);
+    if(face==='N'||face==='S'){
+      const yy=(face==='N')?y0:y1;
+      const len=Math.min(word.length,w);
+      if(len<2)continue;
+      const sx=ri(x0,Math.max(x0,x1-len+1));
+      const li=mkLight(sx+Math.floor(len/2),yy+(face==='N'?-0.5:0.5),ri(7,12),col,1.4,fl,rf(1.4,5),rnd()*90);
+      for(let k=0;k<len;k++) set(sx+k,yy,word.charCodeAt(k),wall,EMIT|SOLID,li);
+    }else{
+      const xx=(face==='W')?x0:x1;
+      const len=Math.min(word.length,h);
+      if(len<2)continue;
+      const sy=ri(y0,Math.max(y0,y1-len+1));
+      const li=mkLight(xx+(face==='W'?-0.5:0.5),sy+Math.floor(len/2),ri(7,12),col,1.4,fl,rf(1.4,5),rnd()*90);
+      for(let k=0;k<len;k++) set(xx,sy+k,word.charCodeAt(k),wall,EMIT|SOLID,li);
+    }
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   5. props, people, traffic
+   ══════════════════════════════════════════════════════════════════ */
+const BARKS=[
+  "Rain's acid-thin tonight. Keeps the drones grounded, so — small mercies.",
+  "You didn't see me. I didn't see you. That's how the block stays friendly.",
+  "Third blackout this week. Grid's chewing itself.",
+  "They rebuilt the tower in four days. Nobody asked what happened to floor 12.",
+  "Cheap advice: never take the shortcut past the canal after 2AM.",
+  "I remember when this street had sky over it.",
+  "Sign says OPEN. Sign has said OPEN for eleven years.",
+  "You walk like somebody who still has an address.",
+  "Buy something or keep moving, choom. Preferably the first one.",
+  "Every shard you pull off the grid is a minute somebody else lived.",
+  "The rain isn't following you. Probably.",
+  "Careful. Half the neon out here is load-bearing."
+];
+const TERMS=[
+  "PUBLIC TERMINAL // NODE {N}\nWEATHER: PARTICULATE RAIN, INDEFINITE.\nADVISORY: DO NOT DRINK.",
+  "PUBLIC TERMINAL // NODE {N}\nMISSING PERSONS: 4,211 THIS QUARTER.\nFILING WINDOW: CLOSED.",
+  "PUBLIC TERMINAL // NODE {N}\nCURFEW SUSPENDED PENDING BUDGET.\nENFORCEMENT CONTINUES ANYWAY.",
+  "PUBLIC TERMINAL // NODE {N}\nTRANSIT: LINE 3 FLOODED. LINE 7 FLOODED.\nWALK.",
+  "PUBLIC TERMINAL // NODE {N}\nYOU ARE THE 1,204,882ND VISITOR.\nCONGRATULATIONS. NO PRIZE."
+];
+const FOOD=[
+  "The pot has been going since before the war. Nobody has ever seen the bottom of it.",
+  "\"Extra chili. On the house. You look like you're walking somewhere stupid.\"",
+  "Steam, salt, something almost like pork. Best 4 credits you'll spend tonight.",
+  "\"Sit. Eat. The rain will still be there in ten minutes.\""
+];
+const VEND=[
+  "SYNTH-COLA — 2cr. The can is warm. The drink is warmer.",
+  "OUT OF STOCK. OUT OF STOCK. OUT OF STOCK. CIGARETTES — 40cr.",
+  "The machine takes your credit and gives you a small paper square that says LUCKY.",
+  "A can drops. Then three more. The machine seems relieved."
+];
+const NAMES=['STRAY','WIRE','MOTH','ODESSA','KID VECTOR','NINE','HALCYON','TOKEN','MRS. IM',
+  'GREY','SANTOS','PIXEL','OLD ROOK','ANJU','FUSE','CANDLE'];
+
+function mkProp(x,y,kind){
+  /* street furniture is solid — walking through a noodle stand was the
+     single most immersion-breaking thing left. rad is kept under half a
+     tile so a prop on a narrow pavement can't pin you against a wall. */
+  const e={x:x+0.5,y:y+0.5,kind:kind,h:1.0,zoff:0,solid:kind!=='shard',rad:0.26};
+  if(kind==='food'){
+    e.ch=C_('n');e.col=[255,150,60];e.name='NOODLE STAND';e.prompt='EAT';
+    e.lines=[pick(FOOD)];e.h=1.2;e.glow=1;
+    e.light=mkLight(x,y,6,[255,150,60],1.0,4,2.2);
+  }else if(kind==='vend'){
+    e.ch=C_('V');e.col=[90,230,255];e.name='VENDING UNIT';e.prompt='USE';
+    e.lines=[pick(VEND)];e.h=1.3;e.glow=1;
+    e.light=mkLight(x,y,4,[90,230,255],.9,chance(.4)?2:1,4);
+  }else if(kind==='term'){
+    e.ch=C_('T');e.col=[120,255,160];e.name='PUBLIC TERMINAL';e.prompt='READ';
+    e.lines=[pick(TERMS).replace('{N}',String(ri(100,999)))];e.h=1.1;e.glow=1;
+    e.light=mkLight(x,y,4,[120,255,160],.85,1,3);
+  }else if(kind==='shrine'){
+    e.ch=C_('^');e.col=[255,225,190];e.name='STREET SHRINE';e.prompt='PAY RESPECTS';
+    e.lines=["Somebody keeps the candles lit. Nobody admits to it.",
+             "A hundred paper tags, each with a name the city forgot."];
+    e.h=0.9;e.glow=1;
+    e.light=mkLight(x,y,5,[255,200,150],.95,4,1.6);
+  }else if(kind==='shard'){
+    e.ch=C_('*');e.col=[120,255,255];e.name='DATA SHARD';e.prompt='JACK IN';
+    e.pulse=rnd()*6;e.h=0.4;e.zoff=0.45;e.glow=1;
+    e.light=mkLight(x,y,5,[120,255,255],1.0,1,3.4);
+    shardTotal++;
+  }else if(kind==='lift'){
+    e.ch=C_('I');e.col=[190,235,255];e.name='SERVICE LIFT';e.prompt='RIDE';
+    e.h=1.5;e.glow=1;
+    e.light=mkLight(x,y,5,[150,215,255],.9,1,2.6);
+  }else if(kind==='fixer'){
+    e.ch=C_('$');e.col=[255,205,90];e.name=pick(NAMES);e.prompt='TALK';
+    e.lines=["\"Everything's for sale. Even the stuff that isn't.\"",
+             "\"You find shards? Bring 'em here. I'll pretend to be surprised.\""];
+    e.h=0.95;e.glow=1;
+    e.light=mkLight(x,y,4,[255,205,90],.8,1,2.4);
+  }
+  return e;
+}
+function findOpen(pred,tries){
+  for(let i=0;i<(tries||900);i++){
+    const x=ri(5,W-6),y=ri(5,H-6);
+    if(walkable(x,y)&&(!pred||pred(x,y))) return {x:x,y:y};
+  }
+  return null;
+}
+function mkCar(x,y,dx,dy){
+  return {kind:'car',x:x,y:y,dx:dx,dy:dy,spd:rf(5,11),len:ri(2,3),h:0.75,zoff:0,
+    ch:G.S3,col:hsl(pick([20,38,200,326])+ri(-10,10),.34,.62),glow:1};
+  /* No headlight/taillight lights here. They were baked into LM at tile
+     (0,0) and never moved after the raycaster rewrite, so ~47 of them
+     stacked into one searing blob in the map corner. Cars are glow:1 and
+     lit by the sprite path anyway. */
+}
+
+/* street glow: sodium amber is the backbone, with cyan and hot pink
+   mixed in so the pavement carries the genre's colour tension too */
+function lampColor(){
+  const r=rnd();
+  if(r<0.54) return [255,206,148];
+  if(r<0.78) return [140,220,255];
+  return [255,110,205];
+}
+function populate(vr,hr){
+  const lamp=(x,y)=>{
+    if(!inb(x,y)||(T.flag[y*W+x]&(WALK|ROAD))===0)return;
+    mkLight(x,y,ri(6,9),lampColor(),1.05,chance(.16)?2:(chance(.4)?1:0),rf(1,4));
+  };
+  for(const r of vr) for(let yy=6;yy<H-6;yy+=ri(6,10))
+    for(const side of [r.p-1,r.p+r.w]) lamp(side,yy);
+  for(const r of hr){
+    if(r.water)continue;
+    for(let xx=6;xx<W-6;xx+=ri(7,12))
+      for(const side of [r.p-1,r.p+r.w]) lamp(xx,side);
+  }
+
+  const near=(x,y)=>((flagAt(x,y)&(WALK|ALLEY))!==0);
+  /* A solid obstacle dropped into a one-tile sidewalk or alley seals it
+     completely — 65% of street trees were doing exactly that. Only place
+     one where at least three cardinal neighbours stay walkable, so there
+     is always a way round. */
+  const roomy=(x,y)=>{
+    let n=0;
+    if(walkable(x+1,y))n++; if(walkable(x-1,y))n++;
+    if(walkable(x,y+1))n++; if(walkable(x,y-1))n++;
+    return n>=3;
+  };
+
+  /* street trees: sidewalk tiles that face a road, spaced out */
+  for(let y=5;y<H-5;y++)for(let x=5;x<W-5;x++){
+    if((T.flag[y*W+x]&WALK)===0) continue;
+    if(!(flagAt(x+1,y)&ROAD||flagAt(x-1,y)&ROAD||flagAt(x,y+1)&ROAD||flagAt(x,y-1)&ROAD)) continue;
+    if(((x*7+y*13)%9)!==0||!chance(.55)) continue;
+    if(!roomy(x,y)) continue;
+    set(x,y,G.S2,[26+ri(-6,8),68+ri(-12,18),38+ri(-8,12)],SOLID);
+    setH(x,y,x,y,rf(2.2,3.6));
+  }
+  for(const [kind,n] of [['food',34],['vend',34],['term',22],['shrine',12],['fixer',12]])
+    for(let i=0;i<n;i++){const s=findOpen((x,y)=>near(x,y)&&roomy(x,y));if(s)ents.push(mkProp(s.x,s.y,kind));}
+  for(let i=0;i<26;i++){const s=findOpen(null);if(s)ents.push(mkProp(s.x,s.y,'shard'));}
+
+
+  /* Service lifts: a pavement tile beside a tall building, remembering that
+     building's height and a tile of its roof to put you down on. */
+  let liftN=0;
+  for(let i=0;i<2600&&liftN<14;i++){
+    const x=ri(5,W-6),y=ri(5,H-6);
+    if(!walkable(x,y)||!(flagAt(x,y)&(WALK|ROAD))) continue;
+    let bx=-1,by=-1;
+    for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+      const nx=x+dx,ny=y+dy;
+      if(!inb(nx,ny)) continue;
+      const ni=ny*W+nx;
+      if((T.flag[ni]&SOLID)&&T.wc[ni]!==0&&T.hgt[ni]*0.25>=6){bx=nx;by=ny;break;}
+    }
+    if(bx<0) continue;
+    if(!roomy(x,y)) continue;
+    const e=mkProp(x,y,'lift');
+    e.roofH=T.hgt[by*W+bx]*0.25;
+    e.rx=bx+0.5; e.ry=by+0.5;
+    ents.push(e); liftN++;
+  }
+
+  for(let i=0;i<190;i++){
+    const s=findOpen(near);if(!s)continue;      /* on pavement, where you'll see them */
+    const enf=chance(.09);
+    ents.push({kind:'npc',x:s.x+.5,y:s.y+.5,ch:enf?C_('!'):C_('&'),
+      col:enf?[255,90,90]:hsl(ri(0,360),.42,.66),
+      name:enf?'ENFORCER':pick(NAMES),prompt:'TALK',lines:[pick(BARKS)],
+      h:0.9,zoff:0,solid:true,rad:0.20,draw:null,
+      vx:0,vy:0,spd:enf?1.9:rf(1.0,1.9),t:rnd()*2});
+  }
+  for(let i=0;i<16;i++){
+    const s=findOpen();if(!s)continue;
+    ents.push({kind:'cat',x:s.x+.5,y:s.y+.5,ch:C_('w'),col:[200,185,168],
+      h:0.28,zoff:0,vx:0,vy:0,spd:3.4,t:rnd()});
+  }
+  for(let i=0;i<9;i++){
+    const a=rnd()*TAU,col=chance(.5)?[255,70,70]:[120,255,255];
+    ents.push({kind:'drone',x:ri(10,W-10)+.5,y:ri(10,H-10)+.5,ch:C_('+'),col:col,
+      h:0.35,zoff:rf(2.2,4.0),glow:1,
+      vx:Math.cos(a),vy:Math.sin(a),spd:rf(3,6),t:rnd()*3});
+  }
+  for(const r of vr) if(r.w>=3) for(let i=0,n=ri(1,3);i<n;i++){
+    const dir=chance(.5)?1:-1;
+    ents.push(mkCar(r.p+(dir>0?r.w-1:0)+.5,ri(6,H-6)+.5,0,dir));
+  }
+  for(const r of hr) if(r.w>=3&&!r.water) for(let i=0,n=ri(1,2);i<n;i++){
+    const dir=chance(.5)?1:-1;
+    ents.push(mkCar(ri(6,W-6)+.5,r.p+(dir>0?0:r.w-1)+.5,dir,0));
+  }
+
+  /* Give each pedestrian a hangout — the nearest stand, shrine or fixer.
+     Without one they diffuse evenly across the whole map. */
+  const draws=ents.filter(e=>e.kind==='food'||e.kind==='shrine'||e.kind==='fixer'||e.kind==='vend');
+  if(draws.length) for(const e of ents){
+    if(e.kind!=='npc') continue;
+    let best=null,bd=1e9;
+    for(const d of draws){
+      const dx2=d.x-e.x,dy2=d.y-e.y,m=dx2*dx2+dy2*dy2;
+      if(m<bd){bd=m;best=d;}
+    }
+    if(bd<26*26) e.draw=best;
+  }
+
+  let start=null;
+  /* Props are solid now, and they sit on WALK tiles — spawning on one traps
+     the player permanently, because every candidate step is still inside its
+     radius. Turning still works, so it reads as a freeze, not a bug. */
+  const occupied=(cx,cy)=>{
+    for(const e of ents){
+      if(!e.solid) continue;
+      const dx=e.x-cx,dy=e.y-cy;
+      if(dx*dx+dy*dy<0.5625) return true;
+    }
+    return false;
+  };
+  for(let i=0;i<3000&&!start;i++){
+    const x=ri(W/2-30,W/2+30),y=ri(H/2-20,H/2+20);
+    if(walkable(x,y)&&(flagAt(x,y)&(ROAD|WALK))&&!occupied(x+.5,y+.5)) start={x:x,y:y};
+  }
+  if(!start) start=findOpen()||{x:W>>1,y:H>>1};
+  P.x=start.x+.5;P.y=start.y+.5;P.a=rnd()*TAU;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   6. player, input
+   ══════════════════════════════════════════════════════════════════ */
+/* z is eye height above the ground plane; roof is the height of the surface
+   you're standing on (0 = street). Everything in the projection reads z, so
+   getting onto a roof is just moving the camera up and swapping which plane
+   the floor pass casts against. */
+const P={x:0,y:0,a:0,cred:0,shards:0,bob:0,pitch:0,z:0.5,roof:0,jam:0};
+const keys=Object.create(null);
+let touchMove={x:0,y:0};
+let time=0,clock=22*60,rainPow=.55,started=false;
+let optBloom=true,optRain=true,optFps=false,optSound=false;
+const reduceMotion=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const $=id=>document.getElementById(id);
+const elHud={d:$('hDist'),t:$('hTime'),r:$('hRain'),s:$('hShard'),c:$('hCred')};
+const elLog=$('log'),elPrompt=$('prompt'),elTalk=$('talk'),
+      elWho=$('tWho'),elTxt=$('tTxt'),elFps=$('fps'),elHelp=$('help');
+
+let logLines=[];
+function say(text,cls){
+  logLines.push({t:text,c:cls||''});
+  if(logLines.length>4) logLines.shift();
+  let h='';
+  for(const l of logLines)
+    h+='<div class="'+l.c+'">'+l.t.replace(/[<>&]/g,m=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[m]))+'</div>';
+  elLog.innerHTML=h;
+}
+
+let dlg=null;
+function openDialogue(who,lines){
+  dlg={who:who,lines:lines.slice(),i:0,shown:0,full:lines[0]||'',done:false,ax:P.x,ay:P.y};
+  elTalk.style.display='block';elWho.textContent=who;elTxt.textContent='';
+  beep(520,.05,.03);
+}
+function closeDialogue(){dlg=null;elTalk.style.display='none';}
+function advDialogue(){
+  if(!dlg)return;
+  if(!dlg.done){dlg.shown=dlg.full.length;dlg.done=true;elTxt.textContent=dlg.full;return;}
+  dlg.i++;
+  if(dlg.i>=dlg.lines.length){closeDialogue();return;}
+  dlg.full=dlg.lines[dlg.i];dlg.shown=0;dlg.done=false;elTxt.textContent='';
+}
+function tickDialogue(dt){
+  if(!dlg||dlg.done)return;
+  const prev=dlg.shown|0;
+  dlg.shown=Math.min(dlg.full.length,dlg.shown+dt*52);
+  if((dlg.shown|0)!==prev){
+    elTxt.textContent=dlg.full.slice(0,dlg.shown|0);
+    if(((dlg.shown|0)&3)===0) beep(880+Math.random()*220,.012,.008);
+  }
+  if(dlg.shown>=dlg.full.length) dlg.done=true;
+}
+
+addEventListener('keydown',e=>{
+  if(!started){boot();e.preventDefault();return;}
+  const k=e.key.toLowerCase();
+  keys[k]=true;
+  if(k==='escape'){ if(dlg) closeDialogue(); else elHelp.style.display='none'; }
+  if(k==='?'||k==='/'){elHelp.style.display=elHelp.style.display==='grid'?'none':'grid';e.preventDefault();}
+  if(k==='e'||k===' '){ if(dlg) advDialogue(); else interact(); e.preventDefault(); }
+  if(k==='b'){optBloom=!optBloom;say('bloom '+(optBloom?'on':'off'),'sys');}
+  if(k==='r'){optRain=!optRain;say('rain '+(optRain?'on':'off'),'sys');}
+  if(k==='f'){optFps=!optFps;elFps.style.display=optFps?'block':'none';}
+  if(k==='m'){toggleSound();}
+  if(k==='n'){newCity();}
+  if(k==='-'||k==='_'){zoom=clamp(zoom+1,-3,8);resize();say('grid '+cols+'x'+rows,'sys');}
+  if(k==='='||k==='+'){zoom=clamp(zoom-1,-3,8);resize();say('grid '+cols+'x'+rows,'sys');}
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].indexOf(k)>=0) e.preventDefault();
+});
+addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+addEventListener('blur',()=>{for(const k in keys)keys[k]=false;touchMove.x=touchMove.y=0;});
+
+/* mouse look */
+let locked=false;
+cv.addEventListener('click',()=>{
+  if(!started){boot();return;}
+  if(!locked&&cv.requestPointerLock) cv.requestPointerLock();
+});
+document.addEventListener('pointerlockchange',()=>{locked=(document.pointerLockElement===cv);});
+addEventListener('mousemove',e=>{
+  if(!locked) return;
+  P.a+=e.movementX*0.0022;
+  /* Pitch is just a horizon offset in a raycaster — and without it you
+     physically cannot take in a 40-unit tower from the pavement. */
+  P.pitch=clamp(P.pitch-e.movementY*0.06,-rows*0.55,rows*0.95);
+});
+
+/* touch: left half walks, right half looks */
+const elTouch=$('touch'),elStick=$('stick'),elTBtn=$('tbtn');
+let moveId=null,lookId=null,mOrigin={x:0,y:0},lookLast=0,tapStart=0,tapMoved=0;
+if(('ontouchstart' in window)||navigator.maxTouchPoints>0){
+  elTouch.style.display='block';
+  elTouch.addEventListener('touchstart',e=>{
+    if(!started){boot();return;}
+    for(const t of e.changedTouches){
+      if(e.target===elTBtn) continue;
+      if(t.clientX<window.innerWidth*0.5&&moveId===null){
+        moveId=t.identifier;mOrigin={x:t.clientX,y:t.clientY};
+        elStick.style.display='block';
+        elStick.style.left=t.clientX+'px';elStick.style.top=t.clientY+'px';
+      }else if(lookId===null){
+        lookId=t.identifier;lookLast=t.clientX;tapStart=performance.now();tapMoved=0;
+      }
+    }
+    e.preventDefault();
+  },{passive:false});
+  elTouch.addEventListener('touchmove',e=>{
+    for(const t of e.changedTouches){
+      if(t.identifier===moveId){
+        const dx=t.clientX-mOrigin.x,dy=t.clientY-mOrigin.y;
+        const m=Math.hypot(dx,dy)||1,cl=Math.min(m,52)/52;
+        touchMove.x=dx/m*cl;touchMove.y=dy/m*cl;
+        elStick.firstElementChild.style.transform='translate('+(touchMove.x*34)+'px,'+(touchMove.y*34)+'px)';
+      }else if(t.identifier===lookId){
+        const d=t.clientX-lookLast;lookLast=t.clientX;tapMoved+=Math.abs(d);
+        P.a+=d*0.006;
+      }
+    }
+    e.preventDefault();
+  },{passive:false});
+  const end=e=>{
+    for(const t of e.changedTouches){
+      if(t.identifier===moveId){moveId=null;touchMove.x=touchMove.y=0;elStick.style.display='none';}
+      else if(t.identifier===lookId){
+        if(performance.now()-tapStart<240&&tapMoved<10){ if(dlg)advDialogue(); else interact(); }
+        lookId=null;
+      }
+    }
+  };
+  elTouch.addEventListener('touchend',end);elTouch.addEventListener('touchcancel',end);
+  elTBtn.addEventListener('touchstart',e=>{e.stopPropagation();if(dlg)advDialogue();else interact();},{passive:true});
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   7. audio
+   ══════════════════════════════════════════════════════════════════ */
+let AC=null,masterGain=null,rainGain=null,musicGain=null,noiseBuf=null;
+let barT=0,bar=0,schedId=null;
+
+/* An original modal-jazz bed, generated live — walking bass, brushed ride
+   and a sparse muted-trumpet line over D dorian. Written in that idiom
+   rather than reproducing any recording. */
+const SCALE=[0,2,3,5,7,9,10];                 /* dorian */
+const ROOT=146.83/2;                          /* D2 */
+const BPM=74, BEAT=60/BPM, SWING=0.62;
+const deg=n=>ROOT*Math.pow(2,(SCALE[((n%7)+7)%7]+12*Math.floor(n/7))/12);
+
+function env(node,t,a,d,peak){
+  const g=node.gain;
+  g.setValueAtTime(0.0001,t);
+  g.exponentialRampToValueAtTime(peak,t+a);
+  g.exponentialRampToValueAtTime(0.0001,t+a+d);
+}
+function bass(t,n){
+  const o=AC.createOscillator(),g=AC.createGain(),lp=AC.createBiquadFilter();
+  o.type='triangle';o.frequency.setValueAtTime(deg(n),t);
+  lp.type='lowpass';lp.frequency.value=420;
+  env(g,t,0.02,BEAT*0.85,0.34);
+  o.connect(lp);lp.connect(g);g.connect(musicGain);o.start(t);o.stop(t+BEAT*1.1);
+}
+function ride(t,vel){
+  const s=AC.createBufferSource(),g=AC.createGain(),hp=AC.createBiquadFilter();
+  s.buffer=noiseBuf;s.playbackRate.value=1.6+Math.random()*0.3;
+  hp.type='highpass';hp.frequency.value=6200;
+  env(g,t,0.006,0.16,0.05*vel);
+  s.connect(hp);hp.connect(g);g.connect(musicGain);s.start(t);s.stop(t+0.3);
+}
+function brush(t){
+  const s=AC.createBufferSource(),g=AC.createGain(),bp=AC.createBiquadFilter();
+  s.buffer=noiseBuf;s.playbackRate.value=0.7;
+  bp.type='bandpass';bp.frequency.value=2100;bp.Q.value=0.6;
+  env(g,t,0.05,0.34,0.028);
+  s.connect(bp);bp.connect(g);g.connect(musicGain);s.start(t);s.stop(t+0.5);
+}
+function horn(t,n,dur){
+  const o=AC.createOscillator(),g=AC.createGain(),bp=AC.createBiquadFilter(),
+        vib=AC.createOscillator(),vg=AC.createGain();
+  o.type='sawtooth';o.frequency.setValueAtTime(deg(n)*4,t);
+  vib.type='sine';vib.frequency.value=5.2;vg.gain.value=3.4;
+  vib.connect(vg);vg.connect(o.frequency);
+  bp.type='bandpass';bp.frequency.value=1150;bp.Q.value=2.6;   /* harmon-mute colour */
+  g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(0.12,t+0.07);
+  g.gain.setValueAtTime(0.12,t+dur*0.7);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  o.connect(bp);bp.connect(g);g.connect(musicGain);
+  o.start(t);vib.start(t);o.stop(t+dur+0.05);vib.stop(t+dur+0.05);
+}
+function rhodes(t,n){
+  for(const iv of [0,2,4,6]){
+    const o=AC.createOscillator(),g=AC.createGain();
+    o.type='sine';o.frequency.setValueAtTime(deg(n+iv)*2,t);
+    env(g,t,0.12,2.2,0.035);
+    o.connect(g);g.connect(musicGain);o.start(t);o.stop(t+2.6);
+  }
+}
+function scheduleBar(t){
+  const walk=[0,4,2,6,0,3,4,1][bar%8];
+  for(let b=0;b<4;b++){
+    const bt=t+b*BEAT;
+    bass(bt,walk+[0,1,2,-1][b]);
+    ride(bt,b%2?0.7:1);
+    if(b===0||b===2) ride(bt+BEAT*SWING,0.5);
+    if(b===1||b===3) brush(bt);
+  }
+  if(bar%4===0) rhodes(t,walk);
+  if(bar%2===1&&Math.random()<0.75){
+    let n=7+Math.floor(Math.random()*5);
+    const phrase=2+Math.floor(Math.random()*4);
+    let off=Math.random()<0.5?0:BEAT;
+    for(let i=0;i<phrase;i++){
+      const d=(Math.random()<0.35?BEAT*0.5:BEAT*0.75);
+      horn(t+off,n,d*0.92);
+      off+=d; n+=[-2,-1,1,1,2][Math.floor(Math.random()*5)];
+      if(off>BEAT*3.4)break;
+    }
+  }
+  bar++;
+}
+function pump(){
+  if(!AC||!optSound)return;
+  /* Catch-up clamp. After a sleep/resume or a long stall, barT can fall far
+     behind and the loop schedules every missed bar at a past timestamp —
+     they all fire at once as one burst. */
+  if(barT<AC.currentTime) barT=AC.currentTime+0.05;
+  while(barT<AC.currentTime+1.2){ scheduleBar(barT); barT+=BEAT*4; }
+}
+function initAudio(){
+  if(AC)return;
+  try{AC=new (window.AudioContext||window.webkitAudioContext)();}catch(e){return;}
+  masterGain=AC.createGain();masterGain.gain.value=0;masterGain.connect(AC.destination);
+  musicGain=AC.createGain();musicGain.gain.value=0.85;musicGain.connect(masterGain);
+
+  const len=AC.sampleRate*2;
+  noiseBuf=AC.createBuffer(1,len,AC.sampleRate);
+  const d=noiseBuf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*.5;
+
+  const noise=AC.createBufferSource();noise.buffer=noiseBuf;noise.loop=true;
+  const bp=AC.createBiquadFilter();bp.type='bandpass';bp.frequency.value=2400;bp.Q.value=.4;
+  rainGain=AC.createGain();rainGain.gain.value=.05;
+  noise.connect(bp);bp.connect(rainGain);rainGain.connect(masterGain);noise.start();
+
+  /* room tone under the band */
+  const sub=AC.createGain();sub.gain.value=.05;
+  for(const f of [55,55.4]){
+    const o=AC.createOscillator();o.type='sawtooth';o.frequency.value=f;
+    const lp=AC.createBiquadFilter();lp.type='lowpass';lp.frequency.value=140;
+    o.connect(lp);lp.connect(sub);o.start();
+  }
+  sub.connect(masterGain);
+
+  barT=AC.currentTime+0.15;
+  if(schedId) clearInterval(schedId);
+  schedId=setInterval(pump,260);
+}
+function toggleSound(){
+  initAudio();
+  if(!AC)return;
+  if(AC.state==='suspended') AC.resume();
+  optSound=!optSound;
+  masterGain.gain.setTargetAtTime(optSound?.5:0,AC.currentTime,.25);
+  if(optSound){ barT=Math.max(barT,AC.currentTime+0.15); pump(); }
+  say(optSound?'audio on — live modal-jazz bed, no two bars the same':'audio off','sys');
+}
+function beep(freq,dur,vol){
+  if(!optSound||!AC)return;
+  const o=AC.createOscillator(),g=AC.createGain();
+  o.type='square';o.frequency.value=freq;
+  g.gain.setValueAtTime(vol,AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(.0001,AC.currentTime+dur);
+  o.connect(g);g.connect(masterGain);o.start();o.stop(AC.currentTime+dur+.02);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   8. rain
+   ══════════════════════════════════════════════════════════════════ */
+let rain=[];
+function buildRain(){
+  const n=reduceMotion?40:Math.min(190,Math.round(cols*rows*0.035));
+  rain=[];
+  for(let i=0;i<n;i++) rain.push({x:rnd()*(cols+4)-2,y:rnd()*(rows+2)-1,
+    v:rf(26,54),a:rf(.20,.50),c:chance(.75)?C_('|'):C_('/')});
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   9. update
+   ══════════════════════════════════════════════════════════════════ */
+let nearTimer=0,hudTimer=0,miniTimer=0;
+
+function update(dt){
+  time+=dt;
+  clock=(clock+dt*1.6)%1440;
+  updateTOD();
+  rainPow=clamp(.36+.44*Math.sin(time*0.035)+.18*Math.sin(time*0.11),0,1);
+  if(rainGain&&AC) rainGain.gain.value=.02+rainPow*.05;
+
+  /* turn */
+  let turn=0;
+  if(keys['arrowleft']||keys['q'])turn-=1;
+  if(keys['arrowright'])turn+=1;
+  P.a+=turn*2.6*dt;
+  if(P.a>TAU)P.a-=TAU; if(P.a<0)P.a+=TAU;
+
+  /* walk */
+  /* arrows are the full look control: left/right turn, up/down crane */
+  if(keys['arrowup'])   P.pitch=Math.min(P.pitch+dt*rows*0.85, rows*0.95);
+  if(keys['arrowdown']) P.pitch=Math.max(P.pitch-dt*rows*0.85,-rows*0.55);
+
+  let fwd=0,strafe=0;
+  if(keys['w'])fwd+=1;
+  if(keys['s'])fwd-=1;
+  if(keys['a'])strafe-=1;
+  if(keys['d'])strafe+=1;
+  fwd-=touchMove.y;strafe+=touchMove.x;
+  const mag=Math.hypot(fwd,strafe);
+  if(mag>1){fwd/=mag;strafe/=mag;}
+  const sprint=(keys['shift'])?1.9:1;
+  const spd=3.4*sprint;
+  const dx=Math.cos(P.a),dy=Math.sin(P.a);
+  if(mag>0.02){
+    const vx=(dx*fwd-dy*strafe)*spd*dt;
+    const vy=(dy*fwd+dx*strafe)*spd*dt;
+    const ox=P.x, oy=P.y;
+    /* axis-separated so you slide along walls and props instead of sticking */
+    if(free(P.x+vx,P.y)) P.x+=vx;
+    if(free(P.x,P.y+vy)) P.y+=vy;
+    /* Escape hatch. If you're pushing against something and haven't actually
+       moved for a while, drop entity collision for a frame so a pedestrian
+       who wandered into a doorway can never trap you for good. Geometry is
+       still solid — you can squeeze past people, not through walls. */
+    if(Math.abs(P.x-ox)+Math.abs(P.y-oy)<dt*spd*0.05){
+      P.jam+=dt;
+      if(P.jam>0.55){
+        if(!blocked(P.x+vx,P.y)) P.x+=vx;
+        if(!blocked(P.x,P.y+vy)) P.y+=vy;
+      }
+    }else P.jam=0;
+    P.bob+=dt*(sprint>1?15:10)*Math.min(1,mag);
+    if(dlg&&Math.hypot(P.x-dlg.ax,P.y-dlg.ay)>2.6) closeDialogue();
+    if(optSound&&Math.random()<dt*(sprint>1?7:4)) beep(140+Math.random()*60,.03,.012);
+  }else P.bob+=dt*1.2;
+  P.x=clamp(P.x,1.2,W-1.2);P.y=clamp(P.y,1.2,H-1.2);
+
+  /* Drive sign flicker. flickerOf() was dead after the raycaster rewrite —
+     l.k was set to 1 at creation and never touched again, so every fl/fs/ph
+     flicker parameter in the whole city did nothing. */
+  for(let i=0;i<lights.length;i++){ const l=lights[i]; if(l.fl) l.k=flickerOf(l,time); }
+
+  nearTimer-=dt;
+  if(nearTimer<=0){
+    nearTimer=.28;nearEnts.length=0;
+    for(const e of ents){
+      const ex=e.x-P.x,ey=e.y-P.y;
+      if(ex*ex+ey*ey<46*46) nearEnts.push(e);
+    }
+  }
+  for(const e of nearEnts) updateEnt(e,dt);
+  tickDialogue(dt);
+
+  hudTimer-=dt;
+  if(hudTimer<=0){
+    hudTimer=.2;
+    elHud.d.textContent=DISTRICTS[dmap[clamp(Math.floor(P.y),0,H-1)*W+clamp(Math.floor(P.x),0,W-1)]].name;
+    elHud.t.textContent=String(Math.floor(clock/60)).padStart(2,'0')+':'+String(Math.floor(clock%60)).padStart(2,'0');
+    elHud.r.textContent=rainPow<.3?'MIST':(rainPow<.6?'STEADY':'HEAVY');
+    elHud.s.textContent=P.shards+' / '+shardTotal;
+    elHud.c.textContent=P.cred;
+  }
+
+  const t=findTarget();
+  if(t&&!dlg){elPrompt.style.display='block';elPrompt.textContent='[E] '+t.prompt+'  ·  '+(t.name||'');}
+  else elPrompt.style.display='none';
+
+  if(optRain){
+    const wind=6+rainPow*8;
+    for(const d of rain){
+      d.y+=d.v*dt*(0.6+rainPow*0.9);
+      d.x+=wind*dt*0.3;
+      if(d.y>rows+1){d.y=-1;d.x=rnd()*(cols+4)-2;}
+      if(d.x>cols+2) d.x-=cols+4;
+    }
+  }
+}
+
+function updateEnt(e,dt){
+  if(e.kind==='npc'||e.kind==='cat'){
+    e.t-=dt;
+    if(e.t<=0){
+      e.t=e.kind==='cat'?rf(.3,1.1):rf(.7,2.4);
+      if(Math.random()<(e.kind==='cat'?.15:.28)){e.vx=0;e.vy=0;}
+      else{
+        /* Crowds gather. A pure random walk spreads people evenly, which
+           reads as noise; biasing each choice toward the nearest food stand
+           or shrine makes the lit corners busy and the back streets empty. */
+        let bx=0,by=0;
+        if(e.kind==='npc'&&e.draw&&Math.random()<0.55){
+          const ddx=e.draw.x-e.x, ddy=e.draw.y-e.y;
+          const m=Math.hypot(ddx,ddy);
+          if(m>1.6&&m<26){ bx=ddx/m; by=ddy/m; }
+        }
+        if(bx||by){
+          e.vx=Math.abs(bx)>Math.abs(by)?Math.sign(bx):0;
+          e.vy=e.vx?0:Math.sign(by);
+        }else{
+          const d=[[1,0],[-1,0],[0,1],[0,-1]][Math.floor(Math.random()*4)];
+          e.vx=d[0];e.vy=d[1];
+        }
+      }
+    }
+    if(e.vx||e.vy){
+      const nx=e.x+e.vx*e.spd*dt,ny=e.y+e.vy*e.spd*dt;
+      if(!blocked(nx,e.y))e.x=nx;else e.vx=-e.vx;
+      if(!blocked(e.x,ny))e.y=ny;else e.vy=-e.vy;
+    }
+  }else if(e.kind==='drone'){
+    e.t-=dt;
+    if(e.t<=0){e.t=rf(1.4,4);const a=Math.atan2(e.vy,e.vx)+rf(-1.2,1.2);e.vx=Math.cos(a);e.vy=Math.sin(a);}
+    e.x+=e.vx*e.spd*dt;e.y+=e.vy*e.spd*dt;
+    if(e.x<4||e.x>W-4)e.vx=-e.vx;
+    if(e.y<4||e.y>H-4)e.vy=-e.vy;
+    e.x=clamp(e.x,3,W-3);e.y=clamp(e.y,3,H-3);
+  }else if(e.kind==='car'){
+    /* Traffic obeys the junctions. A car crossing a perpendicular road holds
+       at the stop line unless its phase is green, so intersections pulse
+       instead of everything sliding through everything else. */
+    const ax=Math.floor(e.x+e.dx*1.6), ay=Math.floor(e.y+e.dy*1.6);
+    let hold=false;
+    if(ax>=0&&ay>=0&&ax<W&&ay<H&&(T.flag[ay*W+ax]&ROAD)){
+      const cross=e.dx?(flagAt(ax,ay-1)&ROAD)&&(flagAt(ax,ay+1)&ROAD)
+                      :(flagAt(ax-1,ay)&ROAD)&&(flagAt(ax+1,ay)&ROAD);
+      if(cross){
+        /* one shared 18s cycle; axis decides which half is yours */
+        const green=((time/9)|0)&1;
+        if(e.dx?green:!green) hold=true;
+      }
+    }
+    /* and don't drive into the car in front */
+    if(!hold) for(const o of nearEnts){
+      if(o===e||o.kind!=='car'||o.dx!==e.dx||o.dy!==e.dy) continue;
+      const gx=(o.x-e.x)*e.dx+(o.y-e.y)*e.dy;
+      if(gx>0&&gx<2.4){ hold=true; break; }
+    }
+    e.hold=hold;
+    if(!hold){ e.x+=e.dx*e.spd*dt; e.y+=e.dy*e.spd*dt; }
+    if(e.x<2)e.x=W-3; if(e.x>W-2)e.x=3;
+    if(e.y<2)e.y=H-3; if(e.y>H-2)e.y=3;
+    /* a car that passes through you isn't traffic, it's wallpaper */
+    const cdx=P.x-e.x,cdy=P.y-e.y;
+    if(cdx*cdx+cdy*cdy<1.3){
+      const m=Math.hypot(cdx,cdy)||1;
+      const shove=(1.15-m)*3.2*dt;
+      const nx=P.x+(cdx/m)*shove+e.dx*dt*e.spd*0.5;
+      const ny=P.y+(cdy/m)*shove+e.dy*dt*e.spd*0.5;
+      if(!blocked(nx,P.y)) P.x=nx;
+      if(!blocked(P.x,ny)) P.y=ny;
+      if(!e.hit){ e.hit=1; say('Clipped by traffic. The driver does not slow down.','hot'); beep(300,.2,.06); }
+    }else if(cdx*cdx+cdy*cdy>9) e.hit=0;
+  }else if(e.kind==='shard'){
+    e.pulse+=dt;
+  }
+}
+
+function findTarget(){
+  let best=null,bd=2.2;
+  for(const e of nearEnts){
+    if(!e.prompt)continue;
+    const d=Math.hypot(e.x-P.x,e.y-P.y);
+    if(d<bd){bd=d;best=e;}
+  }
+  return best;
+}
+function interact(){
+  const t=findTarget();
+  if(!t)return;
+  if(t.kind==='shard'){
+    P.shards++;P.cred+=ri(6,22);
+    let i=ents.indexOf(t);if(i>=0)ents.splice(i,1);
+    i=nearEnts.indexOf(t);if(i>=0)nearEnts.splice(i,1);
+    if(t.light!==undefined){lights[t.light].rad=0;bakeLight();}
+    beep(1180,.10,.06);setTimeout(()=>beep(1560,.12,.05),70);
+    say('Shard absorbed. '+P.shards+' / '+shardTotal+"  ·  someone else's memory, briefly yours.",'amb');
+    if(P.shards===shardTotal) say('Every shard on the grid is yours. The rain does not care.','hot');
+    return;
+  }
+  if(t.kind==='lift'){
+    if(P.roof>0){
+      P.roof=0; P.z=0.5; P.x=t.x; P.y=t.y;
+      say('The lift settles. Street level, and the rain finds you again.','sys');
+    }else{
+      P.roof=t.roofH; P.z=t.roofH+0.5; P.x=t.rx; P.y=t.ry;
+      say('Roof. '+Math.round(t.roofH*3)+' metres of city underneath you.','amb');
+      /* Arrive already looking down. Level from up here is mostly empty sky,
+         which reads as broken rather than as height. */
+      P.pitch=-rows*0.30;
+      beep(660,.12,.05); setTimeout(()=>beep(880,.14,.045),110);
+      return;
+    }
+    P.pitch=0; beep(660,.12,.05); setTimeout(()=>beep(880,.14,.045),110);
+    return;
+  }
+  if(t.kind==='vend') P.cred=Math.max(0,P.cred-2);
+  if(t.kind==='food') P.cred=Math.max(0,P.cred-4);
+  openDialogue(t.name||'?',(t.lines&&t.lines.length)?t.lines:[pick(BARKS)]);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   10. the raycaster
+   ══════════════════════════════════════════════════════════════════ */
+/* near-neutral: ambient tints every surface in the city, so any blue
+   bias here quietly turns the whole palette cold.
+   Now driven by the clock — night is the low level the neon was designed
+   against, day an overcast wash that lifts the city and drowns the signs.
+   AMB is mutated in place so every consumer picks the change up for free. */
+const AMB_NIGHT=[0.150,0.142,0.160], AMB_DAY=[1.05,1.07,1.16];
+const AMB=[0.150,0.142,0.160];
+let dayF=0;                 /* 0 = full night, 1 = full day */
+/* Held at night. The day cycle works but washed the city out — the neon is
+   the whole point, and daylight has nothing to replace it with. Flip this to
+   false to bring the cycle back. */
+const NIGHT_ONLY=true;
+function updateTOD(){
+  const h=clock/60;
+  let d;
+  if(h<4.5)       d=0;
+  else if(h<8)    d=(h-4.5)/3.5;
+  else if(h<17.5) d=1;
+  else if(h<21)   d=1-(h-17.5)/3.5;
+  else            d=0;
+  dayF=NIGHT_ONLY?0:clamp(d,0,1);
+  const e=dayF*dayF*(3-2*dayF);          /* smoothstep, so dawn isn't linear */
+  for(let i=0;i<3;i++) AMB[i]=AMB_NIGHT[i]+(AMB_DAY[i]-AMB_NIGHT[i])*e;
+}
+const WINU=5, WINV=4;          /* window panes per tile across / per world unit up */
+/* Lit windows use block and shade glyphs, not letters. Alphanumerics in a
+   facade read as scattered text, not architecture — the eye tries to read
+   them. Blocks at varying density read as lit glass at varying brightness,
+   which is what a window actually is. */
+const WINCH=[G.FULL,G.FULL,G.S3,G.S3,G.S2,G.S2,G.S1,G.UP,G.DN,G.LF,G.RT,G.SP,G.SP,G.FULL];
+
+/* Saturated, per-building window colour. A small cached palette keeps the
+   glyph-atlas key count bounded while still giving each tower its own hue. */
+const winPal=new Map();
+function winCol(hueByte,jit){
+  const key=(hueByte>>2)*4+((jit*4)|0);
+  let c=winPal.get(key);
+  if(c) return c;
+  const h=(hueByte>>2)*4/255*360;
+  c=hsl(h+(jit-0.5)*10, 0.92, 0.50+((jit*4)|0)*0.055);
+  winPal.set(key,c);
+  return c;
+}
+const VIEW=46;                 /* draw distance — far enough to see a skyline */
+/* Aerial perspective: distance fades toward the city's own smog, not to
+   black. Fading to black only makes things dim; fading to a lit haze is
+   what actually reads as depth, because it also kills saturation. */
+/* HAZE_K was 0.72 — at full distance that replaced nearly three quarters of
+   every surface with flat smog, so the far half of the screen collapsed into
+   one grey-blue veil and nothing was legible through it. Aerial perspective
+   should tint the distance, not erase it. */
+const HAZE=[30,22,46], HAZE_K=0.30;
+const PLANE=0.72;              /* half-width of the projection plane */
+const EYE=0.5;
+
+let eyeH=0;   /* camera height used to skip tiles the ray passes over */
+
+/* colour bucket + blit; brightness rides on alpha so one atlas serves
+   a whole range of intensities */
+/* One deliberate exposure for the whole image. Every local gain below was
+   nudged upward ad hoc whenever something looked dark, and it drifted; these
+   two constants are the single place the overall level is set. */
+/* Night-only exposure, calibrated over 6 vantage points. A neon city wants a
+   dark base with a strong bright minority, not a raised average:
+     0.70/0.38 -> mean 48, 46% dark but only 3% bright — flat and murky
+     1.00/0.30 -> mean 62, 42% dark, 10% bright, 1.4% clip
+     1.15/0.28 -> 2.7% clip, highlights start blowing out
+   The middle one is the contrast profile that actually reads. */
+let EXPOSURE=1.00, TONE_KNEE=0.30;
+let curKey=-1,curSY=0,curA=-1;
+/* Hue comes from the normalised colour (which picks the atlas) and
+   brightness from alpha, so the tone curve below only touches alpha —
+   highlights roll off instead of clipping, and hue is preserved.
+   Without it, standing near a sign clipped ~40% of the screen to white. */
+function put(code,px,py,r,g,b){
+  if(code===G.SP)return;
+  const mx=r>g?(r>b?r:b):(g>b?g:b);
+  if(mx<7)return;
+  const inv=5/mx;
+  const key=(Math.round(r*inv)*36)+(Math.round(g*inv)*6)+Math.round(b*inv);
+  if(key!==curKey){
+    curKey=key;
+    let row=sheetRow[key];
+    if(row<0) row=bakeRow(key);
+    curSY=row*ACH;
+  }
+  const e=mx*EXPOSURE*(1/255);
+  /* quantised so neighbouring cells share a value — each distinct alpha is
+     a canvas state change, and the steps are far below perceptible */
+  const a=((e/(e+TONE_KNEE))*64|0)*0.015625;
+  if(a!==curA){curA=a;ctx.globalAlpha=a;}
+  const ci=code<9800?CLUT[code]:-1;
+  if(ci<0)return;
+  ctx.drawImage(sheet,ci*ACW,curSY,ACW,ACH,px,py,ACW,ACH);
+}
+let ACW=1,ACH=1;
+
+function render(){
+  const px=P.x,py=P.y;
+  const dx=Math.cos(P.a),dy=Math.sin(P.a);
+  const plX=-dy*PLANE,plY=dx*PLANE;
+  /* rows of screen per world unit at distance 1 */
+  const projRows=(cols*CW/(2*PLANE))/CH;
+  const horizon=rows*0.5+P.pitch+Math.sin(P.bob)*0.35;
+
+  curKey=-1;curSY=0;curA=-1;
+  ctx.globalAlpha=1;ctx.globalCompositeOperation='source-over';
+  ctx.fillStyle='#01030a';
+  ctx.fillRect(0,0,cv.width,cv.height);
+
+  /* The walker's lamp was strong enough to flood any wall you stood near
+     into a flat bright panel — that washed-out rectangle filling the middle
+     of the frame. Keep it as orientation light, not a floodlight. */
+  const lampR=6.0,lampK=0.26+0.02*Math.sin(time*7);
+  const fqBase=cols/(2*PLANE);      /* world units per screen cell, at d=1 */
+  /* at street level nothing is shorter than the eye, so this is a no-op
+     there and only changes what a raised camera can see past */
+  eyeH=P.roof>0?P.z-0.30:0;
+
+  /* Floor distance, fog and lamp falloff depend only on the row, never on
+     the column — hoisting them out of the per-cell loop removes a division
+     and a multiply chain from every floor cell on screen. */
+  const EPR=P.z*projRows, EPRR=(P.z-P.roof)*projRows, invVIEW=1/VIEW;
+  for(let y=0;y<rows;y++){
+    const p=y-horizon;
+    if(p<=0.0001){ rdT[y]=1e9; rdRoofT[y]=1e9; fogT[y]=0; lampT[y]=0; continue; }
+    const rd=EPR/p;
+    rdT[y]=rd; rdRoofT[y]=EPRR/p;
+    fogT[y]=1-rd*invVIEW;
+    fqT[y]=fqBase/rd;                 /* was a divide per floor cell */
+    let lp=rd<lampR?(1-rd/lampR):0;
+    lampT[y]=lp*lp*lampK;
+  }
+  /* Sky is constant along a row: glow, stipple threshold and colour all
+     depend only on y, but were being recomputed for every column. */
+  for(let y=0;y<rows;y++){
+    let gl=1-((horizon-y)/rows)*1.75;
+    if(gl<=0){ skyThr[y]=-1; skyR[y]=0; skyG[y]=0; skyB[y]=0; continue; }
+    gl*=gl;
+    /* Overcast daylight: the sky fills in almost solid and becomes the
+       brightest thing in frame, which is what actually sells "it is day"
+       far more than lifting the ground does. */
+    skyThr[y]=gl*(0.34+dayF*0.55)+0.012+dayF*0.62;
+    skyR[y]=(52*gl+9)+dayF*(150+42*gl);
+    skyG[y]=(26*gl+7)+dayF*(170+42*gl);
+    skyB[y]=(46*gl+15)+dayF*(192+36*gl);
+    /* At night the sky is sparse dots. Under daylight a dot leaves most of
+       the cell as background, so "full coverage" still rendered dark — an
+       overcast sky has to be a solid glyph, not a stipple. */
+    skyCh[y]=dayF<0.22?46:(dayF<0.48?G.S1:(dayF<0.72?G.S2:(dayF<0.9?G.S3:G.FULL)));
+  }
+
+  for(let sx=0;sx<cols;sx++){
+    const camX=2*sx/cols-1;
+    const rx=dx+plX*camX, ry=dy+plY*camX;
+    const xpx=xs[sx];
+
+    /* March every tile along the ray, painting front to back and pulling an
+       occlusion ceiling down as we go, instead of stopping at the first wall.
+       Stopping at the first hit meant a 30-storey tower standing behind a
+       4-storey block was never drawn at all — the skyline had no layers. */
+    let mapX=Math.floor(px),mapY=Math.floor(py);
+    const ddX=rx===0?1e30:Math.abs(1/rx), ddY=ry===0?1e30:Math.abs(1/ry);
+    let stX,stY,sdX,sdY;
+    if(rx<0){stX=-1;sdX=(px-mapX)*ddX;}else{stX=1;sdX=(mapX+1-px)*ddX;}
+    if(ry<0){stY=-1;sdY=(py-mapY)*ddY;}else{stY=1;sdY=(mapY+1-py)*ddY;}
+
+    let yCeil=rows;              /* everything at/below this row is painted */
+    let nearBase=-1e9, zb=VIEW;
+    let wy0=1,wy1=0;             /* painted span, for canal reflections */
+    let hitSide=0, dist=0;
+
+    for(let mstep=0;mstep<300&&yCeil>0;mstep++){
+      if(sdX<sdY){dist=sdX;sdX+=ddX;mapX+=stX;hitSide=0;}
+      else{dist=sdY;sdY+=ddY;mapY+=stY;hitSide=1;}
+      if(dist>VIEW) break;
+      if(mapX<0||mapY<0||mapX>=W||mapY>=H) break;
+      const ti=mapY*W+mapX;
+      if(!(T.flag[ti]&SOLID)) continue;
+      const hgt=T.hgt[ti]*0.25||1;
+      if(hgt<eyeH){
+        /* Roof face. Standing above a building we see its TOP, not its side,
+           and skipping these left holes where the neighbouring rooftops
+           should be. The tile spans dist (where the ray entered) to the next
+           crossing (where it leaves); project the roof plane at both and fill
+           between. This is the horizontal half of the height field. */
+        const dOut=sdX<sdY?sdX:sdY;
+        const drop=P.z-hgt;
+        const yNear=horizon+drop*projRows/Math.max(0.08,dist);
+        const yFar =horizon+drop*projRows/Math.max(0.08,dOut);
+        const ry0=Math.max(0,Math.ceil(yFar)), ry1=Math.min(yCeil-1,Math.floor(yNear));
+        if(ry1>=ry0){
+          const rfog=Math.max(0,1-dist/VIEW);
+          const rhz=(1-rfog)*HAZE_K, rkeep=1-rhz;
+          const o=ti*3;
+          /* LM is a ground-plane light map — street lamps and signs never
+             reach a rooftop, so lit only by AMB these fell below put()'s
+             threshold and drew nothing at all. Roofs sit under the open
+             overcast, so give them skyglow instead. */
+          const sky=1.0;
+          const lr2=(AMB[0]+sky*0.95+LM[o])*rfog,
+                lg2=(AMB[1]+sky*0.92+LM[o+1])*rfog,
+                lb2=(AMB[2]+sky*1.05+LM[o+2])*rfog;
+          const gr=T.r[ti]*lr2*2.4*rkeep+HAZE[0]*rhz,
+                gg=T.g[ti]*lg2*2.4*rkeep+HAZE[1]*rhz,
+                gb=T.b[ti]*lb2*2.4*rkeep+HAZE[2]*rhz;
+          const le2=(gr+gg+gb)/765;
+          for(let y=ry0;y<=ry1;y++){
+            const tex=hash3(mapX*3+((y*7)&3),mapY*3,y);
+            put(FRAMP[clamp(((le2/(le2+0.18))*9+tex*1.8-0.3)|0,1,10)],xpx,ys[y],gr,gg,gb);
+          }
+          if(zb===VIEW){ zb=dist; nearBase=yNear; wy1=ry1; }
+          wy0=ry0; yCeil=ry0;
+        }
+        continue;
+      }
+      const L1=projRows/Math.max(0.08,dist);
+      const bottom=horizon+P.z*L1;
+      const top=bottom-hgt*L1;
+      if(top>=yCeil) continue;         /* fully hidden behind nearer mass */
+      const hitX=mapX, hitY=mapY;
+
+      /* where along the face did we land */
+      let wallU=hitSide===0?(py+dist*ry):(px+dist*rx);
+      wallU-=Math.floor(wallU);
+
+      const emit=(T.flag[ti]&EMIT)!==0;
+      const sg=T.sign[ti];
+      const flick=(emit&&sg>=0)?lights[sg].k:1;
+
+      /* light on this face: baked map + the player's own lamp */
+      const o=ti*3;
+      const pdx=hitX+0.5-px,pdy=hitY+0.5-py;
+      const pd=Math.sqrt(pdx*pdx+pdy*pdy);
+      let lamp=pd<lampR?(1-pd/lampR):0; lamp=lamp*lamp*lampK;
+      const sideDim=hitSide===1?0.74:1;
+      const fog=1-dist/VIEW;
+      const shade=sideDim*fog*fog;
+
+      let lr=(AMB[0]+LM[o]+lamp)*shade;
+      let lg=(AMB[1]+LM[o+1]+lamp*0.97)*shade;
+      let lb=(AMB[2]+LM[o+2]+lamp*0.88)*shade;
+
+      const ar=T.r[ti],ag=T.g[ti],ab=T.b[ti];
+      const y0=Math.max(0,Math.ceil(top)),y1=Math.min(yCeil-1,Math.floor(bottom));
+      if(y1<y0){ yCeil=Math.min(yCeil,y0); continue; }
+      /* A real corner, not a tile seam. wallU is a fractional world coord, so
+         testing it alone fires once per world unit and rules nine vertical
+         lines through a ten-tile building — every facade read as one ruled
+         surface and adjacent towers were inseparable. */
+      let corner=false;
+      if(wallU<0.05||wallU>0.95){
+        const cs=wallU<0.5?-1:1;
+        const ax=hitSide===0?hitX:hitX+cs, ay=hitSide===0?hitY+cs:hitY;
+        if(ax<0||ay<0||ax>=W||ay>=H) corner=true;
+        else{
+          const ai=ay*W+ax;
+          corner=!(T.flag[ai]&SOLID)||T.wc[ai]!==T.wc[ti]||T.hgt[ai]!==T.hgt[ti];
+        }
+      }
+
+      /* A sign tile holds one letter, drawn on exactly one column: the one
+         the face's own centre projects to. The previous version tracked the
+         last tile seen across columns, which the multi-hit march broke — a
+         single column can now touch several sign tiles, so the tracking got
+         confused and the letter smeared back into DDDDDD. Projecting the
+         face centre is stateless and can't drift. */
+      let letterCol=false;
+      if(emit){
+        const fcx=hitSide===0?(rx>0?hitX:hitX+1):hitX+0.5;
+        const fcy=hitSide===0?hitY+0.5:(ry>0?hitY:hitY+1);
+        const relX=fcx-px, relY=fcy-py;
+        const det=plX*dy-dx*plY;
+        if(det!==0){
+          const inv=1/det;
+          const tX=inv*(dy*relX-dx*relY), tY=inv*(-plY*relX+plX*relY);
+          if(tY>0.05) letterCol=(Math.round((cols*0.5)*(1+tX/tY))===sx);
+        }
+      }
+      /* A sign is a panel at storey height, not a stripe up the whole tower.
+         hgt on a sign tile is still the *building's* height, so the emit
+         branch was painting 30 world-units of saturated neon over every
+         signed facade — those were the giant flat colour slabs. */
+      const sMid=Math.min(hgt*0.55,4.2), sHalf=Math.min(1.25,Math.max(0.32,hgt*0.16));
+      const sgL=(emit&&sg>=0)?lights[sg]:null;
+      /* The letter belongs on ONE row, at the middle of the panel. Drawing it
+         wherever letterCol is true painted it down every row of the band —
+         that was the G G G G / H H H H columns. */
+      const yLetter=Math.round(bottom-sMid*L1);
+      /* Shopfronts only on faces that actually front a street — an alley
+         wall or a light well shouldn't sprout awnings. */
+      const sfx=hitSide===0?(rx<0?hitX+1:hitX-1):hitX;
+      const sfy=hitSide===0?hitY:(ry<0?hitY+1:hitY-1);
+      const streetSide=(sfx>=0&&sfy>=0&&sfx<W&&sfy<H)&&
+                       (T.flag[sfy*W+sfx]&(ROAD|WALK))!==0;
+      /* Facade grain frequency scales with distance so a wall you're stood
+         against still resolves into characters. Without it a close wall
+         shows less than one storey, no window grid fires, the brightness
+         ramp saturates and you get a flat slab of colour. */
+      const tf=clamp(30/dist,7,110);
+      /* haze is constant down a wall column — one distance per ray */
+      const hz=(1-fog)*HAZE_K, keep=1-hz;
+      const hzR=HAZE[0]*hz, hzG=HAZE[1]*hz, hzB=HAZE[2]*hz;
+      const invL1=1/L1;
+      for(let y=y0;y<=y1;y++){
+        const v=(bottom-y)*invL1;           /* height up the face, world units */
+        let code,r,g,b;
+        if(emit&&Math.abs(v-sMid)<sHalf){
+          const sr=sgL?sgL.cr*255:ar, sgg=sgL?sgL.cg*255:ag, sb=sgL?sgL.cb*255:ab;
+          /* Per-character animation: a chase runs up the panel and single
+             tubes drop out and restrike, so the sign reads as powered. */
+          const seg=(v*2.2)|0;
+          const chase=0.72+0.28*Math.sin(time*3.1-seg*0.9+(sgL?sgL.ph:0));
+          const dead=hash3(hitX,hitY,seg+((time*0.6)|0))<0.06?0.16:1;
+          /* panel dim, letter hot — at equal brightness the filler drowned
+             the glyph and the word never read as a word */
+          const onLetter=letterCol&&y===yLetter;
+          /* daylight drowns neon — a sign at full night brightness under an
+             overcast noon sky reads as a bug, not as a sign */
+          const k=flick*chase*dead*(onLetter?1.6:0.26)*(1-dayF*0.62);
+          r=sr*k+10;g=sgg*k+10;b=sb*k+10;
+          code=onLetter?T.ch[ti]:G.S1;
+        }else if(y===y0&&top>=0){
+          /* Parapet. Without a cap the top row takes whatever the ramp
+             happened to land on, and two overlapping towers merge into
+             one silhouette-less blob. */
+          /* enough to read the roofline, not a glowing strip laid on top */
+          r=ar*1.3+9;g=ag*1.3+9;b=ab*1.4+13;code=G.DN;
+        }else if(corner){
+          r=ar*1.35+7;g=ag*1.35+7;b=ab*1.45+11;code=G.V;
+        }else{
+          /* Facade: window grid with mullions, plus a darker slab line at
+             each storey. This is what makes a wall read as a building. */
+          const gu=wallU*WINU,gv=v*WINV;
+          const cu=Math.floor(gu),cv=Math.floor(gv);
+          const iu=gu-cu,iv=gv-cv;
+          const pane=(iu>0.12&&iu<0.88&&iv>0.14&&iv<0.86);
+          /* Storeys light as storeys: one hash decides whether the floor is
+             occupied at all, a second which panes on it are lit. Deciding
+             per-pane gave confetti with no dark bands — and dark bands are
+             the strongest "this is a building" cue there is. */
+          const floorLit=hash3(hitX*11+hitY*29,cv,17)<0.55;
+          if(pane&&v>1.35&&T.wc[ti]!==0&&floorLit&&hash3(hitX*7+cu,hitY*7+cv,cv)<0.58){
+            /* Interior depth: a bright core falling off toward the frame,
+               plus a lift toward the head of the pane. A pane filled with
+               one flat colour reads as a sticker; this reads as a lit room
+               seen through glass. */
+            const du=iu-0.5,dv=iv-0.5;
+            const inset=clamp(1.18-(du*du+dv*dv)*2.2,0.42,1);
+            const ceil=0.86+0.30*(1-iv);
+            const wk=(0.55+hash3(hitX+cu,hitY+cv,3)*0.5)*fog*inset*ceil*(1-dayF*0.55);
+            const wcol=winCol(T.wc[ti],hash3(cu,cv,hitX+hitY));
+            r=wcol[0]*wk;g=wcol[1]*wk;b=wcol[2]*wk;
+            /* One glyph for the whole pane. Keying on the sub-pane grain
+               scattered a different character into every cell of a single
+               window, which is what made facades look like typed text. */
+            code=WINCH[(hash3(hitX*13+cu,hitY*13+cv,91)*WINCH.length)|0];
+          }else if(v<1.35&&T.wc[ti]!==0&&streetSide){
+            /* Shopfront band. The bottom storey is where you spend the whole
+               game and it was blank concrete: awning, glazing, doorway. */
+            const bay=(wallU*2.5)|0, bayU=wallU*2.5-bay;
+            const shopH=hash3(hitX*5+bay,hitY*5,3);
+            if(v>1.02){
+              const aw=hsl(((T.wc[ti]/255*360)+shopH*70)|0,0.85,0.55);
+              const lit=0.5+0.5*(1.35-v)/0.33;
+              r=aw[0]*lit;g=aw[1]*lit;b=aw[2]*lit;
+              code=G.DN;                                   /* awning lip */
+            }else if(bayU>0.34&&bayU<0.66&&shopH<0.42){
+              const wg=0.30+0.70*Math.max(0,1-v*0.8);
+              r=255*wg;g=196*wg;b=126*wg;                  /* open doorway */
+              code=v<0.22?G.FULL:(hash3(bay,(v*tf)|0,7)<0.5?G.S3:G.S2);
+            }else{
+              const gk=(0.30+shopH*0.5)*fog;
+              const wcol=winCol(T.wc[ti],shopH);
+              r=wcol[0]*gk*0.7+18;g=wcol[1]*gk*0.7+16;b=wcol[2]*gk*0.7+22;
+              code=hash3(bay*3+((bayU*3)|0),(v*tf)|0,11)<0.6?G.S2:G.S1;
+            }
+          }else{
+            const kk=(iv<0.16?0.5:1)*(pane?1:0.74);
+            r=ar*lr*kk;g=ag*lg*kk;b=ab*lb*kk;
+            const le=(r+g+b)/765;
+            const wt=hash3((wallU*tf)|0,(v*tf)|0,hitX*31+hitY);
+            /* Knee tuned to a dark facade's real range (le ~0.004-0.20). At
+               0.3 the tonal signal spanned under one ramp step while the
+               dither spanned three, so the wall was static, not surface. */
+            code=WRAMP[clamp(((le/(le+0.055))*5.2+wt*0.55)|0,1,6)];
+          }
+        }
+        const fr=r*keep+hzR, fg=g*keep+hzG, fb=b*keep+hzB;
+        /* stash the column so the canal can mirror it a few rows below */
+        wcR[y]=fr; wcG[y]=fg; wcB[y]=fb; wcC[y]=code;
+        put(code,xpx,ys[y],fr,fg,fb);
+      }
+      /* nearest slice defines the z-buffer and where the street starts */
+      if(zb===VIEW){ zb=dist; nearBase=bottom; wy1=y1; }
+      wy0=y0;
+      yCeil=y0;
+    }
+    zbuf[sx]=zb;
+
+    /* overcast lit from below by the whole city — the sky is never black
+       here, it is a dim sodium-and-magenta haze brightening toward the
+       rooftops */
+    /* On a ray that hits nothing, sky ended at floor(horizon)-1 and floor
+       began at floor(horizon)+1, leaving one unpainted scanline of clear
+       colour straight across the horizon. */
+    const skyTo=Math.min(rows-1,yCeil-1,Math.floor(horizon));
+    for(let y=0;y<=skyTo;y++){
+      const thr=skyThr[y];
+      if(thr<0) continue;
+      /* Stipple, don't ramp. Sky brightness is constant along a row, so a
+         brightness ramp paints the sky as bands of one repeated character.
+         Scattering sparse dots by density reads as haze instead. */
+      /* keyed on ray direction, not screen column — keying on sx pinned the
+         haze to the screen so it never moved when you turned, reading as
+         dirt on the lens rather than atmosphere */
+      const st=hash2((rx*90)|0,y*3.1);
+      if(st>thr) continue;
+      put(skyCh[y],xpx,ys[y],skyR[y],skyG[y],skyB[y]);
+    }
+
+    /* ---- floor ---- */
+    /* floor at 0: pitched fully down, horizon goes negative and fStart
+       reached -1, which read rdT[-1]=undefined, produced NaN coords that
+       slipped every bounds guard, and cached a junk atlas under key NaN */
+    const fStart=Math.max(0,Math.floor(horizon)+1,Math.min(rows,Math.floor(nearBase)+1));
+    for(let y=fStart;y<rows;y++){
+      /* Two planes. Standing on a roof, the ray meets the roof surface first
+         (a shorter drop, so a nearer intersection); past the parapet it
+         misses and carries on down to the street. Casting both and taking
+         whichever the ray actually lands on is what makes a rooftop a place
+         you can stand rather than a hole in the world. */
+      let rowDist=rdT[y], onRoof=0;
+      if(P.roof>0){
+        const rr=rdRoofT[y];
+        if(rr>0&&rr<=VIEW){
+          const rxT=Math.floor(px+rx*rr),ryT=Math.floor(py+ry*rr);
+          if(rxT>=0&&ryT>=0&&rxT<W&&ryT<H){
+            const rti=ryT*W+rxT;
+            if((T.flag[rti]&SOLID)&&Math.abs(T.hgt[rti]*0.25-P.roof)<0.35){
+              rowDist=rr; onRoof=1;
+            }
+          }
+        }
+      }
+      if(rowDist>VIEW) continue;
+      const fx=px+rx*rowDist, fy=py+ry*rowDist;
+      const tx=Math.floor(fx),ty=Math.floor(fy);
+      if(tx<0||ty<0||tx>=W||ty>=H) continue;
+      const ti=ty*W+tx,o=ti*3;
+      const fog=onRoof?Math.max(0,1-rowDist/VIEW):fogT[y];
+      const lamp=lampT[y];
+      let lr=(AMB[0]+LM[o]+lamp)*fog,
+          lg=(AMB[1]+LM[o+1]+lamp*0.97)*fog,
+          lb=(AMB[2]+LM[o+2]+lamp*0.88)*fog;
+
+      /* Wet asphalt: smear light from a few tiles further down the ray back
+         toward the viewer. That is roughly what a reflection does, and it
+         costs one extra lookup — it is what turns a flat grey street into
+         a mirror full of neon. */
+      const mx2=Math.floor(fx+rx*2.6),my2=Math.floor(fy+ry*2.6);
+      if(mx2>=0&&my2>=0&&mx2<W&&my2<H){
+        const o2=(my2*W+mx2)*3;
+        const wet=0.42*fog;
+        lr+=LM[o2]*wet; lg+=LM[o2+1]*wet; lb+=LM[o2+2]*wet;
+      }
+      let water=0;
+      if(T.flag[ti]&WATER){
+        water=1;
+        const sh=0.5+0.5*Math.sin(time*1.9+fx*1.7+fy*0.9);
+        lr*=0.72+sh*0.95; lg*=0.78+sh*0.95; lb*=0.92+sh*0.98;
+      }
+      const hz=(1-fog)*HAZE_K*0.55,keep=1-hz;
+      /* roofs are bare concrete under open sky, not wet neon-lit asphalt */
+      const gain=onRoof?1.15:1.05;
+      /* Grain frequency tracks distance so one hash cell stays about one
+         screen cell — a fixed world frequency makes the near rows collapse
+         into long identical runs. */
+      const fq=onRoof?fqBase/rowDist:fqT[y];
+      const tex=hash2((fx*fq)|0,(fy*fq)|0);
+      /* Near the camera a single world tile covers a large patch of screen,
+         and every cell in it shares that tile's albedo — so with colour
+         constant across the patch the ground renders as big flat slabs.
+         Modulating brightness by the same grain that picks the glyph breaks
+         the patch up without inventing detail that isn't there. */
+      /* Floor of 0.68 meant even unlit asphalt drew something in every cell,
+         so the street became a uniform field of static instead of darkness
+         with neon pools in it. Let the dark be dark. */
+      const tk=0.34+tex*0.78;
+      const r=(T.r[ti]*lr*gain*keep+HAZE[0]*hz)*tk,
+            g=(T.g[ti]*lg*gain*keep+HAZE[1]*hz)*tk,
+            b=(T.b[ti]*lb*gain*keep+HAZE[2]*hz)*tk;
+      const le=(r+g+b)/765;
+      /* Glyph comes from a world-space texture, not from brightness alone.
+         Every column in a floor row sits at the same distance, so a pure
+         brightness ramp turns each row into one repeated character. Hashing
+         world position instead gives grain that compresses with distance,
+         which is what sells the perspective. */
+      /* floor 0, so unlit asphalt is genuinely empty. A clamp of 1 covered
+         every ground cell in punctuation and the road never went dark. */
+      /* capped at S2: FRAMP's top entries are S3 and FULL, and a bright near
+         tile hitting those turned the road into solid slabs of colour */
+      put(FRAMP[clamp(((le/(le+0.30))*10+tex*0.8-0.4)|0,0,8)],xpx,ys[y],r,g,b);
+
+      /* Canal reflection: mirror this column's wall about the horizon. The
+         cast for this ray already found the wall, so the reflection costs a
+         lookup rather than a second trace. Chop offsets the sampled row and
+         punches holes so it reads as moving water, not a mirror. */
+      if(water&&wy1>=wy0){
+        const chop=(hash2((fx*5)|0,((fy*5)|0)+((time*7)|0))-0.5)*3.4;
+        const yw=(2*horizon-y+chop)|0;
+        if(yw>=wy0&&yw<=wy1&&hash2((fx*9)|0,(fy*9)|0)>0.3){
+          const k=0.45*fog;
+          put(wcC[yw],xpx,ys[y],wcR[yw]*k,wcG[yw]*k,wcB[yw]*k);
+        }
+      }
+    }
+  }
+
+  drawSprites(px,py,dx,dy,plX,plY,projRows,horizon);
+
+  /* ---- rain ---- */
+  if(optRain){
+    const pw=0.35+rainPow*0.9;
+    for(const d of rain){
+      const cx=Math.floor(d.x),cy=Math.floor(d.y);
+      if(cx<0||cy<0||cx>=cols||cy>=rows) continue;
+      const a=d.a*pw*150;
+      put(d.c,xs[cx],ys[cy],a*0.72,a*0.86,a*1.0);
+    }
+  }
+  ctx.globalAlpha=1;
+
+  if(optBloom&&canFilter){
+    ctx.save();
+    /* The 5x downscale IS the low-pass. ctx.filter='blur' allocates a whole
+       extra Skia image-filter layer and pass on top of it for very little
+       visible gain — smoothing the upscale instead is far cheaper. */
+    bctx.drawImage(cv,0,0,bcv.width,bcv.height);
+    ctx.imageSmoothingEnabled=true;          /* restored by ctx.restore() */
+    ctx.globalCompositeOperation='lighter';
+    ctx.globalAlpha=0.5;
+    ctx.drawImage(bcv,0,0,cv.width,cv.height);
+    ctx.restore();
+  }
+}
+
+const sprites=[];
+function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
+  sprites.length=0;
+  for(const e of nearEnts){
+    const rx=e.x-px,ry=e.y-py;
+    const d2=rx*rx+ry*ry;
+    if(d2>VIEW*VIEW) continue;
+    sprites.push({e:e,d:d2,rx:rx,ry:ry});
+  }
+  sprites.sort((a,b)=>b.d-a.d);
+
+  const invDet=1/(plX*dy-dx*plY);
+  for(const s of sprites){
+    const tX=invDet*(dy*s.rx-dx*s.ry);
+    const tY=invDet*(-plY*s.rx+plX*s.ry);
+    if(tY<0.25) continue;
+    const L1=projRows/tY;
+    const scrX=(cols/2)*(1+tX/tY);
+    const e=s.e;
+    const zoff=e.zoff||0;
+    const bottom=horizon+(P.z-zoff)*L1;
+    const hh=(e.h||0.9);
+    const top=bottom-hh*L1;
+    /* People are far narrower than they are tall. 0.55 made them as wide as
+       a doorway, which is half of why a close one looked like a wall. */
+    const figure=(e.kind==='npc'||e.kind==='fixer');
+    const wCols=Math.max(1,Math.round(hh*L1*CH/CW*(figure?0.34:0.5)));
+    const x0=Math.max(0,Math.round(scrX-wCols/2)),x1=Math.min(cols-1,Math.round(scrX+wCols/2));
+    const y0=Math.max(0,Math.ceil(top)),y1=Math.min(rows-1,Math.floor(bottom));
+    if(y1<y0) continue;
+
+    const dist=Math.sqrt(s.d);
+    const fog=Math.max(0,1-dist/VIEW);
+    const ti=clamp(Math.floor(e.y),0,H-1)*W+clamp(Math.floor(e.x),0,W-1);
+    const o=ti*3;
+    let lr,lg,lb;
+    if(e.glow){lr=lg=lb=1.15;}
+    else{
+      let lamp=dist<7.5?(1-dist/7.5):0;lamp=lamp*lamp*0.6;
+      lr=AMB[0]+LM[o]+lamp;lg=AMB[1]+LM[o+1]+lamp;lb=AMB[2]+LM[o+2]+lamp;
+    }
+    const pulse=e.kind==='shard'?(0.6+0.4*Math.sin(e.pulse*3)):1;
+    const kr=e.col[0]*lr*fog*pulse,kg=e.col[1]*lg*fog*pulse,kb=e.col[2]*lb*fog*pulse;
+    const span=Math.max(1,y1-y0);
+
+    /* Cap the footprint. A figure you're standing next to projects to ~113
+       columns x the full height — ~6500 blits for one pedestrian, more than
+       the entire world pass, and the silhouette is unreadable at that size
+       anyway. This was the stutter when someone walked into you. */
+    const MAXW=Math.max(8,cols>>2);
+    let cx0=x0,cx1=x1;
+    if(cx1-cx0+1>MAXW){
+      const mid=scrX|0;
+      cx0=Math.max(x0,mid-(MAXW>>1)); cx1=Math.min(x1,cx0+MAXW-1);
+    }
+    /* The icon marks the sprite ONCE — one cell, not a column and not a row.
+       Stamping e.ch across the head band gave &&&& and VVVV; stamping it
+       down the centre column gave the same thing rotated. */
+    const midCol=Math.round(scrX);
+    const halfW=Math.max(0.5,(cx1-cx0+1)*0.5);
+    const cxm=(cx0+cx1)*0.5;
+    const invSpan=1/Math.max(1,span);
+    const iconRow=y0+Math.round(span*(figure?0.10:0.42));
+
+    for(let x=cx0;x<=cx1;x++){
+      if(tY>=zbuf[x]) continue;
+      const xp=xs[x];
+      const u=(x-cxm)/halfW, au=u<0?-u:u;
+      for(let y=y0;y<=y1;y++){
+        const v=(y-y0)*invSpan;
+        let code;
+        if(figure){
+          /* An actual silhouette — head, shoulders, a gap between the legs.
+             Cells outside it draw nothing, so the city shows through and a
+             person reads as a person instead of a filled rectangle. */
+          if(v<0.18)      { if(au>0.46) continue; code=G.S3; }
+          else if(v<0.30) { if(au>0.62) continue; code=G.S3; }
+          else if(v<0.58) { if(au>0.98) continue; code=G.S3; }
+          else if(v<0.66) { if(au>0.66) continue; code=G.S2; }
+          else            { if(au>0.62||au<0.16) continue; code=G.S2; }
+        }else{
+          code=(v<0.30)?G.S3:G.S2;
+        }
+        if(x===midCol&&y===iconRow) code=e.ch;
+        put(code,xp,ys[y],kr,kg,kb);
+      }
+    }
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   11. minimap
+   ══════════════════════════════════════════════════════════════════ */
+const mini=document.getElementById('mini');
+const mctx=mini.getContext('2d');
+const miniBase=document.createElement('canvas');
+function buildMinimap(){
+  mini.width=W;mini.height=H;miniBase.width=W;miniBase.height=H;
+  const g=miniBase.getContext('2d');
+  const img=g.createImageData(W,H),d=img.data;
+  for(let i=0;i<W*H;i++){
+    const f=T.flag[i];
+    let r,gg,b;
+    if(f&WATER){r=8;gg=26;b=44;}
+    else if(f&EMIT){r=T.r[i];gg=T.g[i];b=T.b[i];}
+    else if(f&SOLID){const k=0.35+Math.min(T.hgt[i]*0.25,20)*0.035;r=T.r[i]*k;gg=T.g[i]*k;b=T.b[i]*k;}
+    else if(f&(ROAD|ALLEY)){r=9;gg=11;b=18;}
+    else{r=20;gg=23;b=30;}
+    const o=i*4;d[o]=r;d[o+1]=gg;d[o+2]=b;d[o+3]=255;
+  }
+  g.putImageData(img,0,0);
+}
+function drawMini(){
+  mctx.clearRect(0,0,W,H);
+  mctx.drawImage(miniBase,0,0);
+  mctx.fillStyle='rgba(255,63,181,.9)';
+  for(const e of ents) if(e.kind==='shard') mctx.fillRect(Math.floor(e.x)-1,Math.floor(e.y)-1,2,2);
+  /* view cone */
+  mctx.strokeStyle='rgba(94,242,255,.45)';mctx.lineWidth=1;
+  mctx.beginPath();
+  mctx.moveTo(P.x,P.y);
+  mctx.lineTo(P.x+Math.cos(P.a-0.62)*16,P.y+Math.sin(P.a-0.62)*16);
+  mctx.moveTo(P.x,P.y);
+  mctx.lineTo(P.x+Math.cos(P.a+0.62)*16,P.y+Math.sin(P.a+0.62)*16);
+  mctx.stroke();
+  mctx.fillStyle='#ffffff';
+  mctx.fillRect(Math.floor(P.x)-1,Math.floor(P.y)-1,3,3);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   12. loop + quality governor
+   ══════════════════════════════════════════════════════════════════ */
+let last=0,fpsAcc=0,fpsN=0,emaMs=6,tight=0,degrade=0;
+function stepDown(){
+  degrade++;
+  if(degrade===1){optBloom=false;say('Frame budget tight — bloom off. [B] forces it back.','sys');}
+  else{zoom=clamp(zoom+2,-3,8);resize();say('Frame budget tight — coarser grid. [=] sharpens it.','sys');}
+}
+function frame(ts){
+  requestAnimationFrame(frame);
+  if(!started) return;
+  if(document.hidden){last=ts;return;}
+  const dt=clamp((ts-last)/1000||0,0,0.05);
+  last=ts;
+  const t0=performance.now();
+  update(dt);
+  render();
+  miniTimer-=dt;
+  if(miniTimer<=0){miniTimer=.12;drawMini();}
+  emaMs=emaMs*0.92+(performance.now()-t0)*0.08;
+  if(degrade<2){
+    /* Less trigger-happy: 60fps is 16.7ms, so 15.5 fired on any frame that
+       was merely close, and the cure looked worse than the disease. */
+    if(emaMs>21){tight+=dt;if(tight>4){tight=0;stepDown();}}
+    else tight=Math.max(0,tight-dt*0.8);
+  }
+  if(optFps){
+    fpsAcc+=dt;fpsN++;
+    if(fpsAcc>.5){
+      elFps.textContent=Math.round(fpsN/fpsAcc)+' fps · '+emaMs.toFixed(1)+'ms · '+
+        cols+'x'+rows+' · '+lights.length+' lights · '+sheetN+' hues';
+      fpsAcc=0;fpsN=0;
+    }
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   13. boot
+   ══════════════════════════════════════════════════════════════════ */
+function randomSeed(){
+  const a=['neon','rust','ghost','wire','ash','koto','sable','halcyon','static','monsoon','vermil','onyx'];
+  const b=['grid','row','sprawl','canal','spire','ward','flats','harbor','arcade','quay'];
+  return a[Math.floor(Math.random()*a.length)]+'-'+b[Math.floor(Math.random()*b.length)]+'-'+
+         Math.floor(Math.random()*9000+1000);
+}
+function newCity(){
+  const s=randomSeed();
+  try{const u=new URL(location.href);u.searchParams.set('seed',s);history.replaceState(null,'',u);}catch(e){}
+  genCity(s);
+  P.cred=0;P.shards=0;logLines=[];
+  closeDialogue();
+  $('bSeed').textContent='seed / '+s;
+  say('New city compiled from seed "'+s+'".','sys');
+  say('Neon on. '+shardTotal+' shards scattered. Walk.','amb');
+}
+
+let params={};
+try{params=Object.fromEntries(new URL(location.href).searchParams.entries());}catch(e){}
+const seed0=params.seed||randomSeed();
+resize();
+genCity(seed0);
+$('bSeed').textContent='seed / '+seed0;
+try{
+  const u=new URL(location.href);
+  if(!params.seed){u.searchParams.set('seed',seed0);history.replaceState(null,'',u);}
+}catch(e){}
+
+function boot(){
+  if(started)return;
+  started=true;
+  $('boot').style.display='none';
+  say('Rain over '+DISTRICTS[dmap[Math.floor(P.y)*W+Math.floor(P.x)]].name+'. '+shardTotal+' shards on the grid.','amb');
+  say('W/S walk · A/D strafe · arrows or mouse to look · E to touch anything that glows','sys');
+  last=performance.now();
+}
+$('boot').addEventListener('pointerdown',()=>{boot();},{passive:true});
+
+let rt=null;
+addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(resize,140);});
+document.addEventListener('visibilitychange',()=>{last=performance.now();});
+
+/* debug handle — step the loop by hand, teleport, inspect */
+window.__city={
+  frame:frame,boot:boot,resize:resize,newCity:newCity,
+  P:P,keys:keys,T:T,LM:LM,W:W,H:H,
+  /* getters: genCity swaps these arrays out, so snapshots go stale */
+  get ents(){return ents;},
+  get lights(){return lights;},
+  get near(){return nearEnts;},
+  tp:(x,y,a)=>{P.x=x+.5;P.y=y+.5;if(a!==undefined)P.a=a;},
+  setExposure:(e,k)=>{EXPOSURE=e;if(k!==undefined)TONE_KNEE=k;},
+  setClock:(h)=>{clock=h*60;updateTOD();},
+  tod:()=>({hour:+(clock/60).toFixed(2),dayF:+dayF.toFixed(3),amb:AMB.map(v=>+v.toFixed(3))}),
+  getExposure:()=>({EXPOSURE,TONE_KNEE}),
+  stats:()=>({cols:cols,rows:rows,CW:CW,CH:CH,FS:FS,
+    lights:lights.length,ents:ents.length,atlas:sheetN,shards:shardTotal,ms:+emaMs.toFixed(2)})
+};
+
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
