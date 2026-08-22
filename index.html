@@ -377,7 +377,7 @@ function resize(){
   /* /78 put ~10.6k cells on a 1280x800 laptop and tripped the quality
      governor, which then dropped bloom AND coarsened the grid — auto-ugly.
      Better to start inside the budget than to degrade into it. */
-  const budget=clamp(Math.round(vw*vh/135),3000,10000);
+  const budget=clamp(Math.round(vw*vh/165),2600,8200);
 
   const metrics=f=>{
     const w=Math.max(4,Math.round(measureFont(f)));
@@ -1907,14 +1907,15 @@ function render(){
               code=hash3(bay*3+((bayU*3)|0),(v*tf)|0,11)<0.6?G.S2:G.S1;
             }
           }else{
-            const kk=(iv<0.16?0.5:1)*(pane?1:0.74);
+            const wt=hash3((wallU*tf)|0,(v*tf)|0,hitX*31+hitY);
+            /* The grain amplitude used to be 0.55 — SMALLER than one ramp
+               step — so a close wall resolved to a single character at a
+               single colour. That was the flat slab. Now it spans 3-4 steps,
+               and the colour breaks per cell too, the way the floor does. */
+            const kk=(iv<0.16?0.5:1)*(pane?1:0.74)*(0.62+wt*0.72);
             r=ar*lr*kk;g=ag*lg*kk;b=ab*lb*kk;
             const le=(r+g+b)/765;
-            const wt=hash3((wallU*tf)|0,(v*tf)|0,hitX*31+hitY);
-            /* Knee tuned to a dark facade's real range (le ~0.004-0.20). At
-               0.3 the tonal signal spanned under one ramp step while the
-               dither spanned three, so the wall was static, not surface. */
-            code=WRAMP[clamp(((le/(le+0.055))*5.2+wt*0.55)|0,2,6)];
+            code=corner?G.V:WRAMP[clamp(((le/(le+0.055))*4.4+wt*2.4-1.0)|0,1,6)];
           }
         }
         const fr=r*keep+hzR, fg=g*keep+hzG, fb=b*keep+hzB;
@@ -1981,9 +1982,12 @@ function render(){
       const ti=ty*W+tx,o=ti*3;
       const fog=onRoof?Math.max(0,1-rowDist/VIEW):fogT[y];
       const lamp=lampT[y];
-      let lr=(AMB[0]+LM[o]+lamp)*fog,
-          lg=(AMB[1]+LM[o+1]+lamp*0.97)*fog,
-          lb=(AMB[2]+LM[o+2]+lamp*0.88)*fog;
+      /* Weight the baked lights over flat ambient. Equal weighting made the
+         whole road one mid-grey field of static; this gives dark asphalt with
+         the neon actually pooling on it. */
+      let lr=(AMB[0]*0.45+LM[o]*1.7+lamp)*fog,
+          lg=(AMB[1]*0.45+LM[o+1]*1.7+lamp*0.97)*fog,
+          lb=(AMB[2]*0.45+LM[o+2]*1.7+lamp*0.88)*fog;
 
       /* Wet asphalt: smear light from a few tiles further down the ray back
          toward the viewer. That is roughly what a reflection does, and it
