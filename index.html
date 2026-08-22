@@ -1589,13 +1589,11 @@ let eyeH=0;   /* camera height used to skip tiles the ray passes over */
 /* One deliberate exposure for the whole image. Every local gain below was
    nudged upward ad hoc whenever something looked dark, and it drifted; these
    two constants are the single place the overall level is set. */
-/* Night-only exposure, calibrated over 6 vantage points. A neon city wants a
-   dark base with a strong bright minority, not a raised average:
-     0.70/0.38 -> mean 48, 46% dark but only 3% bright — flat and murky
-     1.00/0.30 -> mean 62, 42% dark, 10% bright, 1.4% clip
-     1.15/0.28 -> 2.7% clip, highlights start blowing out
-   The middle one is the contrast profile that actually reads. */
-let EXPOSURE=1.00, TONE_KNEE=0.30;
+/* Night-only exposure, calibrated against the luminance-band spec
+   (near-black 55-65%%, dim 20-28%%, mid 8-12%%, bright 3-5%% with <1.5%% hot).
+   Measured live: 1.00/0.30 gave bright 13%%; 0.85/0.34 lands NB 66 / MID 12 /
+   BRT 4.8 / hot 0.3 - the dark-city profile where neon actually reads. */
+let EXPOSURE=0.85, TONE_KNEE=0.34;
 let curKey=-1,curSY=0,curA=-1;
 /* Hue comes from the normalised colour (which picks the atlas) and
    brightness from alpha, so the tone curve below only touches alpha —
