@@ -635,7 +635,7 @@ function carveBlock(x0,y0,x1,y1){
   const D=dmap[Math.floor((y0+y1)/2)*W+Math.floor((x0+x1)/2)];
   /* flat warm cream vs the cool grey road: the street reads as lanes
      of tone instead of per-tile confetti */
-  const pave=()=>[78,74,64];
+  const pave=()=>[66,62,54];
   for(let yy=y0;yy<=y1;yy++)for(let xx=x0;xx<=x1;xx++)
     if(xx===x0||xx===x1||yy===y0||yy===y1) set(xx,yy,G.SP,pave(),WALK);
 
@@ -690,7 +690,7 @@ function park(x0,y0,x1,y1){
 }
 function plaza(x0,y0,x1,y1,D){
   for(let yy=y0;yy<=y1;yy++)for(let xx=x0;xx<=x1;xx++)
-    set(xx,yy,G.SP,[80,76,66],WALK);
+    set(xx,yy,G.SP,[68,64,56],WALK);
   const n=ri(2,4);
   for(let i=0;i<n;i++){
     const sx=ri(x0,Math.max(x0,x1-2)),sy=ri(y0,y1);
@@ -1879,7 +1879,7 @@ function render(){
             const du=iu-0.5,dv=iv-0.5;
             const inset=clamp(1.18-(du*du+dv*dv)*2.2,0.42,1);
             const ceil=0.86+0.30*(1-iv);
-            const wk=(0.55+hash3(hitX+cu,hitY+cv,3)*0.5)*fog*inset*ceil*(1-dayF*0.55);
+            const wk=(0.44+hash3(hitX+cu,hitY+cv,3)*0.42)*fog*inset*ceil*(1-dayF*0.55);
             const wcol=winCol(T.wc[ti],hash3(cu,cv,hitX+hitY));
             r=wcol[0]*wk;g=wcol[1]*wk;b=wcol[2]*wk;
             /* Grain INSIDE the pane, at screen resolution. One glyph per pane
@@ -1890,7 +1890,7 @@ function render(){
                is what those huge rectangles were. */
             const wg=hash3((wallU*tf)|0,(v*tf)|0,cu*7+cv);
             code=WINCH[(wg*WINCH.length)|0];
-            const cellK=0.70+wg*0.58;
+            const cellK=0.62+wg*0.50;
             r*=cellK; g*=cellK; b*=cellK;
           }else if(v<1.35&&T.wc[ti]!==0&&streetSide&&
                    hash3(hitX*7,hitY*13,hitSide)<0.72){
@@ -2022,9 +2022,9 @@ function render(){
       /* Weight the baked lights over flat ambient. Equal weighting made the
          whole road one mid-grey field of static; this gives dark asphalt with
          the neon actually pooling on it. */
-      let lr=(AMB[0]*0.45+LM[o]*1.7+lamp)*fog,
-          lg=(AMB[1]*0.45+LM[o+1]*1.7+lamp*0.97)*fog,
-          lb=(AMB[2]*0.45+LM[o+2]*1.7+lamp*0.88)*fog;
+      let lr=(AMB[0]*0.45+LM[o]*1.28+lamp)*fog,
+          lg=(AMB[1]*0.45+LM[o+1]*1.28+lamp*0.97)*fog,
+          lb=(AMB[2]*0.45+LM[o+2]*1.28+lamp*0.88)*fog;
 
       /* Wet asphalt: smear light from a few tiles further down the ray back
          toward the viewer. That is roughly what a reflection does, and it
@@ -2048,7 +2048,7 @@ function render(){
       }
       const hz=(1-fog)*HAZE_K*0.55,keep=1-hz;
       /* roofs are bare concrete under open sky, not wet neon-lit asphalt */
-      const gain=onRoof?1.15:1.05;
+      const gain=onRoof?1.15:0.85;
       /* Grain frequency tracks distance so one hash cell stays about one
          screen cell — a fixed world frequency makes the near rows collapse
          into long identical runs. */
