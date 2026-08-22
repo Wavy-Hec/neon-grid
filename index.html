@@ -82,6 +82,8 @@
     background:linear-gradient(to right,transparent,rgba(94,242,255,.5) 22%,rgba(255,63,181,.5) 78%,transparent);
   }
   #boot .tag{font-size:10.5px;letter-spacing:.26em;text-transform:uppercase;color:#5c7f8c}
+  #boot .wip{margin-top:12px;font-size:9.5px;letter-spacing:.28em;text-transform:uppercase;
+    color:#7a5a3a;border:1px solid rgba(255,180,85,.28);display:inline-block;padding:3px 10px}
   #boot .seed{margin-top:26px;font-size:11px;letter-spacing:.2em;color:var(--amber);opacity:.9}
   #boot .go{margin-top:34px;font-size:10.5px;letter-spacing:.34em;text-transform:uppercase;color:#43606b;animation:pulse 2.6s ease-in-out infinite}
   @keyframes pulse{0%,100%{opacity:.35}50%{opacity:.9}}
@@ -162,6 +164,7 @@
       <div class="mark">NEON GRID</div>
       <div class="rule"></div>
       <div class="tag">every street rebuilt from a single number</div>
+      <div class="wip">work in progress</div>
       <div class="seed" id="bSeed">—</div>
       <div class="go">press any key</div>
     </div>
@@ -727,7 +730,11 @@ function building(x0,y0,x1,y1,D,force){
      height but never get a wc, so at 0 they were being given hue-0 windows
      and every tree lit up with a grid of red panes. */
   const wByte=Math.max(1,Math.round((((wHue%360)+360)%360)/360*255));
-  const wall=hsl(wHue+ri(-8,8),rf(.20,.38),tall?rf(.085,.125):rf(.075,.11));
+  /* Lightness floor matters: at .075-.125 the concrete lit by ambient alone
+     computes to 4-6, under put()'s draw threshold of 7, so the building body
+     drew NOTHING and the facade collapsed to a confetti of lit windows
+     floating on black. A building needs a visible dark mass between them. */
+  const wall=hsl(wHue+ri(-8,8),rf(.16,.30),tall?rf(.17,.24):rf(.15,.21));
   for(let yy=y0;yy<=y1;yy++)for(let xx=x0;xx<=x1;xx++){
     /* ±6 on an albedo near 30 is a ±20% per-tile swing — once the facade
        renders as a coherent surface that reads as blotches, not texture. */
@@ -1540,7 +1547,7 @@ function updateTOD(){
   const e=dayF*dayF*(3-2*dayF);          /* smoothstep, so dawn isn't linear */
   for(let i=0;i<3;i++) AMB[i]=AMB_NIGHT[i]+(AMB_DAY[i]-AMB_NIGHT[i])*e;
 }
-const WINU=5, WINV=4;          /* window panes per tile across / per world unit up */
+const WINU=7, WINV=5;          /* window panes per tile across / per world unit up */
 /* Lit windows use block and shade glyphs, not letters. Alphanumerics in a
    facade read as scattered text, not architecture — the eye tries to read
    them. Blocks at varying density read as lit glass at varying brightness,
@@ -1869,10 +1876,16 @@ function render(){
             const wk=(0.55+hash3(hitX+cu,hitY+cv,3)*0.5)*fog*inset*ceil*(1-dayF*0.55);
             const wcol=winCol(T.wc[ti],hash3(cu,cv,hitX+hitY));
             r=wcol[0]*wk;g=wcol[1]*wk;b=wcol[2]*wk;
-            /* One glyph for the whole pane. Keying on the sub-pane grain
-               scattered a different character into every cell of a single
-               window, which is what made facades look like typed text. */
-            code=WINCH[(hash3(hitX*13+cu,hitY*13+cv,91)*WINCH.length)|0];
+            /* Grain INSIDE the pane, at screen resolution. One glyph per pane
+               was right when WINCH held letters (a scattered pane read as
+               typed text), but WINCH is blocks and shades now — and a pane
+               seen point-blank covers hundreds of cells, so a single glyph
+               and a single colour turned it into a flat slab of teal. That
+               is what those huge rectangles were. */
+            const wg=hash3((wallU*tf)|0,(v*tf)|0,cu*7+cv);
+            code=WINCH[(wg*WINCH.length)|0];
+            const cellK=0.70+wg*0.58;
+            r*=cellK; g*=cellK; b*=cellK;
           }else if(v<1.35&&T.wc[ti]!==0&&streetSide){
             /* Shopfront band. The bottom storey is where you spend the whole
                game and it was blank concrete: awning, glazing, doorway. */
@@ -1901,7 +1914,7 @@ function render(){
             /* Knee tuned to a dark facade's real range (le ~0.004-0.20). At
                0.3 the tonal signal spanned under one ramp step while the
                dither spanned three, so the wall was static, not surface. */
-            code=WRAMP[clamp(((le/(le+0.055))*5.2+wt*0.55)|0,1,6)];
+            code=WRAMP[clamp(((le/(le+0.055))*5.2+wt*0.55)|0,2,6)];
           }
         }
         const fr=r*keep+hzR, fg=g*keep+hzG, fb=b*keep+hzB;

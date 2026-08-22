@@ -1,5 +1,9 @@
 # NEON GRID
 
+> **⚠️ Work in progress.** Playable and fun to wander, but the renderer is
+> still being tuned — expect rough edges, especially in how facades read up
+> close. Actively being worked on.
+
 A walkable ASCII cyberpunk city that fits in one HTML file.
 
 No engine, no libraries, no assets, no build step. Open the file and you're
@@ -73,6 +77,20 @@ start index.html      # macOS: open index.html
 
 `window.__city` is exposed for poking at: `stats()`, `tp(x, y)`, `newCity()`,
 and live `ents` / `lights`.
+
+## Status
+
+Work in progress. What's in and working:
+
+- [x] First-person raycaster with multi-hit marching (layered skylines)
+- [x] Procedural city — roads, blocks, towers, parks, a canal, districts
+- [x] Rooftops you can ride a lift to and walk on
+- [x] Collision, traffic that stops at junctions, crowds that gather
+- [x] Baked lighting, canal reflections, animated neon
+- [x] Live-generated modal-jazz soundtrack
+- [ ] Facade readability at close range — still tuning
+- [ ] Enterable interiors (needs a ceiling plane in the renderer)
+- [ ] Day/night cycle — built, currently held at night on purpose
 
 ## License
 
