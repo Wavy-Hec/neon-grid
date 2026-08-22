@@ -570,8 +570,10 @@ function genCity(seed){
   let y=ri(5,9);
   while(y<H-9){const w=chance(.18)?4:(chance(.45)?3:2);hr.push({p:y,w:w});y+=w+ri(8,18);}
 
-  /* wet asphalt: near-neutral so it takes the colour of the neon above it */
-  const asphalt=()=>[48+ri(-7,7),46+ri(-7,7),49+ri(-7,10)];
+  /* wet asphalt: ONE albedo. put() quantises hue to 20% steps, so any
+     per-tile channel jitter becomes a saturated random hue per tile —
+     that was the blue/pink camo. Texture belongs to the floor pass. */
+  const asphalt=()=>[46,46,52];
   function paintRoad(x0,y0,x1,y1){
     for(let yy=y0;yy<=y1;yy++)for(let xx=x0;xx<=x1;xx++){
       if(!inb(xx,yy)||(T.flag[yy*W+xx]&WATER))continue;
@@ -583,14 +585,14 @@ function genCity(seed){
 
   /* centre-line dashes, as a brighter albedo so the floor pass picks
      them up without needing to know where the roads are */
-  const paint=[168,148,96];
+  const paint=[112,104,70];   /* 2.3x asphalt, not 3.5x - dashes, not glare */
   for(const r of vr) if(r.w>=3){
     const c=r.p+(r.w>>1);
-    for(let yy=4;yy<H-4;yy++) if((yy%4)<2&&(T.flag[yy*W+c]&ROAD)) set(c,yy,G.SP,paint,ROAD);
+    for(let yy=4;yy<H-4;yy++) if((yy%6)<2&&(T.flag[yy*W+c]&ROAD)) set(c,yy,G.SP,paint,ROAD);
   }
   for(const r of hr) if(r.w>=3){
     const c=r.p+(r.w>>1);
-    for(let xx=4;xx<W-4;xx++) if((xx%5)<2&&(T.flag[c*W+xx]&ROAD)) set(xx,c,G.SP,paint,ROAD);
+    for(let xx=4;xx<W-4;xx++) if((xx%7)<2&&(T.flag[c*W+xx]&ROAD)) set(xx,c,G.SP,paint,ROAD);
   }
 
   /* canal */
@@ -600,7 +602,7 @@ function genCity(seed){
     for(let yy=y0;yy<=y1;yy++)for(let xx=4;xx<W-4;xx++)
       set(xx,yy,chance(.6)?C_('~'):G.SP,[38+ri(-6,8),52+ri(-8,12),68+ri(-10,16)],WATER);
     for(const r of vr) for(let yy=y0;yy<=y1;yy++)for(let xx=r.p;xx<r.p+r.w;xx++)
-      set(xx,yy,G.SP,[96,92,96],ROAD);
+      set(xx,yy,G.SP,[54,52,56],ROAD);
     cr.water=true;
   }
 
@@ -631,7 +633,9 @@ function genCity(seed){
 function carveBlock(x0,y0,x1,y1){
   if(x1-x0<1||y1-y0<1)return;
   const D=dmap[Math.floor((y0+y1)/2)*W+Math.floor((x0+x1)/2)];
-  const pave=()=>[72+ri(-12,12),69+ri(-12,12),72+ri(-12,14)];
+  /* flat warm cream vs the cool grey road: the street reads as lanes
+     of tone instead of per-tile confetti */
+  const pave=()=>[78,74,64];
   for(let yy=y0;yy<=y1;yy++)for(let xx=x0;xx<=x1;xx++)
     if(xx===x0||xx===x1||yy===y0||yy===y1) set(xx,yy,G.SP,pave(),WALK);
 
@@ -662,7 +666,7 @@ function bsp(x0,y0,x1,y1,d,out){
 }
 function alley(x0,x1,y0,y1){
   for(let yy=y0;yy<=y1;yy++)for(let xx=x0;xx<=x1;xx++){
-    set(xx,yy,G.SP,[36+ri(-7,9),34+ri(-7,9),37+ri(-7,10)],ALLEY);
+    set(xx,yy,G.SP,[34,34,38],ALLEY);
     if(chance(.05)){
       const col=hsl(ri(160,340),.9,.6);
       mkLight(xx,yy,ri(3,5),col,.8,2,3,rnd()*90);
@@ -686,7 +690,7 @@ function park(x0,y0,x1,y1){
 }
 function plaza(x0,y0,x1,y1,D){
   for(let yy=y0;yy<=y1;yy++)for(let xx=x0;xx<=x1;xx++)
-    set(xx,yy,G.SP,[76+ri(-12,10),73+ri(-12,10),78+ri(-12,12)],WALK);
+    set(xx,yy,G.SP,[80,76,66],WALK);
   const n=ri(2,4);
   for(let i=0;i<n;i++){
     const sx=ri(x0,Math.max(x0,x1-2)),sy=ri(y0,y1);
@@ -876,7 +880,7 @@ function findOpen(pred,tries){
 }
 function mkCar(x,y,dx,dy){
   return {kind:'car',x:x,y:y,dx:dx,dy:dy,spd:rf(5,11),len:ri(2,3),h:0.75,zoff:0,
-    ch:G.S3,col:hsl(pick([20,38,200,326])+ri(-10,10),.34,.62),glow:1};
+    ch:G.S3,col:hsl(pick([20,38,200,326])+ri(-10,10),.34,.62)};
   /* No headlight/taillight lights here. They were baked into LM at tile
      (0,0) and never moved after the raycaster rewrite, so ~47 of them
      stacked into one searing blob in the map corner. Cars are glow:1 and
@@ -955,7 +959,7 @@ function populate(vr,hr){
     const s=findOpen(near);if(!s)continue;      /* on pavement, where you'll see them */
     const enf=chance(.09);
     ents.push({kind:'npc',x:s.x+.5,y:s.y+.5,ch:enf?C_('!'):C_('&'),
-      col:enf?[255,90,90]:hsl(ri(0,360),.42,.66),
+      col:enf?[220,80,80]:hsl(215+ri(-25,25),.14,.55),
       name:enf?'ENFORCER':pick(NAMES),prompt:'TALK',lines:[pick(BARKS)],
       h:0.9,zoff:0,solid:true,rad:0.20,draw:null,
       vx:0,vy:0,spd:enf?1.9:rf(1.0,1.9),t:rnd()*2});
@@ -1296,7 +1300,7 @@ function buildRain(){
   const n=reduceMotion?40:Math.min(190,Math.round(cols*rows*0.035));
   rain=[];
   for(let i=0;i<n;i++) rain.push({x:rnd()*(cols+4)-2,y:rnd()*(rows+2)-1,
-    v:rf(26,54),a:rf(.20,.50),c:chance(.75)?C_('|'):C_('/')});
+    v:rf(26,54),a:rf(.10,.28),c:chance(.75)?C_('|'):C_('/')});
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1806,7 +1810,7 @@ function render(){
          hgt on a sign tile is still the *building's* height, so the emit
          branch was painting 30 world-units of saturated neon over every
          signed facade — those were the giant flat colour slabs. */
-      const sMid=Math.min(hgt*0.55,4.2), sHalf=Math.min(1.25,Math.max(0.32,hgt*0.16));
+      const sMid=Math.min(hgt*0.55,4.2), sHalf=Math.min(0.6,Math.max(0.32,hgt*0.16));
       const sgL=(emit&&sg>=0)?lights[sg]:null;
       /* The letter belongs on ONE row, at the middle of the panel. Drawing it
          wherever letterCol is true painted it down every row of the band —
@@ -1842,17 +1846,19 @@ function render(){
           const onLetter=letterCol&&y===yLetter;
           /* daylight drowns neon — a sign at full night brightness under an
              overcast noon sky reads as a bug, not as a sign */
-          const k=flick*chase*dead*(onLetter?1.6:0.26)*(1-dayF*0.62);
+          const k=flick*chase*dead*(onLetter?1.6:0.10)*(1-dayF*0.62);
           r=sr*k+10;g=sgg*k+10;b=sb*k+10;
           code=onLetter?T.ch[ti]:G.S1;
         }else if(y===y0&&top>=0){
           /* Parapet. Without a cap the top row takes whatever the ramp
              happened to land on, and two overlapping towers merge into
              one silhouette-less blob. */
-          /* enough to read the roofline, not a glowing strip laid on top */
-          r=ar*1.3+9;g=ag*1.3+9;b=ab*1.4+13;code=G.DN;
+          /* a whisper above the mass, receding with fog - these were the
+             only surfaces drawn with no light or distance term, so every
+             roofline glowed identically at any depth */
+          r=ar*0.6*fog+3;g=ag*0.6*fog+3;b=ab*0.7*fog+4;code=G.DN;
         }else if(corner){
-          r=ar*1.35+7;g=ag*1.35+7;b=ab*1.45+11;code=G.V;
+          r=ar*0.65*fog+3;g=ag*0.65*fog+3;b=ab*0.75*fog+4;code=G.V;
         }else{
           /* Facade: window grid with mullions, plus a darker slab line at
              each storey. This is what makes a wall read as a building. */
@@ -1886,25 +1892,56 @@ function render(){
             code=WINCH[(wg*WINCH.length)|0];
             const cellK=0.70+wg*0.58;
             r*=cellK; g*=cellK; b*=cellK;
-          }else if(v<1.35&&T.wc[ti]!==0&&streetSide){
+          }else if(v<1.35&&T.wc[ti]!==0&&streetSide&&
+                   hash3(hitX*7,hitY*13,hitSide)<0.72){
             /* Shopfront band. The bottom storey is where you spend the whole
-               game and it was blank concrete: awning, glazing, doorway. */
+               game and it was blank concrete: awning, glazing, doorway.
+               Not on EVERY street face though - wall-to-wall retail reads
+               as wallpaper; ~28% of frontage falls through to plain dark
+               wall, so shops read as individual shops. */
             const bay=(wallU*2.5)|0, bayU=wallU*2.5-bay;
             const shopH=hash3(hitX*5+bay,hitY*5,3);
-            if(v>1.02){
-              const aw=hsl(((T.wc[ti]/255*360)+shopH*70)|0,0.85,0.55);
-              const lit=0.5+0.5*(1.35-v)/0.33;
-              r=aw[0]*lit;g=aw[1]*lit;b=aw[2]*lit;
-              code=G.DN;                                   /* awning lip */
+            if(bayU<0.05||bayU>0.95){
+              /* Support post between bays - the dark vertical that turns a
+                 continuous strip into a row of separate shops. Runs the full
+                 band height, so it slices through the awnings too. */
+              r=ar*lr*0.85+6;g=ag*lg*0.85+6;b=ab*lb*0.85+8;
+              code=G.V;
+            }else if(v>1.02){
+              /* Awning PER BAY, not per facade. The same v band lit on
+                 every column read as one unbroken tube across the block -
+                 and hsl at s.85 l.55 IS tube brightness, lime at some hues.
+                 45% of bays get none, bay edges stay clear, hues come off a
+                 small palette (no yellow-greens), and fog applies here like
+                 everywhere else. */
+              if(hash3(hitX*5+bay,hitY*5,7)<0.55&&bayU>0.08&&bayU<0.92){
+                const ah=hash3(hitX*5+bay,hitY*5,11);
+                const aw=hsl(ah<0.25?350:ah<0.5?205:ah<0.75?262:18,0.5,0.30);
+                const st=(((bayU*9)|0)&1)?0.68:1;          /* fabric stripes */
+                const lit=(0.35+0.45*(1.35-v)/0.33)*st*fog;
+                r=aw[0]*lit;g=aw[1]*lit;b=aw[2]*lit;
+                code=st<1?G.S3:G.DN;                       /* awning lip */
+              }else{
+                const wt2=hash3((wallU*tf)|0,(v*tf)|0,5), k2=0.5+wt2*0.55;
+                r=ar*lr*k2;g=ag*lg*k2;b=ab*lb*k2;          /* bare wall bay */
+                code=wt2<0.5?G.S1:G.S2;
+              }
             }else if(bayU>0.34&&bayU<0.66&&shopH<0.42){
               const wg=0.30+0.70*Math.max(0,1-v*0.8);
               r=255*wg;g=196*wg;b=126*wg;                  /* open doorway */
               code=v<0.22?G.FULL:(hash3(bay,(v*tf)|0,7)<0.5?G.S3:G.S2);
             }else{
-              const gk=(0.30+shopH*0.5)*fog;
+              /* Glazing with grain at SCREEN resolution, in glyph AND
+                 level. Colour was constant per bay, so one bay up close
+                 filled the frame as a single teal rectangle. The per-cell
+                 multiplier spans ~12 alpha-quantisation steps where the old
+                 constant spanned 0 (the sub-step trap again). Base drops
+                 too: the doorway, not the glass, owns this band. */
+              const sg2=hash3((wallU*tf)|0,(v*tf)|0,bay*13+hitX);
+              const gk=(0.16+shopH*0.30)*(0.45+sg2*0.70)*fog;
               const wcol=winCol(T.wc[ti],shopH);
-              r=wcol[0]*gk*0.7+18;g=wcol[1]*gk*0.7+16;b=wcol[2]*gk*0.7+22;
-              code=hash3(bay*3+((bayU*3)|0),(v*tf)|0,11)<0.6?G.S2:G.S1;
+              r=wcol[0]*gk+8;g=wcol[1]*gk+8;b=wcol[2]*gk+10;
+              code=WINCH[(sg2*WINCH.length)|0];
             }
           }else{
             const wt=hash3((wallU*tf)|0,(v*tf)|0,hitX*31+hitY);
@@ -1996,7 +2033,11 @@ function render(){
       const mx2=Math.floor(fx+rx*2.6),my2=Math.floor(fy+ry*2.6);
       if(mx2>=0&&my2>=0&&mx2<W&&my2<H){
         const o2=(my2*W+mx2)*3;
-        const wet=0.42*fog;
+        /* world-anchored puddle mask: standing water mirrors hard, damp
+           asphalt between puddles barely - vertical smears with dark gaps
+           instead of a uniform glow lifting the whole street */
+        const gl2=hash2((fx*1.6)|0,(fy*1.6)|0);
+        const wet=(gl2>0.62?0.60:0.10)*fog;
         lr+=LM[o2]*wet; lg+=LM[o2+1]*wet; lb+=LM[o2+2]*wet;
       }
       let water=0;
@@ -2012,30 +2053,35 @@ function render(){
          screen cell — a fixed world frequency makes the near rows collapse
          into long identical runs. */
       const fq=onRoof?fqBase/rowDist:fqT[y];
+      /* screen-scale hash survives ONLY as sub-step dither: it feathers
+         which side of a ramp boundary a cell lands on, never the band */
       const tex=hash2((fx*fq)|0,(fy*fq)|0);
-      /* Near the camera a single world tile covers a large patch of screen,
-         and every cell in it shares that tile's albedo — so with colour
-         constant across the patch the ground renders as big flat slabs.
-         Modulating brightness by the same grain that picks the glyph breaks
-         the patch up without inventing detail that isn't there. */
-      /* Floor of 0.68 meant even unlit asphalt drew something in every cell,
-         so the street became a uniform field of static instead of darkness
-         with neon pools in it. Let the dark be dark. */
-      const tk=0.34+tex*0.78;
+      /* structured detail, anchored to the world: sparse grit and pits,
+         plus near-field seams - dark tar joints on road, bright kerb and
+         paving joints on pavement. World features pick the band; noise
+         only feathers it. */
+      const g1=hash2((fx*3)|0,(fy*3)|0);
+      let tk=1.0,bump=0;
+      if(g1>0.94){tk=1.22;bump=0.5;}
+      else if(g1<0.05){tk=0.62;bump=-0.5;}
+      if(!onRoof&&rowDist<18){
+        const fxf=fx-tx,fyf=fy-ty;
+        if(fxf<0.08||fyf<0.08){
+          if(T.flag[ti]&WALK){tk=1.35;bump=0.4;}
+          else if(T.flag[ti]&(ROAD|ALLEY)){tk=0.55;bump=-0.5;}
+        }
+      }
       const r=(T.r[ti]*lr*gain*keep+HAZE[0]*hz)*tk,
             g=(T.g[ti]*lg*gain*keep+HAZE[1]*hz)*tk,
             b=(T.b[ti]*lb*gain*keep+HAZE[2]*hz)*tk;
       const le=(r+g+b)/765;
-      /* Glyph comes from a world-space texture, not from brightness alone.
-         Every column in a floor row sits at the same distance, so a pure
-         brightness ramp turns each row into one repeated character. Hashing
-         world position instead gives grain that compresses with distance,
-         which is what sells the perspective. */
-      /* floor 0, so unlit asphalt is genuinely empty. A clamp of 1 covered
-         every ground cell in punctuation and the road never went dark. */
-      /* capped at S2: FRAMP's top entries are S3 and FULL, and a bright near
-         tile hitting those turned the road into solid slabs of colour */
-      put(FRAMP[clamp(((le/(le+0.30))*10+tex*0.8-0.4)|0,0,8)],xpx,ys[y],r,g,b);
+      let gch=FRAMP[clamp(((le/(le+0.30))*10+bump+tex*0.8-0.4)|0,0,8)];
+      /* ~1.5% of road tiles carry a grate mark in the tile centre */
+      if(!onRoof&&rowDist<14&&(T.flag[ti]&ROAD)&&hash2(tx*131,ty*57)>0.985){
+        const fxg=fx-tx,fyg=fy-ty;
+        if(fxg>0.28&&fxg<0.72&&fyg>0.3&&fyg<0.7) gch=G.DH;
+      }
+      put(gch,xpx,ys[y],r,g,b);
 
       /* Canal reflection: mirror this column's wall about the horizon. The
          cast for this ray already found the wall, so the reflection costs a
@@ -2074,7 +2120,7 @@ function render(){
     bctx.drawImage(cv,0,0,bcv.width,bcv.height);
     ctx.imageSmoothingEnabled=true;          /* restored by ctx.restore() */
     ctx.globalCompositeOperation='lighter';
-    ctx.globalAlpha=0.5;
+    ctx.globalAlpha=0.28;
     ctx.drawImage(bcv,0,0,cv.width,cv.height);
     ctx.restore();
   }
@@ -2116,13 +2162,21 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
     const ti=clamp(Math.floor(e.y),0,H-1)*W+clamp(Math.floor(e.x),0,W-1);
     const o=ti*3;
     let lr,lg,lb;
-    if(e.glow){lr=lg=lb=1.15;}
+    if(e.glow){lr=lg=lb=0.55;}
     else{
       let lamp=dist<7.5?(1-dist/7.5):0;lamp=lamp*lamp*0.6;
       lr=AMB[0]+LM[o]+lamp;lg=AMB[1]+LM[o+1]+lamp;lb=AMB[2]+LM[o+2]+lamp;
     }
     const pulse=e.kind==='shard'?(0.6+0.4*Math.sin(e.pulse*3)):1;
-    const kr=e.col[0]*lr*fog*pulse,kg=e.col[1]*lg*fog*pulse,kb=e.col[2]*lb*fog*pulse;
+    /* Height was uncapped: a vend at one tile projects ~1.6 screens tall
+       and rendered as a wall. Fade with on-screen size instead of popping:
+       past ~95% of viewport height alpha ramps to a 0.25 floor (~19 tone
+       steps below full, far above the 1/64 alpha quantum), and past 3.5
+       screens you are inside it and nothing is readable, so skip. */
+    const ov=hh*L1/rows;
+    if(ov>3.5) continue;
+    const nearFade=ov<=0.95?1:Math.max(0.25,1-(ov-0.95)*0.52);
+    const kr=e.col[0]*lr*fog*pulse*nearFade,kg=e.col[1]*lg*fog*pulse*nearFade,kb=e.col[2]*lb*fog*pulse*nearFade;
     const span=Math.max(1,y1-y0);
 
     /* Cap the footprint. A figure you're standing next to projects to ~113
@@ -2141,15 +2195,24 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
     const midCol=Math.round(scrX);
     const halfW=Math.max(0.5,(cx1-cx0+1)*0.5);
     const cxm=(cx0+cx1)*0.5;
-    const invSpan=1/Math.max(1,span);
-    const iconRow=y0+Math.round(span*(figure?0.10:0.42));
+    /* v measured from the sprite's TRUE top, not the clipped y0 - close
+       props are almost always clipped, and clip-relative v squashed every
+       mask feature into the visible sliver. */
+    const invH=1/Math.max(1e-4,bottom-top);
+    const iconRow=Math.round(top+(bottom-top)*(figure?0.10:0.42));
+    /* Masks only once they can resolve; grain seed rides on the colour so
+       texture sticks to the entity instead of swimming in screen space. */
+    const mk=e.kind;
+    const shaped=!figure&&span>=6&&(cx1-cx0)>=4;
+    const grain=span>=10;
+    const gseed=(e.col[0]*5+e.col[1]*3+e.col[2])|0;
 
     for(let x=cx0;x<=cx1;x++){
       if(tY>=zbuf[x]) continue;
       const xp=xs[x];
       const u=(x-cxm)/halfW, au=u<0?-u:u;
       for(let y=y0;y<=y1;y++){
-        const v=(y-y0)*invSpan;
+        const v=(y-top)*invH;
         let code;
         if(figure){
           /* An actual silhouette — head, shoulders, a gap between the legs.
@@ -2160,10 +2223,42 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
           else if(v<0.58) { if(au>0.98) continue; code=G.S3; }
           else if(v<0.66) { if(au>0.66) continue; code=G.S2; }
           else            { if(au>0.62||au<0.16) continue; code=G.S2; }
+        }else if(shaped){
+          /* Same (u,v) trick as the silhouette, per prop kind - every other
+             kind filled its whole box and read as a slab up close. */
+          if(mk==='vend'){         /* cabinet: lit face, dispense slot */
+            if(au>0.92) continue;
+            code=(v>0.10&&v<0.46&&au<0.55)?G.FULL:(v>0.78&&v<0.90&&au<0.42)?G.S1:G.S2;
+          }else if(mk==='food'){   /* awning bar over an open counter */
+            if(v<0.16) code=G.S3;
+            else if(v<0.55){ if(au<0.72) continue; code=G.S2; }
+            else code=G.S3;
+          }else if(mk==='term'){   /* screen head on a thin post */
+            if(v<0.42){ if(au>0.60) continue; code=(v>0.08&&au<0.42)?G.FULL:G.S3; }
+            else{ if(au>0.24) continue; code=G.S2; }
+          }else if(mk==='shrine'){ /* tapers as it rises */
+            if(au>0.22+0.78*v) continue;
+            code=v<0.30?G.S3:G.S2;
+          }else if(mk==='lift'){   /* door frame around a see-through grille */
+            code=(au>0.80||v<0.10||v>0.94)?G.S3:G.S1;
+          }else if(mk==='car'){    /* cabin set on a body, not a box */
+            if(v<0.42&&au>0.62) continue;
+            code=v<0.42?G.S3:G.S2;
+          }else{                   /* cat/drone/shard: small, slab is fine */
+            code=(v<0.30)?G.S3:G.S2;
+          }
         }else{
           code=(v<0.30)?G.S3:G.S2;
         }
         if(x===midCol&&y===iconRow) code=e.ch;
+        else if(grain){
+          /* Texture for big fills: drop ~8% of cells and knock ~20% down
+             one FULL ramp glyph - a 25-point fill change. Alpha grain under
+             the 1/64 tone quantum was invisible; glyph steps are not. */
+          const gz=hash3((u+1)*3.5,v*9,gseed);
+          if(gz<0.08) continue;
+          if(gz>0.80) code=code===G.FULL?G.S3:(code===G.S3?G.S2:G.S1);
+        }
         put(code,xp,ys[y],kr,kg,kb);
       }
     }
