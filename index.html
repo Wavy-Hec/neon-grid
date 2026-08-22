@@ -773,18 +773,18 @@ function carveBar(){
   for(const txx of tXs){
     set(txx,mid,G.S2,[74,46,30],SOLID); setH(txx,mid,txx,mid,0.55);
     T.wc[mid*W+txx]=0;
-    mkLight(txx,mid,2.4,[255,150,70],.5,4,1.4);                /* candle  */
+    mkLight(txx,mid,2.2,[255,140,64],.32,4,1.3);                /* candle  */
   }
 
   /* light plot: warm room, cool wash behind the bar, one spot on the band */
-  mkLight(bx0+1,dIn,3.5,[255,170,96],.8,4,1.6);
-  mkLight(bx0+3,bIn,3.5,[255,170,96],.8,4,1.6);
-  mkLight(bx0+1,bkRow,4,[140,180,255],.7,1,1.5);
-  mkLight(bx1-1,dIn,5,[255,205,135],.95,1,2.0);                /* stage   */
+  mkLight(bx0+1,dIn,3.5,[255,170,96],.5,4,1.6);
+  mkLight(bx0+3,bIn,3.5,[255,170,96],.5,4,1.6);
+  mkLight(bx0+1,bkRow,4,[140,180,255],.4,1,1.5);
+  mkLight(bx1-1,dIn,4.5,[255,205,135],.62,1,1.9);                /* stage   */
   mkLight(dx,dWall+dyO,6,[110,160,255],1.1,1,2.2);             /* spill   */
-  const li=mkLight(dx,dWall+dyO*0.5,9,[100,170,255],1.5,1,2.6);
+  const li=mkLight(dx,dWall+dyO*0.5,7,[100,170,255],1.0,1,2.2);
   const word='BLUE';
-  for(let k2=0;k2<4;k2++) set(bx0+3+k2,dWall,word.charCodeAt(k2),[100,170,255],EMIT|SOLID,li);
+  for(let k2=0;k2<4;k2++) set(bx0+3+k2,dWall,word.charCodeAt(k2),[62,100,158],EMIT|SOLID,li);
 
   const bk=mkProp(bx0+3,bkRow,'fixer');
   bk.name='BARKEEP'; bk.ch=C_('&'); bk.col=[228,200,170];
@@ -801,7 +801,7 @@ function carveBar(){
                      [bx1-2,dIn,'TRUMPET','He lowers the harmon mute an inch. "Requests? The tune decides, friend."']];
   for(const m of stage){
     ents.push({kind:'npc',x:m[0]+.5,y:m[1]+.5,ch:C_('&'),col:[206,178,150],
-      name:m[2],prompt:'LISTEN',lines:[m[3]],h:0.95,zoff:0,solid:true,rad:0.20,
+      name:m[2],prompt:'LISTEN',lines:[m[3]],h:0.86,zoff:0,solid:true,rad:0.20,
       draw:{x:m[0]+.5,y:m[1]+.5},vx:0,vy:0,spd:0,t:1e9});
   }
 
@@ -817,8 +817,8 @@ function carveBar(){
     if(!walkable(sPos[0],sPos[1])) continue;
     if(sPos[0]===bx1-1&&sPos[1]===mid) continue; /* trumpet stands there */
     ents.push({kind:'npc',x:sPos[0]+.5,y:sPos[1]+.5,ch:C_('&'),
-      col:hsl(215+ri(-25,25),.16,.34),name:pick(NAMES),prompt:'TALK',
-      lines:[pick(BARLINES)],h:0.9,zoff:0,solid:true,rad:0.20,
+      col:hsl(215+ri(-25,25),.15,.27),name:pick(NAMES),prompt:'TALK',
+      lines:[pick(BARLINES)],h:0.62,zoff:0,solid:true,rad:0.20,
       draw:{x:sPos[0]+.5,y:sPos[1]+.5},vx:0,vy:0,spd:0,t:1e9});
   }
   const wander=bw>=9?2:1;
@@ -826,8 +826,8 @@ function carveBar(){
     const wx2=bx0+1+i2, wy2=dIn;
     if(!walkable(wx2,wy2)) continue;
     ents.push({kind:'npc',x:wx2+.5,y:wy2+.5,ch:C_('&'),
-      col:hsl(215+ri(-25,25),.16,.34),name:pick(NAMES),prompt:'TALK',
-      lines:[pick(BARLINES)],h:0.9,zoff:0,solid:true,rad:0.20,
+      col:hsl(215+ri(-25,25),.15,.27),name:pick(NAMES),prompt:'TALK',
+      lines:[pick(BARLINES)],h:0.84,zoff:0,solid:true,rad:0.20,
       draw:{x:(bx0+bx1)/2,y:mid+dyO*0.5},vx:0,vy:0,spd:0.45,t:rnd()*3});
   }
 
@@ -1464,7 +1464,7 @@ function update(dt){
   clock=(clock+dt*1.6)%1440;
   updateTOD();
   rainPow=clamp(.36+.44*Math.sin(time*0.035)+.18*Math.sin(time*0.11),0,1);
-  if(rainGain&&AC) rainGain.gain.value=rainPow*rainPow*0.045;
+  if(rainGain&&AC) rainGain.gain.value=rainPow*rainPow*0.045*(inBar()?0.22:1);
   /* the band plays in THE BLUE ROOM: full and open inside, muffled through
      the wall nearby, gone a couple of blocks away */
   if(AC&&musicGain&&musicLP){
@@ -1567,7 +1567,7 @@ function update(dt){
   if(t&&!dlg){elPrompt.style.display='block';elPrompt.textContent='[E] '+t.prompt+'  ·  '+(t.name||'');}
   else elPrompt.style.display='none';
 
-  if(optRain){
+  if(optRain&&!inBar()){
     const wind=6+rainPow*8;
     for(const d of rain){
       d.y+=d.v*dt*(0.6+rainPow*0.9);
