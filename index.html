@@ -251,7 +251,7 @@ const RAMP=[G.SP,C_('.'),G.DOT,C_(':'),C_('-'),C_('='),C_('+'),C_('*'),C_('#'),C
 const FRAMP=[G.SP,G.SP,C_('.'),G.DOT,C_(':'),C_('-'),G.S1,G.S1,G.S2,G.S3,G.FULL];
 const WRAMP=[G.SP,G.S1,G.S1,G.S2,G.S2,G.S3,G.S3,G.FULL];
 
-let CW=9,CH=19,FS=16,BASE=15,AS=1,FONT="16px monospace";
+let CW=9,CH=19,FS=16,BASE=15,AS=1,TSY=1,FONT="16px monospace";
 
 function ditherFill(g,ox,w,h,level){
   for(let y=0;y<h;y++)for(let x=0;x<w;x++){
@@ -302,8 +302,13 @@ function drawGlyph(g,code,ox){
       const s=String.fromCharCode(code);
       const adv=g.measureText(s).width;
       const sc=adv>w?w/adv:1;
-      if(sc!==1){g.save();g.translate(ox+(w-adv*sc)/2,0);g.scale(sc,1);g.fillText(s,0,BASE);g.restore();}
-      else g.fillText(s,ox+(w-adv)/2,BASE);
+      if(sc!==1||TSY!==1){
+        g.save();
+        g.translate(ox+(w-adv*sc)/2,0);
+        g.scale(sc,TSY);
+        g.fillText(s,0,BASE/TSY);
+        g.restore();
+      }else g.fillText(s,ox+(w-adv)/2,BASE);
     }
   }
 }
@@ -382,11 +387,21 @@ function resize(){
   /* Raised toward the reference's 180x80 — the single biggest 'looks more
      detailed' change. The governor still only sheds bloom if this is too
      much for the machine. */
-  const budget=clamp(Math.round(vw*vh/120),2400,12000);
+  /* Cells are squarer now (see metrics below), which buys rows - the axis
+     that was starving. Slightly fewer, slightly larger cells keeps the frame
+     comfortably inside 16.7ms with room for spikes. */
+  const budget=clamp(Math.round(vw*vh/132),2400,12000);
 
   const metrics=f=>{
     const w=Math.max(4,Math.round(measureFont(f)));
-    const h=Math.max(7,Math.round(f*1.15));
+    /* A monospace line box is ~2.09x taller than it is wide, which gave a
+       200x50 grid: plenty of columns, far too few ROWS, and vertical detail
+       (storeys, a person's head vs torso) had nowhere to live. Every glyph
+       that carries the image - blocks, shades, box rules, dots - is drawn
+       PROCEDURALLY to the cell in drawGlyph(), so the cell is free to be
+       squarer; only typed letters need squashing to match (TSY below).
+       Vertical FOV is unchanged: rows and projRows both scale with CH. */
+    const h=Math.max(6,Math.round(f*0.78));
     return {w:w,h:h,c:Math.ceil(vw/w),r:Math.ceil(vh/h)};
   };
   let fs=clamp(Math.round(Math.sqrt(vw*vh/(budget*1.35))),7,32);
@@ -396,6 +411,8 @@ function resize(){
   const fin=metrics(fs);
   FS=fs;CW=fin.w;CH=fin.h;
   BASE=Math.round(CH*0.79);
+  /* letters are drawn at FS but the cell is now shorter than a line box */
+  TSY=clamp(CH/(FS*1.02),0.34,1);
   FONT=FS+'px '+FONTFAM;
   AS=clamp(dpr,1,1.5);
   resetSheet();
@@ -2042,7 +2059,7 @@ function render(){
             const dcol=(dist*3)|0;
             for(let y=ry0;y<=ry1;y++){
               const dt5=hash3(mapX*13+dcol,mapY*7,y);
-              const k5=0.74+dt5*0.56;
+              const k5=0.86+dt5*0.28;
               const r5=br5*k5,g5=bg5*k5,b5=bb5*k5;
               const le5=(r5+g5+b5)/765;
               put(FRAMP[clamp(((le5/(le5+0.10))*10+0.9)|0,1,10)],xpx,ys[y],r5,g5,b5);
@@ -2079,7 +2096,7 @@ function render(){
               const gx=px+rx*rd3, gy=py+ry*rd3;
               const fq3=fqk3*p3;
               const dt3=hash2((gx*fq3)|0,(gy*fq3)|0);
-              const gk3=0.72+dt3*0.62;
+              const gk3=0.85+dt3*0.30;
               const r3=(T.r[ti]*wr*gk3)*gkeep+HAZE[0]*ghz,
                     g3=(T.g[ti]*wg*gk3)*gkeep+HAZE[1]*ghz,
                     b3=(T.b[ti]*wb*gk3)*gkeep+HAZE[2]*ghz;
@@ -2122,8 +2139,8 @@ function render(){
             const fxf=fx2-mapX, fyf=fy2-mapY;
             const g1=hash2((fx2*3)|0,(fy2*3)|0);
             let gk=1.0,bump=0;
-            if(g1>0.94){gk=1.30;bump=1.0;}
-            else if(g1<0.06){gk=0.70;bump=-1.0;}
+            if(g1>0.94){gk=1.18;bump=0.7;}
+            else if(g1<0.06){gk=0.82;bump=-0.7;}
             if((fxf<0.12&&eL)||(fxf>0.88&&eR)||(fyf<0.12&&eU)||(fyf>0.88&&eD)){gk=1.42;bump=0.9;}
             else if(fxf<0.055||fyf<0.055){gk=0.72;bump=-0.9;}
             const r2=gr*gk,g2=gg*gk,b2=gb*gk;
@@ -2134,7 +2151,7 @@ function render(){
                instead of every cell taking the same one. */
             const fq2=fqk*p2;
             const dth=hash2((fx2*fq2)|0,(fy2*fq2)|0);
-            put(FRAMP[clamp(((le2b/(le2b+0.075))*10+bump+dth*1.4-0.7)|0,1,10)],xpx,ys[y],r2,g2,b2);
+            put(FRAMP[clamp(((le2b/(le2b+0.075))*10+bump+dth*0.75-0.37)|0,1,10)],xpx,ys[y],r2,g2,b2);
           }
           if(zb===FAR){ zb=dist; nearBase=yNear; wy1=ry1; }
           wy0=ry0; yCeil=ry0;
@@ -2178,7 +2195,7 @@ function render(){
               const wcl=winCol(wcb,wv*6), wk=0.44+0.50*fade;
               put(G.DOT,xpx,ys[y],wcl[0]*wk,wcl[1]*wk,wcl[2]*wk);
             }else{
-              const fk=0.72+wv*0.62;
+              const fk=0.84+wv*0.32;
               put(wv<0.45?G.S1:(wv<0.8?G.DOT:G.S2),xpx,ys[y],br*fk,bg*fk,bb*fk);
             }
           }
@@ -2418,7 +2435,7 @@ function render(){
               const cellK=0.88+wg*0.24; r*=cellK;g*=cellK;b*=cellK;
             }else{
               code=WINCH[(wg*WINCH.length)|0];
-              const cellK=0.62+wg*0.50; r*=cellK;g*=cellK;b*=cellK;
+              const cellK=0.80+wg*0.26; r*=cellK;g*=cellK;b*=cellK;
             }
             /* Up close a single pane covers a big patch of screen and reads
                as a quilt square. Subdivide with fine mullions so the glass
@@ -2457,7 +2474,7 @@ function render(){
                 r=aw[0]*lit;g=aw[1]*lit;b=aw[2]*lit;
                 code=st<1?G.S3:G.DN;                       /* awning lip */
               }else{
-                const wt2=hash3((wallU*tf)|0,(v*tf)|0,5), k2=0.5+wt2*0.55;
+                const wt2=hash3((wallU*tf)|0,(v*tf)|0,5), k2=0.80+wt2*0.26;
                 r=ar*lr*k2;g=ag*lg*k2;b=ab*lb*k2;          /* bare wall bay */
                 code=wt2<0.5?G.S1:G.S2;
               }
@@ -2507,11 +2524,15 @@ function render(){
               const fu=bu-Math.floor(bu), fv=bv-course;
               kk=(fu<0.09||fv<0.13) ? 0.30 : (0.70+wt*0.30);
             }else{
-              kk=(iv<0.16?0.45:1)*(pane?0.22:0.80)*(0.55+wt*0.55);
+              kk=(iv<0.16?0.45:1)*(pane?0.22:0.80)*(0.84+wt*0.22);
             }
             r=ar*lr*kk;g=ag*lg*kk;b=ab*lb*kk;
             const le=(r+g+b)/765;
-            code=corner?G.V:WRAMP[clamp(((le/(le+0.055))*4.4+wt*(T.wc[ti]===0?1.7:2.4)-(T.wc[ti]===0?0.7:1.0))|0,1,6)];
+            /* wt*2.4 span meant the glyph itself was randomised across
+               more than two ramp steps per cell - that is what read as
+               static rather than a wall. Let luminance pick the mark and
+               keep the grain sub-step. */
+            code=corner?G.V:WRAMP[clamp(((le/(le+0.055))*4.4+wt*0.85-0.35)|0,1,6)];
           }
         }
         const fr=r*keep+hzR, fg=g*keep+hzG, fb=b*keep+hzB;
@@ -2671,7 +2692,7 @@ function render(){
         /* Per-CELL gravel. Albedo is constant and rvar is per tile, so
            without this every roof cell carried the identical value and the
            plane read as poured concrete fog. */
-        tk*=0.68+tex*0.64;
+        tk*=0.84+tex*0.32;
       }
       const aR=onRoof?56:T.r[ti],aG=onRoof?60:T.g[ti],aB=onRoof?66:T.b[ti];
       const r=(aR*lr*gain*keep+HAZE[0]*hz)*tk,
@@ -2682,7 +2703,7 @@ function render(){
          picked '.' (about 2% ink) and vanished, which is why a rooftop read
          as a black void. Bias the ramp so ground planes keep a dense shade
          glyph while staying dim - dark AND present. */
-      let gch=FRAMP[clamp(((le/(le+0.30))*10+bump+tex*0.8-0.4+(onRoof?2.2:0.5))|0,0,8)];
+      let gch=FRAMP[clamp(((le/(le+0.30))*10+bump+tex*0.42-0.21+(onRoof?2.2:0.5))|0,0,8)];
       /* ~1.5% of road tiles carry a grate mark in the tile centre */
       if(!onRoof&&rowDist<14&&(T.flag[ti]&ROAD)&&hash2(tx*131,ty*57)>0.985){
         const fxg=fx-tx,fyg=fy-ty;
