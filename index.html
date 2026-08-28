@@ -1719,6 +1719,11 @@ function updateTOD(){
   const e=dayF*dayF*(3-2*dayF);          /* smoothstep, so dawn isn't linear */
   for(let i=0;i<3;i++) AMB[i]=AMB_NIGHT[i]+(AMB_DAY[i]-AMB_NIGHT[i])*e;
 }
+/* Tried coarsening this to 3/1.5 and then 2/1.2 on the theory that a
+   sub-cell module aliases into speckle. It does - but coarsening it is worse:
+   the vertical mullion goes sub-cell before the horizontal one does, so every
+   facade collapsed into horizontal banding at every angle. Measured on real
+   frames, 7/5 is the better module. */
 const WINU=7, WINV=5;          /* window panes per tile across / per world unit up */
 /* Lit windows use block and shade glyphs, not letters. Alphanumerics in a
    facade read as scattered text, not architecture — the eye tries to read
@@ -1900,21 +1905,51 @@ function render(){
              Texture is explicit instead: bands that jump a full ramp step,
              per-tile panel variance, and a bright parapet lip on the row
              where the roof actually ends. */
+          /* THIS branch draws the roof you are standing on. nearBase is set
+             from the first roof tile below, so fStart clamps to rows and the
+             onRoof half of the floor pass never runs at all - every roof
+             tweak made down there was dead code, which is why raising those
+             lights changed nothing. Coverage, not exposure, was the problem:
+             FRAMP was landing on a 1-2px mark, so 97% of each cell was never
+             painted. Fix coverage and the lights only need +11% over base. */
           const rvar=0.86+hash2(mapX*13,mapY*29)*0.24;
-          const lr2=(AMB[0]+0.95*rvar)*rfog,
-                lg2=(AMB[1]+0.98*rvar)*rfog,
-                lb2=(AMB[2]+1.12*rvar)*rfog;
+          const lr2=(AMB[0]+0.56*rvar)*rfog,
+                lg2=(AMB[1]+0.58*rvar)*rfog,
+                lb2=(AMB[2]+0.67*rvar)*rfog;
           const gr=56*lr2*rkeep+HAZE[0]*rhz,
                 gg=60*lg2*rkeep+HAZE[1]*rhz,
                 gb=66*lb2*rkeep+HAZE[2]*rhz;
-          const pxE=mapX-(hitSide===0?stX:0), pyE=mapY-(hitSide===1?stY:0);
-          const redge=!inb(pxE,pyE)||Math.abs(T.hgt[pyE*W+pxE]*0.25-hgt)>0.5;
+          /* tex was keyed to (tile,row) with NO column term, so every column
+             crossing a tile shared one glyph AND one colour - that is why the
+             roof read as a poured slab. And the edge test looked at the tile
+             the ray came FROM, so on a flat roof it never fired and the outer
+             edge against the street - the edge that sells the height - was
+             never lipped. Both are per-cell now, off the roof-plane world
+             position. */
+          const hh0=T.hgt[ti];
+          const eL=mapX>0&&T.hgt[ti-1]!==hh0, eR=mapX<W-1&&T.hgt[ti+1]!==hh0;
+          const eU=mapY>0&&T.hgt[ti-W]!==hh0, eD=mapY<H-1&&T.hgt[ti+W]!==hh0;
+          const dpr2=drop*projRows, fqk=fqBase/dpr2;
           for(let y=ry0;y<=ry1;y++){
-            const tex=hash3(mapX*3+((y*7)&3),mapY*3,y);
-            const gk=(redge&&y===ry1)?2.2:(tex<0.14?0.55:(tex>0.86?1.45:1.0));
+            const p2=y-horizon;
+            const rd2=dpr2/p2;
+            const fx2=px+rx*rd2, fy2=py+ry*rd2;
+            const fxf=fx2-mapX, fyf=fy2-mapY;
+            const g1=hash2((fx2*3)|0,(fy2*3)|0);
+            let gk=1.0,bump=0;
+            if(g1>0.94){gk=1.30;bump=1.0;}
+            else if(g1<0.06){gk=0.70;bump=-1.0;}
+            if((fxf<0.12&&eL)||(fxf>0.88&&eR)||(fyf<0.12&&eU)||(fyf>0.88&&eD)){gk=1.90;bump=1.6;}
+            else if(fxf<0.055||fyf<0.055){gk=0.72;bump=-0.9;}
             const r2=gr*gk,g2=gg*gk,b2=gb*gk;
             const le2b=(r2+g2+b2)/765;
-            put(FRAMP[clamp(((le2b/(le2b+0.18))*9+1.2)|0,1,10)],xpx,ys[y],r2,g2,b2);
+            /* knee 0.18->0.075 with the bias dropped moves COVERAGE, not
+               exposure: the base lands where the dither straddles a glyph
+               boundary, so flat roof splits between a 7% and a 25% ink mark
+               instead of every cell taking the same one. */
+            const fq2=fqk*p2;
+            const dth=hash2((fx2*fq2)|0,(fy2*fq2)|0);
+            put(FRAMP[clamp(((le2b/(le2b+0.075))*10+bump+dth*1.4-0.7)|0,1,10)],xpx,ys[y],r2,g2,b2);
           }
           if(zb===FAR){ zb=dist; nearBase=yNear; wy1=ry1; }
           wy0=ry0; yCeil=ry0;
@@ -2091,7 +2126,9 @@ function render(){
           const dv=(v-sMid)/sHalf;                       /* -1..1 across */
           const sEdge=(dv<-0.74||dv>0.74);
           const sGrain=hash3((wallU*tf)|0,(v*tf)|0,hitX*3+hitY);
-          const sTube=((((v*WINV*2)|0)&1)?1:0.70);
+          /* Literal, NOT WINV - this is the sign's own tube pitch. Sharing
+             WINV meant a facade change silently rebanded every sign. */
+          const sTube=((((v*10)|0)&1)?1:0.70);
           /* Fill compensates for haze instead of ignoring it: restrained up
              close (where a real sign is glare you squint past) and strong at
              range (where haze would otherwise eat it). */
