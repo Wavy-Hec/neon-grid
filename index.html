@@ -359,7 +359,7 @@ let bcv=document.createElement('canvas'),bctx=bcv.getContext('2d');
 const canFilter=(typeof bctx.filter==='string');
 let zbuf=new Float32Array(1);
 let rdT=new Float32Array(1),fogT=new Float32Array(1),lampT=new Float32Array(1),rdRoofT=new Float32Array(1);
-let fqT=new Float32Array(1),skyThr=new Float32Array(1),skyR=new Float32Array(1),skyG=new Float32Array(1),skyB=new Float32Array(1),skyCh=new Uint16Array(1);
+let fqT=new Float32Array(1),skyThr=new Float32Array(1),skyR=new Float32Array(1),skyG=new Float32Array(1),skyB=new Float32Array(1),skyCh=new Uint16Array(1),skyBlk=new Float32Array(1);
 let wcR=new Float32Array(1),wcG=new Float32Array(1),wcB=new Float32Array(1),wcC=new Uint16Array(1);
 let xs=new Float64Array(1),ys=new Float64Array(1);
 
@@ -418,7 +418,7 @@ function resize(){
   rdRoofT=new Float32Array(rows+2);
   fqT=new Float32Array(rows+2);skyThr=new Float32Array(rows+2);
   skyR=new Float32Array(rows+2);skyG=new Float32Array(rows+2);skyB=new Float32Array(rows+2);
-  skyCh=new Uint16Array(rows+2);
+  skyCh=new Uint16Array(rows+2);skyBlk=new Float32Array(rows+2);
   wcR=new Float32Array(rows+2);wcG=new Float32Array(rows+2);
   wcB=new Float32Array(rows+2);wcC=new Uint16Array(rows+2);
   xs=new Float64Array(cols+1);ys=new Float64Array(rows+1);
@@ -571,7 +571,10 @@ function genCity(seed){
   /* sea rim */
   for(let y=0;y<H;y++)for(let x=0;x<W;x++){
     if(x<3||y<3||x>=W-3||y>=H-3)
-      set(x,y,chance(.5)?C_('~'):G.SP,[18+ri(-4,6),36+ri(-6,8),54+ri(-8,12)],WATER);
+      /* ONE albedo, same rule as the asphalt and the roof metal: per-tile
+         jitter changes the RATIO between channels and put() quantises hue to
+         6 levels, so neighbouring tiles flip to different saturated keys. */
+      set(x,y,chance(.5)?C_('~'):G.SP,[19,37,56],WATER);
   }
 
   const vr=[],hr=[];
@@ -610,7 +613,10 @@ function genCity(seed){
     const ci=ri(1,hr.length-2),cr=hr[ci];
     const y0=cr.p-1,y1=cr.p+cr.w;
     for(let yy=y0;yy<=y1;yy++)for(let xx=4;xx<W-4;xx++)
-      set(xx,yy,chance(.6)?C_('~'):G.SP,[38+ri(-6,8),52+ri(-8,12),68+ri(-10,16)],WATER);
+      /* ONE albedo (means of the old ranges, so brightness is unchanged).
+         Water texture comes from the floor pass - swell, grain, the wet mask
+         - never from the tile, or the canal reads as cyan/violet patchwork. */
+      set(xx,yy,chance(.6)?C_('~'):G.SP,[39,54,71],WATER);
     for(const r of vr) for(let yy=y0;yy<=y1;yy++)for(let xx=r.p;xx<r.p+r.w;xx++)
       set(xx,yy,G.SP,[54,52,56],ROAD);
     cr.water=true;
@@ -785,7 +791,12 @@ function carveBar(){
   mkLight(bx0+1,dIn,3.5,[255,170,96],.5,4,1.6);
   mkLight(bx0+3,bIn,3.5,[255,170,96],.5,4,1.6);
   mkLight(bx0+1,bkRow,4,[140,180,255],.4,1,1.5);
-  mkLight(bx1-1,dIn,4.5,[255,205,135],.62,1,1.9);                /* stage   */
+  mkLight(bx1-1,dIn,4.5,[255,205,135],.62,2,1.9);                /* stage   */
+  /* the back bar: bottles catching the light, and a low red glow that makes
+     the room feel occupied rather than merely lit */
+  mkLight(bx0+2,bkRow,3.2,[255,120,60],.42,4,2.2);
+  mkLight(bx0+5,bkRow,3.0,[120,255,200],.30,4,3.1);
+  mkLight(bx1-2,bkRow,3.2,[255,90,70],.34,4,1.4);
   mkLight(dx,dWall+dyO,6,[110,160,255],1.1,1,2.2);             /* spill   */
   const li=mkLight(dx,dWall+dyO*0.5,7,[100,170,255],1.0,1,2.2);
   const word='BLUE';
@@ -806,12 +817,17 @@ function carveBar(){
                      [bx1-2,dIn,'TRUMPET','He lowers the harmon mute an inch. "Requests? The tune decides, friend."']];
   for(const m of stage){
     ents.push({kind:'npc',x:m[0]+.5,y:m[1]+.5,ch:C_('&'),col:[206,178,150],
-      name:m[2],prompt:'LISTEN',lines:[m[3]],h:0.86,zoff:0,solid:true,rad:0.20,
+      name:m[2],prompt:'LISTEN',lines:[m[3]],h:0.86,zoff:0,solid:true,rad:0.20,nod:rnd()*6.28,
       draw:{x:m[0]+.5,y:m[1]+.5},vx:0,vy:0,spd:0,t:1e9});
   }
 
   /* patrons: seated at the tables and standing at the rail, one drifter */
   const BARLINES=['"Quiet tonight. Good."',
+    '"Third time this week. Do not tell anyone."',
+    '"He plays the same four bars until they mean something else."',
+    '"Rain outside, rain in the drink. Same rain."',
+    '"Nobody here is waiting for anybody. That is the point."',
+    '"Sit anywhere. The stools do not judge."',
     '"You hear that? One tune all night. I keep waiting for it to resolve."',
     '"I came in for the rain. Stayed for the bass."',
     '"Two credits says the trumpet player never shows his face."'];
@@ -823,10 +839,10 @@ function carveBar(){
     if(sPos[0]===bx1-1&&sPos[1]===mid) continue; /* trumpet stands there */
     ents.push({kind:'npc',x:sPos[0]+.5,y:sPos[1]+.5,ch:C_('&'),
       col:hsl(215+ri(-25,25),.15,.27),name:pick(NAMES),prompt:'TALK',
-      lines:[pick(BARLINES)],h:0.62,zoff:0,solid:true,rad:0.20,
+      lines:[pick(BARLINES)],h:0.62,zoff:0,solid:true,rad:0.20,nod:rnd()*6.28,
       draw:{x:sPos[0]+.5,y:sPos[1]+.5},vx:0,vy:0,spd:0,t:1e9});
   }
-  const wander=bw>=9?2:1;
+  const wander=bw>=9?4:2;
   for(let i2=0;i2<wander;i2++){
     const wx2=bx0+1+i2, wy2=dIn;
     if(!walkable(wx2,wy2)) continue;
@@ -1901,7 +1917,20 @@ function render(){
     /* Overcast daylight: the sky fills in almost solid and becomes the
        brightest thing in frame, which is what actually sells "it is day"
        far more than lifting the ground does. */
-    skyThr[y]=gl*(0.34+dayF*0.55)+0.012+dayF*0.62;
+    if(dayF>=0.22){
+      skyThr[y]=gl*(0.34+dayF*0.55)+0.012+dayF*0.62;
+      skyBlk[y]=-1;                       /* daylight marks are unchanged */
+    }else{
+      /* Solve DENSITY from a target areal INK rather than a dot count. '.'
+         inks ~3% of a cell, so the old night peak painted ~1% of the sky -
+         the glow was arithmetically present and optically absent. S1 inks
+         25%; ramp its share with the glow and backfill with dots, so both
+         marks cross-fade per CELL instead of switching in a visible band. */
+      const blk=gl*gl*0.25;
+      skyBlk[y]=blk;
+      const dots=(gl*0.062+0.0006-blk*0.25)/0.03;
+      skyThr[y]=blk+(dots>0?dots:0);
+    }
     skyR[y]=(52*gl+9)+dayF*(150+42*gl);
     skyG[y]=(26*gl+7)+dayF*(170+42*gl);
     skyB[y]=(46*gl+15)+dayF*(192+36*gl);
@@ -1928,6 +1957,11 @@ function render(){
 
     let yCeil=rows;              /* everything at/below this row is painted */
     let nearBase=-1e9, zb=FAR;
+    /* Mirror axis for canal reflections: the ground line of the nearest
+       DETAILED WALL in this column. nearBase is unusable - the roof branch
+       also assigns it (a roof plane) while leaving the wc* column unwritten,
+       so mirroring about it would read a stale column. */
+    let wBase=-1e9;
     let wy0=1,wy1=0;             /* painted span, for canal reflections */
     let hitSide=0, dist=0;
 
@@ -1948,7 +1982,6 @@ function render(){
       if(!solid&&P.roof<=0) continue;
       const hgt=solid?(T.hgt[ti]*0.25||1):0;
       if(hgt<eyeH){
-        if(dist>VIEW) continue;   /* far tier is skyline only — no rooftops */
         /* Roof face. Standing above a building we see its TOP, not its side,
            and skipping these left holes where the neighbouring rooftops
            should be. The tile spans dist (where the ray entered) to the next
@@ -1960,8 +1993,41 @@ function render(){
         const yFar =horizon+drop*projRows/Math.max(0.08,dOut);
         const ry0=Math.max(0,Math.ceil(yFar)), ry1=Math.min(yCeil-1,Math.floor(yNear));
         if(ry1>=ry0){
-          const rfog=Math.max(0,1-dist/VIEW);
+          /* Roofs fade into the haze over the full draw distance; the
+             ground gets a far gentler curve so distant lit streets survive.
+             Both tiers share these, so there is no seam at VIEW. */
+          const rfog=Math.max(0,1-dist/FAR);
           const rhz=(1-rfog)*HAZE_K, rkeep=1-rhz;
+          const gfog=Math.max(0.22,1-dist/(FAR*1.6));
+          const ghz=(1-gfog)*0.35, gkeep=1-ghz;
+          if(dist>VIEW){
+            /* Past the detailed range: same shading, none of the per-cell
+               world-space work (grit, panel joints, parapet lip). */
+            const o5=ti*3;
+            let br5,bg5,bb5;
+            if(solid){
+              br5=56*(AMB[0]+0.66)*rfog*rkeep+HAZE[0]*rhz;
+              bg5=60*(AMB[1]+0.68)*rfog*rkeep+HAZE[1]*rhz;
+              bb5=66*(AMB[2]+0.78)*rfog*rkeep+HAZE[2]*rhz;
+            }else{
+              br5=T.r[ti]*(AMB[0]*0.40+LM[o5]*3.2)*gfog*gkeep+HAZE[0]*ghz;
+              bg5=T.g[ti]*(AMB[1]*0.40+LM[o5+1]*3.2)*gfog*gkeep+HAZE[1]*ghz;
+              bb5=T.b[ti]*(AMB[2]*0.40+LM[o5+2]*3.2)*gfog*gkeep+HAZE[2]*ghz;
+            }
+            /* dist varies per column, so this dither is per-cell rather
+               than one value stamped across the tile */
+            const dcol=(dist*3)|0;
+            for(let y=ry0;y<=ry1;y++){
+              const dt5=hash3(mapX*13+dcol,mapY*7,y);
+              const k5=0.74+dt5*0.56;
+              const r5=br5*k5,g5=bg5*k5,b5=bb5*k5;
+              const le5=(r5+g5+b5)/765;
+              put(FRAMP[clamp(((le5/(le5+0.10))*10+0.9)|0,1,10)],xpx,ys[y],r5,g5,b5);
+            }
+            if(zb===FAR){ zb=dist; nearBase=yNear; wy1=ry1; }
+            wy0=ry0; yCeil=ry0;
+            continue;
+          }
           const o=ti*3;
           /* Skyglow ONLY. LM is ground light — a tower's own sign splatted
              its colour onto its roof tiles, and the 2.4x gain rendered every
@@ -1979,10 +2045,10 @@ function render(){
                glowing canyons cut between the dark roofs. Uses the baked
                ground light map, unlike the roofs, which get skyglow only. */
             const o4=ti*3;
-            const gl4=1.15;
-            const wr=(AMB[0]*0.40+LM[o4]*gl4)*rfog,
-                  wg=(AMB[1]*0.40+LM[o4+1]*gl4)*rfog,
-                  wb=(AMB[2]*0.40+LM[o4+2]*gl4)*rfog;
+            const gl4=3.2;
+            const wr=(AMB[0]*0.40+LM[o4]*gl4)*gfog,
+                  wg=(AMB[1]*0.40+LM[o4+1]*gl4)*gfog,
+                  wb=(AMB[2]*0.40+LM[o4+2]*gl4)*gfog;
             const dpr3=drop*projRows, fqk3=fqBase/dpr3;
             for(let y=ry0;y<=ry1;y++){
               const p3=y-horizon;
@@ -1991,9 +2057,9 @@ function render(){
               const fq3=fqk3*p3;
               const dt3=hash2((gx*fq3)|0,(gy*fq3)|0);
               const gk3=0.72+dt3*0.62;
-              const r3=(T.r[ti]*wr*gk3)*rkeep+HAZE[0]*rhz,
-                    g3=(T.g[ti]*wg*gk3)*rkeep+HAZE[1]*rhz,
-                    b3=(T.b[ti]*wb*gk3)*rkeep+HAZE[2]*rhz;
+              const r3=(T.r[ti]*wr*gk3)*gkeep+HAZE[0]*ghz,
+                    g3=(T.g[ti]*wg*gk3)*gkeep+HAZE[1]*ghz,
+                    b3=(T.b[ti]*wb*gk3)*gkeep+HAZE[2]*ghz;
               const le3=(r3+g3+b3)/765;
               put(FRAMP[clamp(((le3/(le3+0.10))*10+1.2)|0,1,10)],xpx,ys[y],r3,g3,b3);
             }
@@ -2079,6 +2145,11 @@ function render(){
           const uf=hitSide===0?(py+dist*ry):(px+dist*rx);
           const ucell=((uf-Math.floor(uf))*6)|0;
           for(let y=y0f;y<=y1f;y++){
+            if(y===y0f){                       /* the same edge, far away */
+              const rk=0.42+0.58*fade;
+              put(G.DN,xpx,ys[y],30*rk+3,33*rk+3,42*rk+4);
+              continue;
+            }
             const wv=hash3(hitX*13+ucell*7,hitY*7,y);
             if(wcb&&wv<0.17){
               const wcl=winCol(wcb,wv*6), wk=0.44+0.50*fade;
@@ -2245,7 +2316,12 @@ function render(){
           /* a whisper above the mass, receding with fog - these were the
              only surfaces drawn with no light or distance term, so every
              roofline glowed identically at any depth */
-          r=ar*0.6*fog+3;g=ag*0.6*fog+3;b=ab*0.7*fog+4;code=G.DN;
+          /* An unlit tower has no window light, so its top edge was
+             near-black against a near-black sky and the skyline lost all its
+             layering. A constant skyglow rim - not albedo-derived, so it
+             cannot trip the hue lottery - guarantees every roofline reads. */
+          const rim=0.52+0.48*fog;
+          r=42*rim+4;g=46*rim+4;b=58*rim+5;code=G.DN;
         }else if(isTree){
           /* Leaf clumps at two scales plus a dark underside, so light
              catches the crown and the inside of the canopy goes black.
@@ -2421,7 +2497,7 @@ function render(){
         put(code,xpx,ys[y],fr,fg,fb);
       }
       /* nearest slice defines the z-buffer and where the street starts */
-      if(zb===FAR){ zb=dist; nearBase=bottom; wy1=y1; }
+      if(zb===FAR){ zb=dist; nearBase=bottom; wBase=bottom; wy1=y1; }
       wy0=y0;
       yCeil=y0;
     }
@@ -2434,6 +2510,14 @@ function render(){
        began at floor(horizon)+1, leaving one unpainted scanline of clear
        colour straight across the horizon. */
     const skyTo=Math.min(rows-1,yCeil-1,Math.floor(horizon));
+    /* Key on BOTH ray components. plX=-dy*PLANE, so rx spans only 1.44*|dy|
+       across the whole screen: facing straight down an X-axis street it
+       truncated to ONE integer for all 200 columns, the row hashed to a
+       single value, and the threshold test flipped entire rows on or off -
+       the sky was solid horizontal rules, not haze. plY=dx*PLANE peaks
+       exactly there, so the two are complementary and at least one axis
+       always has enough buckets. Both are column-constant: truncate once. */
+    const skKX=(rx*160)|0, skKY=(ry*160)|0;
     for(let y=0;y<=skyTo;y++){
       const thr=skyThr[y];
       if(thr<0) continue;
@@ -2443,9 +2527,12 @@ function render(){
       /* keyed on ray direction, not screen column — keying on sx pinned the
          haze to the screen so it never moved when you turned, reading as
          dirt on the lens rather than atmosphere */
-      const st=hash2((rx*90)|0,y*3.1);
+      const st=hash3(skKX,skKY,y*3.1);
       if(st>thr) continue;
-      put(skyCh[y],xpx,ys[y],skyR[y],skyG[y],skyB[y]);
+      /* st is uniform in [0,thr], so this splits painted cells into the S1
+         share solved above and dots for the rest - same colour, same alpha,
+         only a different glyph, so no canvas state change. */
+      put(st<skyBlk[y]?G.S1:skyCh[y],xpx,ys[y],skyR[y],skyG[y],skyB[y]);
     }
 
     /* ---- floor ---- */
@@ -2584,10 +2671,19 @@ function render(){
          cast for this ray already found the wall, so the reflection costs a
          lookup rather than a second trace. Chop offsets the sampled row and
          punches holes so it reads as moving water, not a mirror. */
-      if(water&&wy1>=wy0){
-        const chop=(hash2((fx*5)|0,((fy*5)|0)+((time*7)|0))-0.5)*3.4;
-        const yw=(2*horizon-y+chop)|0;
-        if(yw>=wy0&&yw<=wy1&&hash2((fx*9)|0,(fy*9)|0)>0.3){
+      /* Mirror about the WATERLINE, not the horizon: the horizon is the
+         P.z->0 limit and is short by 2*(wBase-horizon) rows, which detached
+         the reflection from its building by a quarter of the frame and cut
+         off the shopfront band - the only bright facade content. Pitching
+         down pushed it negative and deleted it outright.
+         Both noise fields now DRIFT instead of teleporting: (time*7)|0
+         stepped a white-noise hash a whole cell 7x a second, globally, which
+         is a synchronised strobe. Inside the multiply it scrolls, and each
+         cell crosses its own boundary on its own beat, so it sparkles. */
+      if(water&&wy1>=wy0&&wBase>-1e8){
+        const chop=(hash2((fx*5+time*1.6)|0,(fy*5)|0)-0.5)*3.4;
+        const yw=(2*wBase-y+chop)|0;
+        if(yw>=wy0&&yw<=wy1&&hash2((fx*9+time*1.1)|0,(fy*9)|0)>0.3){
           const k=0.45*fog;
           put(wcC[yw],xpx,ys[y],wcR[yw]*k,wcG[yw]*k,wcB[yw]*k);
         }
@@ -2652,12 +2748,26 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
     const e=s.e;
     const zoff=e.zoff||0;
     const bottom=horizon+(P.z-zoff)*L1;
-    const hh=(e.h||0.9);
+    /* a slow shift of weight - enough that the room is never a still life */
+    const hh=(e.h||0.9)*(e.nod===undefined?1:(1+0.045*Math.sin(time*1.7+e.nod)));
     const top=bottom-hh*L1;
     /* People are far narrower than they are tall. 0.55 made them as wide as
        a doorway, which is half of why a close one looked like a wall. */
     const figure=(e.kind==='npc'||e.kind==='fixer');
-    const wCols=Math.max(1,Math.round(hh*L1*CH/CW*(figure?0.34:0.5)));
+    /* wCols is a WORLD width in columns. Writing it as hh*(0.34|0.5)
+       reproduces the old value exactly for figures and props. A car is not a
+       post: project the box. The width of an L-by-B rectangle seen theta off
+       its axis is B*|cos|+L*|sin|, blended on the BEARING to the car rather
+       than the camera axis - at the screen edge those differ by ~36deg, so a
+       camera-axis blend makes a broadside car pump as you swivel it. */
+    let wWorld=hh*(figure?0.34:0.5);
+    if(e.kind==='car'){
+      const rn=1/Math.max(1e-4,Math.sqrt(s.d));
+      const ca=Math.abs((s.rx*rn)*e.dx+(s.ry*rn)*e.dy);   /* 1 = nose-on   */
+      const sa=Math.sqrt(Math.max(0,1-ca*ca));            /* 1 = broadside */
+      wWorld=0.9*ca+(e.len||2)*sa;
+    }
+    const wCols=Math.max(1,Math.round(wWorld*L1*CH/CW));
     const x0=Math.max(0,Math.round(scrX-wCols/2)),x1=Math.min(cols-1,Math.round(scrX+wCols/2));
     const y0=Math.max(0,Math.ceil(top)),y1=Math.min(rows-1,Math.floor(bottom));
     if(y1<y0) continue;
@@ -2716,7 +2826,11 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
     /* Masks only once they can resolve; grain seed rides on the colour so
        texture sticks to the entity instead of swimming in screen space. */
     const mk=e.kind;
-    const shaped=!figure&&span>=6&&(cx1-cx0)>=4;
+    /* span is the ROW count, which for a car is the SMALL dimension - gating
+       on it alone left a widened car as a flat one-colour bar past ~8.7
+       units, i.e. everywhere traffic actually lives. The cabin/body mask
+       resolves fine at two rows, so let width qualify it too. */
+    const shaped=!figure&&(span>=6||mk==='car')&&(cx1-cx0)>=4;
     const grain=span>=10;
     const gseed=(e.col[0]*5+e.col[1]*3+e.col[2])|0;
 
@@ -2726,16 +2840,22 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
       const u=(x-cxm)/halfW, au=u<0?-u:u;
       for(let y=y0;y<=y1;y++){
         const v=(y-top)*invH;
-        let code;
+        let code, sk=1;
         if(figure){
           /* An actual silhouette — head, shoulders, a gap between the legs.
              Cells outside it draw nothing, so the city shows through and a
-             person reads as a person instead of a filled rectangle. */
-          if(v<0.18)      { if(au>0.46) continue; code=G.S3; }
-          else if(v<0.30) { if(au>0.62) continue; code=G.S3; }
-          else if(v<0.58) { if(au>0.98) continue; code=G.S3; }
-          else if(v<0.66) { if(au>0.66) continue; code=G.S3; }
-          else            { if(au>0.62||au<0.16) continue; code=G.S3; }
+             person reads as a person instead of a filled rectangle.
+             The tone was ONE value for the whole body, which is why a figure
+             read as a flat blob at middle distance. Now the head catches the
+             light, the torso falls off toward its edges, and the legs sit in
+             shadow - shape you can read at three cells tall. */
+          if(v<0.18)      { if(au>0.46) continue; code=G.S3; sk=1.28-au*0.30; }
+          else if(v<0.30) { if(au>0.62) continue; code=G.S3; sk=1.08; }
+          else if(v<0.58) { if(au>0.98) continue; code=G.S3; sk=0.94-au*0.20; }
+          else if(v<0.66) { if(au>0.66) continue; code=G.S2; sk=0.70; }
+          else            { if(au>0.62||au<0.16) continue; code=G.S3; sk=0.56; }
+          /* one side toward the street light — a rim that survives any size */
+          if(u>0.28) sk*=1.20;
         }else if(shaped){
           /* Same (u,v) trick as the silhouette, per prop kind - every other
              kind filled its whole box and read as a slab up close. */
@@ -2773,7 +2893,7 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
           const gz=hash3((u+1)*3.5,v*9,gseed);
           if(gz>0.80) code=code===G.FULL?G.S3:(code===G.S3?G.S2:G.S1);
         }
-        put(code,xp,ys[y],kr,kg,kb);
+        put(code,xp,ys[y],kr*sk,kg*sk,kb*sk);
       }
     }
   }
