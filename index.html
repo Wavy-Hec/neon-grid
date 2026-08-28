@@ -1531,14 +1531,24 @@ let rain=[];
 function buildRain(){
   const n=reduceMotion?40:Math.min(190,Math.round(cols*rows*0.035));
   rain=[];
-  for(let i=0;i<n;i++) rain.push({x:rnd()*(cols+4)-2,y:rnd()*(rows+2)-1,
-    v:rf(26,54),a:rf(.10,.28),c:chance(.75)?C_('|'):C_('/')});
+  for(let i=0;i<n;i++){
+    /* Depth. Every drop used to fall at the same rate at the same brightness
+       with the same glyph, which reads as static over the lens rather than
+       weather you are standing in. Near drops fall faster, sit brighter and
+       streak; far ones are slow dim specks. */
+    const z=rf(0.22,1);
+    rain.push({x:rnd()*(cols+4)-2,y:rnd()*(rows+2)-1,z:z,
+      v:rf(26,54),a:rf(.10,.28),
+      c:z>0.70?C_('|'):(z>0.45?(chance(.6)?C_('|'):C_('/')):C_(':'))});
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════════
    9. update
    ══════════════════════════════════════════════════════════════════ */
 let nearTimer=0,hudTimer=0,miniTimer=0;
+let rainLA=0,rainLX=0,rainLY=0;          /* camera the rain was last drawn at */
+let miniLX=-99,miniLY=-99,miniLA=-99;    /* and the minimap                   */
 
 function update(dt){
   time+=dt;
@@ -1650,11 +1660,24 @@ function update(dt){
 
   if(optRain&&!inBar()){
     const wind=6+rainPow*8;
+    /* Turning carries the rain with the world instead of leaving it pinned
+       to the glass, and walking sweeps the near drops outward past you.
+       Rotation shifts every drop equally (that is what rotation does);
+       depth only enters through the translation term and the fall rate. */
+    let da=P.a-rainLA;
+    if(da>Math.PI)da-=TAU; if(da<-Math.PI)da+=TAU;
+    rainLA=P.a;
+    const mdx=P.x-rainLX, mdy=P.y-rainLY;
+    rainLX=P.x; rainLY=P.y;
+    const fwd=mdx*Math.cos(P.a)+mdy*Math.sin(P.a);
+    const shift=da*(cols/1.44), cxm=cols*0.5;
     for(const d of rain){
-      d.y+=d.v*dt*(0.6+rainPow*0.9);
-      d.x+=wind*dt*0.3;
+      d.y+=d.v*dt*(0.55+d.z*0.85)*(0.6+rainPow*0.9);
+      d.x+=wind*dt*0.3*d.z-shift;
+      if(fwd) d.x+=(d.x-cxm)*fwd*0.05*d.z;
       if(d.y>rows+1){d.y=-1;d.x=rnd()*(cols+4)-2;}
       if(d.x>cols+2) d.x-=cols+4;
+      else if(d.x<-2) d.x+=cols+4;
     }
   }
 }
@@ -2699,8 +2722,10 @@ function render(){
     for(const d of rain){
       const cx=Math.floor(d.x),cy=Math.floor(d.y);
       if(cx<0||cy<0||cx>=cols||cy>=rows) continue;
-      const a=d.a*pw*150;
+      const a=d.a*pw*150*(0.42+d.z*0.90);
       put(d.c,xs[cx],ys[cy],a*0.72,a*0.86,a*1.0);
+      /* a near drop covers more than one cell in a frame - give it a tail */
+      if(d.z>0.72&&cy>0) put(d.c,xs[cx],ys[cy-1],a*0.34,a*0.41,a*0.48);
     }
   }
   ctx.globalAlpha=1;
@@ -2985,7 +3010,14 @@ function frame(ts){
   render();
   if(time<introT) drawIntro();
   miniTimer-=dt;
-  if(miniTimer<=0){miniTimer=.12;drawMini();}
+  if(miniTimer<=0){
+    /* It was redrawing 8x a second regardless - a full clear, a 204x142 blit
+       and a stroked cone - while the only thing that ever changes is where
+       the player is standing and looking. Check that first. */
+    miniTimer=.30;
+    const mv=Math.abs(P.x-miniLX)+Math.abs(P.y-miniLY)+Math.abs(P.a-miniLA)*7;
+    if(mv>0.05){ miniLX=P.x; miniLY=P.y; miniLA=P.a; drawMini(); }
+  }
   emaMs=emaMs*0.92+(performance.now()-t0)*0.08;
   if(degrade<1){
     if(emaMs>23){tight+=dt;if(tight>4){tight=0;stepDown();}}
