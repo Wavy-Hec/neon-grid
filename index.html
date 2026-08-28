@@ -440,7 +440,7 @@ function resize(){
    3. world data
    ══════════════════════════════════════════════════════════════════ */
 const W=204,H=142;
-const SOLID=1,EMIT=2,ROAD=4,WALK=8,WATER=16,ALLEY=32;
+const SOLID=1,EMIT=2,ROAD=4,WALK=8,WATER=16,ALLEY=32,TREE=64;
 const T={
   ch:new Uint16Array(W*H),
   r:new Uint8Array(W*H),g:new Uint8Array(W*H),b:new Uint8Array(W*H),
@@ -693,7 +693,7 @@ function park(x0,y0,x1,y1){
   const n=Math.max(1,Math.floor((x1-x0+1)*(y1-y0+1)*0.09));
   for(let i=0;i<n;i++){
     const tx=ri(x0,x1),ty=ri(y0,y1);
-    set(tx,ty,G.S2,[28+ri(-6,8),72+ri(-10,16),42+ri(-8,12)],SOLID);
+    set(tx,ty,G.S2,[28,72,42],SOLID|TREE);
     setH(tx,ty,tx,ty,rf(1.7,2.8));
   }
   const px=Math.floor((x0+x1)/2),py=Math.floor((y0+y1)/2);
@@ -1059,7 +1059,7 @@ function populate(vr,hr){
     if(!(flagAt(x+1,y)&ROAD||flagAt(x-1,y)&ROAD||flagAt(x,y+1)&ROAD||flagAt(x,y-1)&ROAD)) continue;
     if(((x*7+y*13)%9)!==0||!chance(.55)) continue;
     if(!roomy(x,y)) continue;
-    set(x,y,G.S2,[26+ri(-6,8),68+ri(-12,18),38+ri(-8,12)],SOLID);
+    set(x,y,G.S2,[26,68,38],SOLID|TREE);
     setH(x,y,x,y,rf(2.2,3.6));
   }
   for(const [kind,n] of [['food',34],['vend',34],['term',22],['shrine',12],['fixer',12]])
@@ -1901,9 +1901,9 @@ function render(){
              per-tile panel variance, and a bright parapet lip on the row
              where the roof actually ends. */
           const rvar=0.86+hash2(mapX*13,mapY*29)*0.24;
-          const lr2=(AMB[0]+0.27*rvar)*rfog,
-                lg2=(AMB[1]+0.29*rvar)*rfog,
-                lb2=(AMB[2]+0.34*rvar)*rfog;
+          const lr2=(AMB[0]+0.95*rvar)*rfog,
+                lg2=(AMB[1]+0.98*rvar)*rfog,
+                lb2=(AMB[2]+1.12*rvar)*rfog;
           const gr=56*lr2*rkeep+HAZE[0]*rhz,
                 gg=60*lg2*rkeep+HAZE[1]*rhz,
                 gb=66*lb2*rkeep+HAZE[2]*rhz;
@@ -1914,7 +1914,7 @@ function render(){
             const gk=(redge&&y===ry1)?2.2:(tex<0.14?0.55:(tex>0.86?1.45:1.0));
             const r2=gr*gk,g2=gg*gk,b2=gb*gk;
             const le2b=(r2+g2+b2)/765;
-            put(FRAMP[clamp(((le2b/(le2b+0.18))*9+0.5)|0,1,10)],xpx,ys[y],r2,g2,b2);
+            put(FRAMP[clamp(((le2b/(le2b+0.18))*9+1.2)|0,1,10)],xpx,ys[y],r2,g2,b2);
           }
           if(zb===FAR){ zb=dist; nearBase=yNear; wy1=ry1; }
           wy0=ry0; yCeil=ry0;
@@ -1939,15 +1939,23 @@ function render(){
           const fade=1-(dist-VIEW)/(FAR-VIEW);
           const wcb=T.wc[ti];
           const b0=wcb?winCol(wcb,0.5):[T.r[ti],T.g[ti],T.b[ti]];
-          const br=b0[0]*0.16*fade+HAZE[0]*0.42,
-                bg=b0[1]*0.16*fade+HAZE[1]*0.42,
-                bb=b0[2]*0.16*fade+HAZE[2]*0.42;
+          const br=b0[0]*0.18*fade+HAZE[0]*0.26,
+                bg=b0[1]*0.18*fade+HAZE[1]*0.26,
+                bb=b0[2]*0.18*fade+HAZE[2]*0.26;
+          /* wallU distinguishes columns within the tile; without it every
+             column of a row shared one value and the far skyline was flat
+             slabs of colour instead of a textured mass. */
+          const uf=hitSide===0?(py+dist*ry):(px+dist*rx);
+          const ucell=((uf-Math.floor(uf))*6)|0;
           for(let y=y0f;y<=y1f;y++){
-            const wv=hash3(hitX*13,hitY*7,y);
+            const wv=hash3(hitX*13+ucell*7,hitY*7,y);
             if(wcb&&wv<0.085){
               const wcl=winCol(wcb,wv*11), wk=0.30+0.45*fade;
               put(G.DOT,xpx,ys[y],wcl[0]*wk,wcl[1]*wk,wcl[2]*wk);
-            }else put(wv<0.5?G.S1:G.DOT,xpx,ys[y],br,bg,bb);
+            }else{
+              const fk=0.72+wv*0.62;
+              put(wv<0.45?G.S1:(wv<0.8?G.DOT:G.S2),xpx,ys[y],br*fk,bg*fk,bb*fk);
+            }
           }
           if(zb===FAR) zb=dist;
           yCeil=y0f;
@@ -1983,7 +1991,18 @@ function render(){
       const lrS=(LM[o]+lamp)*shade, lgS=(LM[o+1]+lamp*0.97)*shade, lbS=(LM[o+2]+lamp*0.88)*shade;
 
       const ar=T.r[ti],ag=T.g[ti],ab=T.b[ti];
-      const y0=Math.max(0,Math.ceil(top)),y1=Math.min(yCeil-1,Math.floor(bottom));
+      /* Foliage. A tree is a SOLID tile, so the raycaster was drawing it as
+         a flat green wall - three units of it at four units' range filled
+         the screen with one colour. Two things make it read as a tree: a
+         ragged top edge (so the sky pass eats into the silhouette instead
+         of a rectangle) and hard internal contrast further down. */
+      const isTree=(T.flag[ti]&TREE)!==0;
+      let topT=top;
+      if(isTree){
+        const rag=hash3(hitX*17+((wallU*7)|0),hitY*17,3);
+        topT=top+(bottom-top)*(0.06+rag*0.30);
+      }
+      const y0=Math.max(0,Math.ceil(topT)),y1=Math.min(yCeil-1,Math.floor(bottom));
       if(y1<y0){ yCeil=Math.min(yCeil,y0); continue; }
       /* A real corner, not a tile seam. wallU is a fractional world coord, so
          testing it alone fires once per world unit and rules nine vertical
@@ -2063,15 +2082,30 @@ function render(){
           const seg=(v*2.2)|0;
           const chase=0.72+0.28*Math.sin(time*3.1-seg*0.9+(sgL?sgL.ph:0));
           const dead=hash3(hitX,hitY,seg+((time*0.6)|0))<0.06?0.16:1;
+          /* A panel is a LIT BOX, not a wash of colour. Three things give it
+             structure at any distance: a dark frame at the band edge, tube
+             rows across it, and per-cell grain. Without them the fill was
+             one constant value over the whole footprint - at 7 units that is
+             a 25x18 cell slab of saturated magenta, which is what the
+             screenshots showed. */
+          const dv=(v-sMid)/sHalf;                       /* -1..1 across */
+          const sEdge=(dv<-0.74||dv>0.74);
+          const sGrain=hash3((wallU*tf)|0,(v*tf)|0,hitX*3+hitY);
+          const sTube=((((v*WINV*2)|0)&1)?1:0.70);
+          /* Fill compensates for haze instead of ignoring it: restrained up
+             close (where a real sign is glare you squint past) and strong at
+             range (where haze would otherwise eat it). */
+          const sFill=(0.17+0.50*(1-fog))*sTube*(0.74+sGrain*0.52);
           /* panel dim, letter hot — at equal brightness the filler drowned
              the glyph and the word never read as a word */
           const onLetter=letterCol&&y===yLetter&&dist<24;
           /* daylight drowns neon — a sign at full night brightness under an
              overcast noon sky reads as a bug, not as a sign */
-          const k=flick*chase*dead*(onLetter?1.6:0.55)*(1-dayF*0.62);
-          r=sr*k+10;g=sgg*k+10;b=sb*k+10;
-          code=onLetter?T.ch[ti]:(dead<1?G.S2:G.S3);
-        }else if(y===y0&&top>=0){
+          const k=flick*chase*dead*(onLetter?1.7:(sEdge?0.07:sFill))*(1-dayF*0.62);
+          r=sr*k+5;g=sgg*k+5;b=sb*k+5;
+          code=onLetter?T.ch[ti]
+              :(sEdge?G.S1:(sGrain>0.66?G.FULL:(sGrain>0.30?G.S3:G.S2)));
+        }else if(y===y0&&top>=0&&!isTree){
           /* Parapet. Without a cap the top row takes whatever the ramp
              happened to land on, and two overlapping towers merge into
              one silhouette-less blob. */
@@ -2079,6 +2113,22 @@ function render(){
              only surfaces drawn with no light or distance term, so every
              roofline glowed identically at any depth */
           r=ar*0.6*fog+3;g=ag*0.6*fog+3;b=ab*0.7*fog+4;code=G.DN;
+        }else if(isTree){
+          /* Leaf clumps at two scales plus a dark underside, so light
+             catches the crown and the inside of the canopy goes black.
+             The trunk is a narrow dark column under the crown. */
+          const lf=hash3((wallU*tf)|0,(v*tf)|0,hitX*5+hitY);
+          const clump=hash3((wallU*7)|0,(v*5)|0,hitX*3+hitY*11);
+          const crown=clamp((v-0.55)/Math.max(0.5,hgt-0.55),0,1);
+          if(v<0.95&&(wallU>0.34&&wallU<0.66)){
+            const tk2=0.5+lf*0.5;                       /* trunk */
+            r=46*tk2*lr;g=34*tk2*lg;b=26*tk2*lb;
+            code=lf<0.5?G.V:G.S2;
+          }else{
+            const lit=(0.20+crown*0.85)*(0.30+clump*1.15)*(0.55+lf*0.90);
+            r=ar*lr*lit;g=ag*lg*lit;b=ab*lb*lit;
+            code=lf<0.24?G.SP:(lf<0.52?G.DOT:(lf<0.78?G.S1:G.S2));
+          }
         }else if(corner){
           r=ar*0.65*fog+3;g=ag*0.65*fog+3;b=ab*0.75*fog+4;code=G.V;
         }else{
@@ -2193,10 +2243,33 @@ function render(){
                step — so a close wall resolved to a single character at a
                single colour. That was the flat slab. Now it spans 3-4 steps,
                and the colour breaks per cell too, the way the floor does. */
-            const kk=(iv<0.16?0.5:1)*(pane?0.38:0.74)*(0.30+wt*0.72);
+            /* Structure beats noise. 0.30+wt*0.72 was mostly NOISE - the
+               grain swung wider than the signal, so a close wall was static
+               rather than architecture. Now the geometry carries it: glass
+               sits near-black, the mullion frame catches the light, and the
+               storey line is a dark band. The grid you see is the building's
+               own grid, and the grain only feathers it. */
+            /* A surface with no window hue (bar shell, counters, blank
+               masonry) has no window grid - running the pane/mullion
+               lattice over it turned the bar interior into noisy brickwork.
+               Those get a plain, calm material instead. */
+            /* Blank masonry (bar shell, counters, windowless walls) has no
+               window grid to give it scale, and pure grain reads as static -
+               a point-blank wall was a field of brown noise. Lay real brick:
+               staggered courses with mortar joints, world-anchored so they
+               hold still as you walk. */
+            let kk;
+            if(T.wc[ti]===0){
+              const bv=v*8, course=Math.floor(bv);
+              const bu=wallU*6+((course&1)?0.5:0);
+              const fu=bu-Math.floor(bu), fv=bv-course;
+              kk=(fu<0.09||fv<0.13) ? 0.30 : (0.70+wt*0.30);
+            }else{
+              kk=(iv<0.16?0.45:1)*(pane?0.22:0.80)*(0.55+wt*0.55);
+            }
             r=ar*lr*kk;g=ag*lg*kk;b=ab*lb*kk;
             const le=(r+g+b)/765;
-            code=corner?G.V:WRAMP[clamp(((le/(le+0.055))*4.4+wt*2.4-1.0)|0,1,6)];
+            code=corner?G.V:WRAMP[clamp(((le/(le+0.055))*4.4+wt*(T.wc[ti]===0?1.7:2.4)-(T.wc[ti]===0?0.7:1.0))|0,1,6)];
           }
         }
         const fr=r*keep+hzR, fg=g*keep+hzG, fb=b*keep+hzB;
@@ -2269,17 +2342,20 @@ function render(){
            phenomena; leaking them up here was the washed pale blanket every
            rooftop turned into. Per-tile variance breaks it into panels. */
         const rvar=0.78+hash2(tx*13,ty*29)*0.36;
-        lr=(AMB[0]+0.30*rvar)*fog;
-        lg=(AMB[1]+0.29*rvar)*fog;
-        lb=(AMB[2]+0.34*rvar)*fog;
+        lr=(AMB[0]+0.98*rvar)*fog;
+        lg=(AMB[1]+0.96*rvar)*fog;
+        lb=(AMB[2]+1.10*rvar)*fog;
       }else{
         const lamp=lampT[y];
         /* Weight the baked lights over flat ambient. Equal weighting made
            the whole road one mid-grey field of static; this gives dark
            asphalt with the neon actually pooling on it. */
-        lr=(AMB[0]*0.45+LM[o]*1.28+lamp)*fog;
-        lg=(AMB[1]*0.45+LM[o+1]*1.28+lamp*0.97)*fog;
-        lb=(AMB[2]*0.45+LM[o+2]*1.28+lamp*0.88)*fog;
+        /* Asphalt is nearly black; what you see is what the neon PUTS on
+           it. Spreading the light map at 1.28 lifted the whole road to one
+           grey plane - the flat pale band. Lower base, stronger puddles. */
+        lr=(AMB[0]*0.35+LM[o]*0.60+lamp)*fog;
+        lg=(AMB[1]*0.35+LM[o+1]*0.60+lamp*0.97)*fog;
+        lb=(AMB[2]*0.35+LM[o+2]*0.60+lamp*0.88)*fog;
       }
 
       /* Wet asphalt: smear light from a few tiles further down the ray back
@@ -2293,7 +2369,11 @@ function render(){
            asphalt between puddles barely - vertical smears with dark gaps
            instead of a uniform glow lifting the whole street */
         const gl2=hash2((fx*1.6)|0,(fy*1.6)|0);
-        const wet=(gl2>0.62?0.60:0.10)*fog;
+        /* Standing water mirrors hard; damp asphalt between puddles barely
+           does. The old 0.10 floor smeared reflected light over EVERY tile,
+           which lifted the whole road to one uniform dim tone - the flat
+           pale band. Real puddles are patches with dark road between. */
+        const wet=(gl2>0.72?1.70:(gl2>0.58?0.55:0.02))*fog;
         lr+=LM[o2]*wet; lg+=LM[o2+1]*wet; lb+=LM[o2+2]*wet;
       }
       let water=0;
@@ -2304,7 +2384,7 @@ function render(){
       }
       const hz=(1-fog)*HAZE_K*0.55,keep=1-hz;
       /* roofs are bare concrete under open sky, not wet neon-lit asphalt */
-      const gain=onRoof?1.0:0.85;
+      const gain=onRoof?1.0:0.66;
       /* Grain frequency tracks distance so one hash cell stays about one
          screen cell — a fixed world frequency makes the near rows collapse
          into long identical runs. */
@@ -2335,13 +2415,21 @@ function render(){
            (fyf<0.13&&ty>0&&T.hgt[ti-W]!==hh0)||(fyf>0.87&&ty<H-1&&T.hgt[ti+W]!==hh0)){
           tk=1.85;bump=1.2;
         }else if(fxf<0.06||fyf<0.06){tk=0.55;bump=-0.6;}
+        /* Per-CELL gravel. Albedo is constant and rvar is per tile, so
+           without this every roof cell carried the identical value and the
+           plane read as poured concrete fog. */
+        tk*=0.68+tex*0.64;
       }
       const aR=onRoof?56:T.r[ti],aG=onRoof?60:T.g[ti],aB=onRoof?66:T.b[ti];
       const r=(aR*lr*gain*keep+HAZE[0]*hz)*tk,
             g=(aG*lg*gain*keep+HAZE[1]*hz)*tk,
             b=(aB*lb*gain*keep+HAZE[2]*hz)*tk;
       const le=(r+g+b)/765;
-      let gch=FRAMP[clamp(((le/(le+0.30))*10+bump+tex*0.8-0.4)|0,0,8)];
+      /* Glyph density and brightness were the same knob: a dark surface
+         picked '.' (about 2% ink) and vanished, which is why a rooftop read
+         as a black void. Bias the ramp so ground planes keep a dense shade
+         glyph while staying dim - dark AND present. */
+      let gch=FRAMP[clamp(((le/(le+0.30))*10+bump+tex*0.8-0.4+(onRoof?2.2:0.5))|0,0,8)];
       /* ~1.5% of road tiles carry a grate mark in the tile centre */
       if(!onRoof&&rowDist<14&&(T.flag[ti]&ROAD)&&hash2(tx*131,ty*57)>0.985){
         const fxg=fx-tx,fyg=fy-ty;
