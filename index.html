@@ -440,7 +440,7 @@ function resize(){
    3. world data
    ══════════════════════════════════════════════════════════════════ */
 const W=204,H=142;
-const SOLID=1,EMIT=2,ROAD=4,WALK=8,WATER=16,ALLEY=32,TREE=64;
+const SOLID=1,EMIT=2,ROAD=4,WALK=8,WATER=16,ALLEY=32,TREE=64,ROOFP=128;
 const T={
   ch:new Uint16Array(W*H),
   r:new Uint8Array(W*H),g:new Uint8Array(W*H),b:new Uint8Array(W*H),
@@ -1062,7 +1062,7 @@ function populate(vr,hr){
     set(x,y,G.S2,[26,68,38],SOLID|TREE);
     setH(x,y,x,y,rf(2.2,3.6));
   }
-  for(const [kind,n] of [['food',34],['vend',34],['term',22],['shrine',12],['fixer',12]])
+  for(const [kind,n] of [['food',46],['vend',44],['term',30],['shrine',18],['fixer',16]])
     for(let i=0;i<n;i++){const s=findOpen((x,y)=>near(x,y)&&roomy(x,y));if(s)ents.push(mkProp(s.x,s.y,kind));}
 
 
@@ -1087,7 +1087,67 @@ function populate(vr,hr){
     ents.push(e); liftN++;
   }
 
-  for(let i=0;i<190;i++){
+  /* Rooftop plant: vents, tanks, stair huts and aerial masts. These are just
+     roof tiles pushed up a little, which buys two things at once - clutter to
+     walk around when you ride a lift up, and a broken skyline silhouette seen
+     from the street, instead of every tower ending in a clean flat line.
+     They must never box in a lift landing, so lift tiles and their immediate
+     neighbours are excluded and density stays low enough to walk through. */
+  const liftAt=new Set();
+  for(const e of ents) if(e.kind==='lift'){
+    const lx=Math.floor(e.rx), ly=Math.floor(e.ry);
+    for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++) liftAt.add((ly+dy)*W+(lx+dx));
+  }
+  let plantN=0;
+  for(let i=0;i<26000&&plantN<430;i++){
+    const x=ri(3,W-4), y=ri(3,H-4), idx=y*W+x;
+    if(!(T.flag[idx]&SOLID)||T.wc[idx]===0) continue;   /* real buildings only */
+    const h=T.hgt[idx];
+    if(h<20) continue;                                   /* >= 5 world units   */
+    if(liftAt.has(idx)) continue;
+    /* part of a roof, not a lone spike: keep at least two same-height
+       neighbours unraised so there is always a way around */
+    let flat=0;
+    for(const d of [-1,1,-W,W]){
+      const j=idx+d;
+      if(j<0||j>=W*H) continue;
+      if((T.flag[j]&SOLID)&&T.hgt[j]===h&&!(T.flag[j]&ROOFP)) flat++;
+    }
+    if(flat<3) continue;
+    const roll=rnd();
+    /* squat vents, chest-high tanks, stair huts, then rare thin masts */
+    const add=roll<0.42?ri(2,4):(roll<0.74?ri(5,8):(roll<0.93?ri(9,13):ri(16,26)));
+    const put2=(jx,jy)=>{
+      const j=jy*W+jx;
+      T.hgt[j]=Math.min(255,h+add);
+      T.r[j]=54;T.g[j]=57;T.b[j]=64;                     /* constant metal     */
+      T.ch[j]=G.S2;
+      T.flag[j]=SOLID|ROOFP;
+      T.wc[j]=0;
+      plantN++;
+    };
+    put2(x,y);
+    /* half of them run to two tiles so a tank or duct reads as an object
+       rather than a lone pillar - but only if the neighbour is itself open
+       roof, so a pair can never wall a rooftop off */
+    if(add<14&&rnd()<0.5){
+      const d=[[1,0],[-1,0],[0,1],[0,-1]][(rnd()*4)|0];
+      const nx=x+d[0], ny=y+d[1], nj=ny*W+nx;
+      if(nx>1&&ny>1&&nx<W-2&&ny<H-2&&(T.flag[nj]&SOLID)&&T.hgt[nj]===h&&
+         !(T.flag[nj]&ROOFP)&&T.wc[nj]!==0&&!liftAt.has(nj)){
+        let f2=0;
+        for(const dd of [-1,1,-W,W]){
+          const k=nj+dd;
+          if(k<0||k>=W*H) continue;
+          if((T.flag[k]&SOLID)&&T.hgt[k]===h&&!(T.flag[k]&ROOFP)) f2++;
+        }
+        if(f2>=2) put2(nx,ny);
+      }
+    }
+  }
+
+  /* 200 columns of city needs more people in it than 100 did */
+  for(let i=0;i<270;i++){
     const s=findOpen(near);if(!s)continue;      /* on pavement, where you'll see them */
     const enf=chance(.09);
     ents.push({kind:'npc',x:s.x+.5,y:s.y+.5,ch:enf?C_('!'):C_('&'),
@@ -1877,8 +1937,16 @@ function render(){
       if(dist>FAR) break;
       if(mapX<0||mapY<0||mapX>=W||mapY>=H) break;
       const ti=mapY*W+mapX;
-      if(!(T.flag[ti]&SOLID)) continue;
-      const hgt=T.hgt[ti]*0.25||1;
+      const solid=(T.flag[ti]&SOLID)!==0;
+      /* Standing on a roof, the floor pass is skipped entirely (nearBase
+         pushes fStart to the last row), so the streets between blocks were
+         never drawn at ALL - looking down from a rooftop you saw dark
+         concrete tops and pure black where the city should glow. Letting
+         non-solid tiles into the march as a height-0 surface paints those
+         canyons. At street level nothing changes: the floor pass still owns
+         the ground and this costs nothing. */
+      if(!solid&&P.roof<=0) continue;
+      const hgt=solid?(T.hgt[ti]*0.25||1):0;
       if(hgt<eyeH){
         if(dist>VIEW) continue;   /* far tier is skyline only — no rooftops */
         /* Roof face. Standing above a building we see its TOP, not its side,
@@ -1905,6 +1973,34 @@ function render(){
              Texture is explicit instead: bands that jump a full ramp step,
              per-tile panel variance, and a bright parapet lip on the row
              where the roof actually ends. */
+          if(!solid){
+            /* The street, seen from above. This is where all the light in a
+               night city lives - lamps, signs, wet asphalt - so it reads as
+               glowing canyons cut between the dark roofs. Uses the baked
+               ground light map, unlike the roofs, which get skyglow only. */
+            const o4=ti*3;
+            const gl4=1.15;
+            const wr=(AMB[0]*0.40+LM[o4]*gl4)*rfog,
+                  wg=(AMB[1]*0.40+LM[o4+1]*gl4)*rfog,
+                  wb=(AMB[2]*0.40+LM[o4+2]*gl4)*rfog;
+            const dpr3=drop*projRows, fqk3=fqBase/dpr3;
+            for(let y=ry0;y<=ry1;y++){
+              const p3=y-horizon;
+              const rd3=dpr3/p3;
+              const gx=px+rx*rd3, gy=py+ry*rd3;
+              const fq3=fqk3*p3;
+              const dt3=hash2((gx*fq3)|0,(gy*fq3)|0);
+              const gk3=0.72+dt3*0.62;
+              const r3=(T.r[ti]*wr*gk3)*rkeep+HAZE[0]*rhz,
+                    g3=(T.g[ti]*wg*gk3)*rkeep+HAZE[1]*rhz,
+                    b3=(T.b[ti]*wb*gk3)*rkeep+HAZE[2]*rhz;
+              const le3=(r3+g3+b3)/765;
+              put(FRAMP[clamp(((le3/(le3+0.10))*10+1.2)|0,1,10)],xpx,ys[y],r3,g3,b3);
+            }
+            if(zb===FAR){ zb=dist; nearBase=yNear; wy1=ry1; }
+            wy0=ry0; yCeil=ry0;
+            continue;
+          }
           /* THIS branch draws the roof you are standing on. nearBase is set
              from the first roof tile below, so fStart clamps to rows and the
              onRoof half of the floor pass never runs at all - every roof
@@ -1913,9 +2009,9 @@ function render(){
              FRAMP was landing on a 1-2px mark, so 97% of each cell was never
              painted. Fix coverage and the lights only need +11% over base. */
           const rvar=0.86+hash2(mapX*13,mapY*29)*0.24;
-          const lr2=(AMB[0]+0.56*rvar)*rfog,
-                lg2=(AMB[1]+0.58*rvar)*rfog,
-                lb2=(AMB[2]+0.67*rvar)*rfog;
+          const lr2=(AMB[0]+0.68*rvar)*rfog,
+                lg2=(AMB[1]+0.70*rvar)*rfog,
+                lb2=(AMB[2]+0.80*rvar)*rfog;
           const gr=56*lr2*rkeep+HAZE[0]*rhz,
                 gg=60*lg2*rkeep+HAZE[1]*rhz,
                 gb=66*lb2*rkeep+HAZE[2]*rhz;
@@ -1939,7 +2035,7 @@ function render(){
             let gk=1.0,bump=0;
             if(g1>0.94){gk=1.30;bump=1.0;}
             else if(g1<0.06){gk=0.70;bump=-1.0;}
-            if((fxf<0.12&&eL)||(fxf>0.88&&eR)||(fyf<0.12&&eU)||(fyf>0.88&&eD)){gk=1.90;bump=1.6;}
+            if((fxf<0.12&&eL)||(fxf>0.88&&eR)||(fyf<0.12&&eU)||(fyf>0.88&&eD)){gk=1.42;bump=0.9;}
             else if(fxf<0.055||fyf<0.055){gk=0.72;bump=-0.9;}
             const r2=gr*gk,g2=gg*gk,b2=gb*gk;
             const le2b=(r2+g2+b2)/765;
@@ -1974,9 +2070,9 @@ function render(){
           const fade=1-(dist-VIEW)/(FAR-VIEW);
           const wcb=T.wc[ti];
           const b0=wcb?winCol(wcb,0.5):[T.r[ti],T.g[ti],T.b[ti]];
-          const br=b0[0]*0.18*fade+HAZE[0]*0.26,
-                bg=b0[1]*0.18*fade+HAZE[1]*0.26,
-                bb=b0[2]*0.18*fade+HAZE[2]*0.26;
+          const br=b0[0]*0.26*fade+HAZE[0]*0.30,
+                bg=b0[1]*0.26*fade+HAZE[1]*0.30,
+                bb=b0[2]*0.26*fade+HAZE[2]*0.30;
           /* wallU distinguishes columns within the tile; without it every
              column of a row shared one value and the far skyline was flat
              slabs of colour instead of a textured mass. */
@@ -1984,8 +2080,8 @@ function render(){
           const ucell=((uf-Math.floor(uf))*6)|0;
           for(let y=y0f;y<=y1f;y++){
             const wv=hash3(hitX*13+ucell*7,hitY*7,y);
-            if(wcb&&wv<0.085){
-              const wcl=winCol(wcb,wv*11), wk=0.30+0.45*fade;
+            if(wcb&&wv<0.17){
+              const wcl=winCol(wcb,wv*6), wk=0.44+0.50*fade;
               put(G.DOT,xpx,ys[y],wcl[0]*wk,wcl[1]*wk,wcl[2]*wk);
             }else{
               const fk=0.72+wv*0.62;
@@ -2031,7 +2127,7 @@ function render(){
          the screen with one colour. Two things make it read as a tree: a
          ragged top edge (so the sky pass eats into the silhouette instead
          of a rectangle) and hard internal contrast further down. */
-      const isTree=(T.flag[ti]&TREE)!==0;
+      const isTree=(T.flag[ti]&TREE)!==0, isPlant=(T.flag[ti]&ROOFP)!==0;
       let topT=top;
       if(isTree){
         const rag=hash3(hitX*17+((wallU*7)|0),hitY*17,3);
@@ -2166,6 +2262,16 @@ function render(){
             r=ar*lr*lit;g=ag*lg*lit;b=ab*lb*lit;
             code=lf<0.24?G.SP:(lf<0.52?G.DOT:(lf<0.78?G.S1:G.S2));
           }
+        }else if(isPlant){
+          /* Rooftop machinery: ribbed sheet metal with a lid line. Ribs are
+             world-anchored so they hold still, and the lid catches the sky
+             the way a galvanised top does. */
+          const rib=(((wallU*9)|0)&1)?1:0.66;
+          const gr2=hash3((wallU*tf)|0,(v*tf)|0,hitX*5+hitY*3);
+          const lid=(v>hgt-0.16)?1.7:1;
+          const mk2=rib*lid*(0.72+gr2*0.40);
+          r=ar*lr*mk2;g=ag*lg*mk2;b=ab*lb*mk2;
+          code=lid>1?G.DN:(rib<1?G.S1:G.S2);
         }else if(corner){
           r=ar*0.65*fog+3;g=ag*0.65*fog+3;b=ab*0.75*fog+4;code=G.V;
         }else{
