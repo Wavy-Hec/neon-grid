@@ -151,7 +151,8 @@
       <div class="r" style="margin:-4px 0 4px 32px">click the view for mouse-look · crane up, the towers are 40 storeys</div>
       <div><kbd>Shift</kbd> run &nbsp; <kbd>E</kbd> interact with anything that glows</div>
       <div class="r" style="margin:-4px 0 4px 32px">find a <b>service lift</b> (I) and ride it — then look down</div>
-      <div><kbd>N</kbd> new city &nbsp; <kbd>B</kbd> bloom &nbsp; <kbd>R</kbd> rain &nbsp; <kbd>F</kbd> fps</div>
+      <div><kbd>T</kbd> auto tour &nbsp; <kbd>N</kbd> empty city &nbsp; <kbd>G</kbd> new city</div>
+      <div><kbd>B</kbd> bloom &nbsp; <kbd>R</kbd> rain &nbsp; <kbd>F</kbd> fps</div>
       <div><kbd>M</kbd> mute &nbsp;<span class="r">— somewhere out there is a jazz bar. Follow the sound of the trumpet; the blue sign marks the door.</span></div>
       <div><kbd>-</kbd><kbd>=</kbd> resolution &nbsp; <kbd>?</kbd> help &nbsp; <kbd>Esc</kbd> close</div>
       <div style="margin-top:14px" class="r">
@@ -173,7 +174,7 @@
       <div class="wip">work in progress</div>
       <div class="seed" id="bSeed">—</div>
       <div class="go">press any key</div>
-      <div class="keys">w a s d walk &nbsp;&middot;&nbsp; e touch &nbsp;&middot;&nbsp; m mute</div>
+      <div class="keys">w a s d walk &nbsp;&middot;&nbsp; e touch &nbsp;&middot;&nbsp; t auto tour &nbsp;&middot;&nbsp; n empty city &nbsp;&middot;&nbsp; m mute</div>
     </div>
   </div>
 </div>
@@ -368,6 +369,14 @@ let dpr=1,cols=100,rows=36,VW=0,VH=0,zoom=0;
 let bcv=document.createElement('canvas'),bctx=bcv.getContext('2d');
 const canFilter=(typeof bctx.filter==='string');
 let zbuf=new Float32Array(1);
+/* Per-column occlusion staircase: (distance, yCeil) at every step the
+   painter lowered the ceiling, in march order, within VIEW only. Sprites
+   test against the ceiling at THEIR depth, so height finally matters.
+   Ground-from-above tiles are not recorded (they can never clip a sprite)
+   and a run of same-height roof tiles collapses to one event, so a column
+   holds one entry per real occluder. */
+const ZK=24;
+let zD=new Float32Array(1),zY=new Int16Array(1),zN=new Uint8Array(1);
 let rdT=new Float32Array(1),fogT=new Float32Array(1),lampT=new Float32Array(1),rdRoofT=new Float32Array(1);
 let fqT=new Float32Array(1),skyThr=new Float32Array(1),skyR=new Float32Array(1),skyG=new Float32Array(1),skyB=new Float32Array(1),skyCh=new Uint16Array(1),skyBlk=new Float32Array(1);
 let wcR=new Float32Array(1),wcG=new Float32Array(1),wcB=new Float32Array(1),wcC=new Uint16Array(1);
@@ -440,6 +449,7 @@ function resize(){
      sub-pixel drift. ACW/ACH are set by resetSheet() just above. */
   cols=Math.ceil(cv.width/ACW);rows=Math.ceil(cv.height/ACH);
   zbuf=new Float32Array(cols);
+  zD=new Float32Array(cols*ZK);zY=new Int16Array(cols*ZK);zN=new Uint8Array(cols);
   rdT=new Float32Array(rows+2);fogT=new Float32Array(rows+2);lampT=new Float32Array(rows+2);
   rdRoofT=new Float32Array(rows+2);
   fqT=new Float32Array(rows+2);skyThr=new Float32Array(rows+2);
@@ -476,7 +486,7 @@ const T={
 };
 const LM=new Float32Array(W*H*3);     /* baked light, one bake per city */
 const dmap=new Uint8Array(W*H);
-let lights=[],ents=[],nearEnts=[],shardTotal=0;
+let lights=[],ents=[],nearEnts=[],shardTotal=0,aeros=[];
 
 const DISTRICTS=[
   {name:'KOWLOON SPRAWL',hues:[300,326,192,268]},
@@ -584,7 +594,7 @@ function genCity(seed){
   rnd=mulberry32(xmur3(seed)());
   T.ch.fill(G.SP);T.flag.fill(0);T.sign.fill(-1);T.hgt.fill(0);T.wc.fill(0);
   T.r.fill(0);T.g.fill(0);T.b.fill(0);
-  lights=[];ents=[];nearEnts=[];shardTotal=0;
+  lights=[];ents=[];nearEnts=[];shardTotal=0;aeros=[];
 
   const dseeds=[];
   for(let i=0;i<DISTRICTS.length;i++) dseeds.push({x:ri(12,W-12),y:ri(12,H-12),i:i});
@@ -667,6 +677,7 @@ function genCity(seed){
     if(clear) building(bx,by,bx+bw,by+bh,dmap[by*W+bx],'mega');
   }
 
+  RV=vr;RH=hr;
   populate(vr,hr);
   carveBar();
   bakeLight();
@@ -919,11 +930,21 @@ function building(x0,y0,x1,y1,D,force){
      computes to 4-6, under put()'s draw threshold of 7, so the building body
      drew NOTHING and the facade collapsed to a confetti of lit windows
      floating on black. A building needs a visible dark mass between them. */
-  const wall=hsl(wHue+ri(-8,8),rf(.16,.30),tall?rf(.17,.24):rf(.15,.21));
+  /* Saturation .34-.48, not .16-.30: put() keys hue at round(ch*5/max), so
+     a min/max ratio of 0.54-0.72 rounded every wall to a near-grey
+     (5,4,4)/(5,3,3)-type key and no tower had a colour. At .34-.48 the ratio
+     is 0.35-0.49 -> key 2 -> the body is unmistakably its own hue family.
+     Max channel l(1+s) rises with it, so the body only gets brighter. */
+  const wall=hsl(wHue+ri(-8,8),rf(.34,.48),tall?rf(.17,.24):rf(.15,.21));
   for(let yy=y0;yy<=y1;yy++)for(let xx=x0;xx<=x1;xx++){
     /* ±6 on an albedo near 30 is a ±20% per-tile swing — once the facade
        renders as a coherent surface that reads as blotches, not texture. */
-    set(xx,yy,G.S2,[wall[0]+ri(-2,2),wall[1]+ri(-2,2),wall[2]+ri(-2,2)],SOLID);
+    /* EXACT albedo on every tile. The quantiser step is max/5 (~13 at these
+       levels): a +-2 swing on a channel within 2 of a rounding boundary
+       flips the whole tile to a different hue key - roughly a third of
+       channels sit in that window, so most buildings carried random tint
+       slabs. Per-cell grain (wt) and per-row light still break the surface. */
+    set(xx,yy,G.S2,wall,SOLID);
     T.wc[yy*W+xx]=wByte;
   }
   setH(x0,y0,x1,y1,height);
@@ -1053,13 +1074,114 @@ function findOpen(pred,tries){
   }
   return null;
 }
-function mkCar(x,y,dx,dy){
-  return {kind:'car',x:x,y:y,dx:dx,dy:dy,spd:rf(5,11),len:ri(2,3),h:0.75,zoff:0,
+/* ── traffic ─────────────────────────────────────────────────────────
+   Roads are full-length strips (genCity), so a car only needs to know its
+   own road and the next one it crosses. Left-hand traffic: a car rides the
+   edge lane on the LEFT of its heading - where mkCar always spawned them.
+   A left turn happens at the NEAR edge of the crossing road and a right
+   turn at the FAR edge, so a turned car lands in the correct lane of the
+   new road with no pathfinding at all. */
+let RV=[],RH=[];                        /* genCity's vr/hr, kept for traffic */
+let carSayT=-99;
+const CAR_ACC=4.5, CAR_DEC=11, CAR_TURN_V=3.0, SIG_T=14;
+function laneCoord(r,dx,dy){ return ((dx?-dx:dy)<0?r.p:r.p+r.w-1)+0.5; }
+/* Signal for the junction of vertical road v and horizontal road h:
+   0 = vertical axis green, 1 = horizontal green, 2 = all-red clearance.
+   Each junction runs its own offset so the city never blinks in unison. */
+function sigPhase(v,h){
+  const f=(time/SIG_T+hash2(v.p*7+3,h.p*11+5))%1;
+  return f<0.44?0:(f<0.50?2:(f<0.94?1:2));
+}
+/* drivable crossings ahead of a point moving `dir` along `list`'s axis */
+function crossCount(list,along,dir){
+  let n=0;
+  for(const r of list){ if(r.water) continue; if(((dir>0?r.p:r.p+r.w)-along)*dir>=0.6) n++; }
+  return n;
+}
+/* Find the next crossing road ahead of e and decide what to do there. */
+function planCross(e){
+  const vert=e.dy!==0;
+  const list=vert?RH:RV, along=vert?e.y:e.x, dir=vert?e.dy:e.dx;
+  let best=null,bd=1e9,count=0;
+  for(const r of list){
+    if(r.water) continue;                       /* the canal: bridges, no turns */
+    const d=((dir>0?r.p:r.p+r.w)-along)*dir;    /* to the edge we reach first */
+    if(d<0.6) continue;                         /* inside it already, or behind */
+    count++;
+    if(d<bd){bd=d;best=r;}
+  }
+  e.jn=best; e.inJ=false; e.turn=0;
+  if(!best) return;
+  e.jStop=(dir>0?best.p:best.p+best.w)-dir*(e.len*0.5+0.35);  /* nose short of the box */
+  /* last junction before the map edge: turn, never wrap */
+  const r=Math.random();
+  let t=count===1?(r<0.5?-1:1):(r<0.62?0:(r<0.81?-1:1));
+  if(t){
+    /* don't turn onto a stretch that dead-ends at the rim if the other way has a junction */
+    const nx=t<0?e.dy:-e.dy, ny=t<0?-e.dx:e.dx;
+    const nl=vert?RV:RH, na=vert?e.x:e.y;
+    if(!crossCount(nl,na,vert?nx:ny)){ t=-t; if(!crossCount(nl,na,vert?-nx:-ny)&&count>1) t=0; }
+  }
+  e.turn=t;
+  if(t){
+    e.ndx=t<0?e.dy:-e.dy; e.ndy=t<0?-e.dx:e.dx;
+    e.turnAt=laneCoord(best,e.ndx,e.ndy);
+  }
+}
+/* brake: 1 while the car is decelerating or held (tails go hot).
+   hold: legacy flag, kept false on cars; the lamp code reads brake||hold. */
+function mkCar(x,y,dx,dy,road){
+  const spd=rf(4.5,9);
+  const e={kind:'car',x:x,y:y,dx:dx,dy:dy,spd:spd,v:spd,len:ri(2,3),h:0.75,zoff:0,
+    road:road,jn:null,inJ:false,turn:0,brake:0,hold:false,stuck:0,solid:true,rad:0.6,
     ch:G.S3,col:hsl(pick([20,38,200,326])+ri(-10,10),.34,.62)};
+  planCross(e);
+  return e;
   /* No headlight/taillight lights here. They were baked into LM at tile
      (0,0) and never moved after the raycaster rewrite, so ~47 of them
      stacked into one searing blob in the map corner. Cars are glow:1 and
      lit by the sprite path anyway. */
+}
+/* Cyclists ride the kerb side of the car lane. bikeLane mirrors laneCoord
+   (edge tile in the travel direction; note vr and hr use opposite edges)
+   and pushes 0.34u further out, so a bike sits beside a car's centre-line.
+   A bike carries its road and a planned junction like a car does, so it
+   obeys the same per-junction lights, but it never turns. */
+function bikeLane(r,dir,horiz){
+  const outer=(dir>0)!==!!horiz;
+  return r.p+(outer?r.w-0.16:0.16);
+}
+function mkBike(x,y,dx,dy,road){
+  const e={kind:'bike',x:x,y:y,dx:dx,dy:dy,spd:rf(2.5,3.5),len:1.6,brd:0.4,h:0.95,zoff:0,
+    road:road,jn:null,inJ:false,turn:0,hold:false,
+    ch:C_('&'),col:hsl(215+ri(-25,25),.16,.40),ph:rnd()*7};
+  planCross(e); e.turn=0;
+  return e;
+}
+
+/* Sky lanes. Three fixed lines per axis, each nudged to the least-built
+   line near its third of the map and flown 1.5u above the tallest thing on
+   it, clamped to 9..14 (a lane over a megatower would leave the screen).
+   Anything taller than the clamp simply occludes the craft for a moment -
+   that reads as passing behind the tower. Opposite directions stack 2u. */
+function aeroLane(axis,k){
+  let best=0,bh=1e9;
+  const n=axis?H:W;
+  for(let t=-7;t<=7;t++){
+    const p=Math.floor(n*(k+0.5)/3)+t*2;
+    let mh=0;
+    if(axis){ for(let x=3;x<W-3;x++){ const h=T.hgt[p*W+x]; if(h>mh) mh=h; } }
+    else    { for(let y=3;y<H-3;y++){ const h=T.hgt[y*W+p]; if(h>mh) mh=h; } }
+    if(mh<bh){ bh=mh; best=p; }
+  }
+  return {p:best+0.5,alt:clamp(bh*0.25+1.5,9,14)};
+}
+/* Hull albedo is constant per craft (three muted families); the underlight
+   is a second per-craft colour drawn only on the bottom row. */
+function mkAero(x,y,dx,dy,alt){
+  return {kind:'aero',x:x,y:y,dx:dx,dy:dy,spd:rf(11,17),len:2.6,brd:1.0,h:0.55,zoff:alt,glow:1,
+    ch:G.S3,col:pick([[120,150,190],[150,120,170],[110,160,160]]),
+    ucol:pick([[120,240,255],[255,120,220],[255,255,255]]),ph:rnd()*7};
 }
 
 /* street glow: sodium amber is the backbone, with cyan and hot pink
@@ -1209,13 +1331,37 @@ function populate(vr,hr){
       h:0.35,zoff:rf(2.2,4.0),glow:1,
       vx:Math.cos(a),vy:Math.sin(a),spd:rf(3,6),t:rnd()*3});
   }
-  for(const r of vr) if(r.w>=3) for(let i=0,n=ri(1,3);i<n;i++){
-    const dir=chance(.5)?1:-1;
-    ents.push(mkCar(r.p+(dir>0?r.w-1:0)+.5,ri(6,H-6)+.5,0,dir));
+  /* Traffic volume: one car per ~33 units of LANE (both directions, every
+     road width), spread along the lane with jitter so a street starts as a
+     stream rather than a stack. ~230 cars on a 204x142 city; only the ones
+     inside the 46u nearEnts radius ever tick, so the live cost is ~50 cars.
+     Adjacent slots are >=4.5u apart. */
+  for(const r of vr) for(const dir of [1,-1]){
+    const n=Math.max(1,Math.round((H-8)/33));
+    for(let i=0;i<n;i++) ents.push(mkCar(laneCoord(r,0,dir),4+(i+rnd()*0.8)*(H-8)/n,0,dir,r));
   }
-  for(const r of hr) if(r.w>=3&&!r.water) for(let i=0,n=ri(1,2);i<n;i++){
+  for(const r of hr) if(!r.water) for(const dir of [1,-1]){
+    const n=Math.max(1,Math.round((W-8)/33));
+    for(let i=0;i<n;i++) ents.push(mkCar(4+(i+rnd()*0.8)*(W-8)/n,laneCoord(r,dir,0),dir,0,r));
+  }
+  /* sky lanes: 3 per axis, 4 craft each, opposite directions stacked 2u.
+     Roof plants have already written T.hgt, so aeroLane sees them. */
+  for(let k=0;k<3;k++) for(const axis of [0,1]){
+    const ln=aeroLane(axis,k);
+    for(let i=0;i<4;i++){
+      const dir=(i&1)?1:-1, alt=ln.alt+(dir>0?0:2);
+      const e=axis?mkAero(ri(4,W-4)+.5,ln.p,dir,0,alt):mkAero(ln.p,ri(4,H-4)+.5,0,dir,alt);
+      ents.push(e); aeros.push(e);
+    }
+  }
+
+  for(const r of vr) for(let i=0,n=r.w>=3?ri(2,3):1;i<n;i++){
     const dir=chance(.5)?1:-1;
-    ents.push(mkCar(ri(6,W-6)+.5,r.p+(dir>0?0:r.w-1)+.5,dir,0));
+    ents.push(mkBike(bikeLane(r,dir,false),ri(6,H-6)+.5,0,dir,r));
+  }
+  for(const r of hr) if(!r.water) for(let i=0,n=r.w>=3?ri(1,3):1;i<n;i++){
+    const dir=chance(.5)?1:-1;
+    ents.push(mkBike(ri(6,W-6)+.5,bikeLane(r,dir,true),dir,0,r));
   }
 
   /* Give each pedestrian a hangout — the nearest stand, shrine or fixer.
@@ -1263,6 +1409,16 @@ const keys=Object.create(null);
 let touchMove={x:0,y:0};
 let time=0,clock=22*60,rainPow=.55,started=false;
 let optBloom=true,optRain=true,optFps=false,optSound=false;
+/* Auto Tour / Empty City. `tour` is the rail-walker's state (heading is
+   always cardinal). Entities hidden by emptyCity are simply left out of
+   nearEnts, so drawing, updating and collision all skip them for free and
+   nothing is ever deleted - flipping the flag brings them straight back.
+   The trio on the bar stage (prompt LISTEN) stays; the barkeep is a fixer
+   and is never in the list. Add a kind here and it is hidden too. */
+let autoTour=false,emptyCity=false;
+const tour={hx:1,hy:0,tx:-1,ty:-1,pause:0,since:0,stuck:0};
+const HIDE_KINDS={npc:1,car:1,bike:1,aero:1,cat:1,drone:1};
+function hiddenEnt(e){return emptyCity&&HIDE_KINDS[e.kind]===1&&e.prompt!=='LISTEN';}
 const reduceMotion=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const $=id=>document.getElementById(id);
@@ -1320,7 +1476,10 @@ addEventListener('keydown',e=>{
   if(k==='r'){optRain=!optRain;}
   if(k==='f'){optFps=!optFps;elFps.style.display=optFps?'block':'none';}
   if(k==='m'){toggleSound();}
-  if(k==='n'){newCity();}
+  if(k==='g'){newCity();}
+  if(k==='t'){ if(autoTour) tourStop(); else tourStart(); }
+  if(k==='n'){ emptyCity=!emptyCity; nearTimer=0;
+    say(emptyCity?'EMPTY CITY. Nobody. Just the neon and the rain.':'The city fills back up.','sys'); }
   if(k==='-'||k==='_'){zoom=clamp(zoom+1,-3,8);resize();say('grid '+cols+'x'+rows,'sys');}
   if(k==='='||k==='+'){zoom=clamp(zoom-1,-3,8);resize();say('grid '+cols+'x'+rows,'sys');}
   if(['arrowup','arrowdown','arrowleft','arrowright',' '].indexOf(k)>=0) e.preventDefault();
@@ -1341,6 +1500,7 @@ addEventListener('mousemove',e=>{
      frame instead of snapping the angle directly. Raw deltas made every
      small hand tremor a full-screen jolt; the easing is what makes the
      world feel stable while glyphs re-quantise under it. */
+  if(autoTour&&(e.movementX||e.movementY)) tourStop();
   P.aT+=e.movementX*0.0022;
   P.pitchT=clamp(P.pitchT-e.movementY*0.06,-rows*0.55,rows*0.95);
 });
@@ -1617,6 +1777,13 @@ function update(dt){
 
   /* walk */
 
+  /* auto tour: the instant the player touches a movement or look control
+     the tour lets go; the mouse does the same in the mousemove handler */
+  if(autoTour&&(keys['w']||keys['a']||keys['s']||keys['d']||keys['q']||
+     keys['arrowleft']||keys['arrowright']||keys['arrowup']||keys['arrowdown']||
+     Math.abs(touchMove.x)+Math.abs(touchMove.y)>0.02)) tourStop();
+  if(autoTour) tourStep(dt);
+
   let fwd=0,strafe=0;
   if(keys['w'])fwd+=1;
   if(keys['s'])fwd-=1;
@@ -1662,10 +1829,13 @@ function update(dt){
     nearTimer=.28;nearEnts.length=0;
     for(const e of ents){
       const ex=e.x-P.x,ey=e.y-P.y;
-      if(ex*ex+ey*ey<46*46) nearEnts.push(e);
+      if(ex*ex+ey*ey<46*46&&!hiddenEnt(e)) nearEnts.push(e);
     }
   }
-  for(const e of nearEnts) updateEnt(e,dt);
+  for(const e of nearEnts) if(e.kind!=='aero') updateEnt(e,dt);
+  /* sky lanes run city-wide (24 entities): a lane that only moved inside
+     the 46u bubble would freeze in plain view at its edge */
+  for(let i=0;i<aeros.length;i++) updateEnt(aeros[i],dt);
   tickDialogue(dt);
 
   /* messages fade away instead of squatting in the corner forever */
@@ -1674,7 +1844,7 @@ function update(dt){
   hudTimer-=dt;
   if(hudTimer<=0){
     hudTimer=.2;
-    elHud.d.textContent=inBar()?'THE BLUE ROOM':DISTRICTS[dmap[clamp(Math.floor(P.y),0,H-1)*W+clamp(Math.floor(P.x),0,W-1)]].name;
+    elHud.d.textContent=(autoTour?'AUTO TOUR · ':'')+(inBar()?'THE BLUE ROOM':DISTRICTS[dmap[clamp(Math.floor(P.y),0,H-1)*W+clamp(Math.floor(P.x),0,W-1)]].name);
     elHud.t.textContent=String(Math.floor(clock/60)).padStart(2,'0')+':'+String(Math.floor(clock%60)).padStart(2,'0');
     elHud.r.textContent=rainPow<.3?'MIST':(rainPow<.6?'STEADY':'HEAVY');
     elHud.c.textContent=P.cred;
@@ -1708,6 +1878,119 @@ function update(dt){
   }
 }
 
+/* ── Auto Tour ──────────────────────────────────────────────────────
+   A rail-walker on the street grid. The heading is one of four cardinals;
+   P.aT is pointed along it and the camera easing already in update() does
+   the turn. One decision per tile, taken at the tile centre, from open-run
+   lengths probed with walkable(); the actual step still goes through free()
+   so props and pedestrians are respected exactly as they are for the player.
+   State (autoTour, tour) is declared with the other mode flags above. */
+function tourRun(x,y,dx,dy,max){
+  let n=0;
+  for(let k=1;k<=max;k++){
+    const tx=x+dx*k,ty=y+dy*k;
+    if(!walkable(tx,ty)||(flagAt(tx,ty)&(ROAD|WALK|ALLEY))===0) break;
+    n++;
+  }
+  return n;
+}
+function tourStart(){
+  if(P.roof>0){say('AUTO TOUR wants street level. Take the lift down first.','sys');return;}
+  /* parks and the bar floor are flag 0: no rail there, so refuse rather than
+     ping-pong between two tiles that both read as dead ends */
+  if((flagAt(Math.floor(P.x),Math.floor(P.y))&(ROAD|WALK|ALLEY))===0){say('AUTO TOUR starts on the street. Step outside first.','sys');return;}
+  autoTour=true;
+  /* set off along whichever cardinal is closest to the way you already face */
+  const c=Math.cos(P.a),s=Math.sin(P.a);
+  if(Math.abs(c)>Math.abs(s)){tour.hx=c>0?1:-1;tour.hy=0;}else{tour.hx=0;tour.hy=s>0?1:-1;}
+  tour.tx=tour.ty=-1;tour.pause=0;tour.since=6;tour.stuck=0;
+  P.aT=Math.atan2(tour.hy,tour.hx);P.pitchT=0;
+  if(dlg) closeDialogue();
+  say('AUTO TOUR. Touch a key or the mouse to take the city back.','amb');
+}
+function tourStop(why){
+  if(!autoTour) return;
+  autoTour=false;tour.pause=0;
+  /* hand over where the camera IS, not where the tour was steering it */
+  P.aT=P.a;P.pitchT=P.pitch;
+  say(why||'Tour over. Your feet again.','sys');
+}
+/* now and then, stop for something bright: the strongest lamp or sign within
+   nine tiles that is not behind us, or the bar door. lights[] is a few
+   hundred entries and this runs once per pause, so the scan is free. */
+function tourLook(){
+  let best=null,bs=0;
+  const cand=(x,y,pow)=>{
+    const dx=x-P.x,dy=y-P.y,d=Math.hypot(dx,dy);
+    if(d<1.5||d>9) return;
+    if(dx*tour.hx+dy*tour.hy<-0.2*d) return;
+    const sc=pow/(1+d*0.25);
+    if(sc>bs){bs=sc;best={x:x,y:y};}
+  };
+  for(let i=0;i<lights.length;i++){const l=lights[i];if(l.rad>=4)cand(l.x,l.y,l.pow);}
+  if(barRoom) cand(barRoom.door.x+0.5,barRoom.door.y+0.5,4);
+  if(!best) return false;
+  tour.since=0;tour.pause=rf(2,3);
+  P.aT=Math.atan2(best.y-P.y,best.x-P.x);
+  P.pitchT=rows*0.08;
+  return true;
+}
+function tourDecide(cx,cy,force){
+  const hx=tour.hx,hy=tour.hy;
+  const ahead=force?0:tourRun(cx,cy,hx,hy,8);
+  const lx=-hy,ly=hx,rx=hy,ry=-hx;
+  const L=tourRun(cx,cy,lx,ly,8),R=tourRun(cx,cy,rx,ry,8);
+  let nx=hx,ny=hy;
+  if(ahead>=2&&(L>=4||R>=4)&&Math.random()<0.22){
+    /* a junction, and the mood takes us: turn onto the longer street */
+    if(L>=4&&(R<4||Math.random()<0.5)){nx=lx;ny=ly;}else{nx=rx;ny=ry;}
+  }else if(ahead<2){
+    /* dead end coming: take the better side, reverse only when boxed in */
+    if(L>=R&&L>0){nx=lx;ny=ly;}
+    else if(R>0){nx=rx;ny=ry;}
+    else if(ahead===0){nx=-hx;ny=-hy;}
+  }
+  if(nx!==hx||ny!==hy){tour.hx=nx;tour.hy=ny;P.aT=Math.atan2(ny,nx);return true;}
+  return false;
+}
+function tourStep(dt){
+  if(P.roof>0){tourStop('The tour does not do roofs.');return;}
+  tour.since+=dt;
+  if(tour.pause>0){
+    tour.pause-=dt;
+    if(tour.pause<=0){P.aT=Math.atan2(tour.hy,tour.hx);P.pitchT=0;}
+    return;
+  }
+  const cx=Math.floor(P.x),cy=Math.floor(P.y);
+  /* one decision per tile, at its centre, so a turn starts on the lane axis */
+  const f=tour.hx?P.x-cx:P.y-cy;
+  const atCentre=(tour.hx+tour.hy)>0?f>=0.5:f<=0.5;
+  if(atCentre&&(cx!==tour.tx||cy!==tour.ty)){
+    tour.tx=cx;tour.ty=cy;
+    if(!tourDecide(cx,cy,false)&&tour.since>14&&Math.random()<0.12) tourLook();
+  }
+  /* walk the rail: forward along the heading, and drift to the lane centre
+     on the other axis so the camera never scrapes a wall */
+  const sp=2.2*dt;
+  const ox=P.x,oy=P.y;
+  if(tour.hx){
+    const nx=P.x+tour.hx*sp; if(free(nx,P.y)) P.x=nx;
+    const dy=clamp((cy+0.5-P.y)*4*dt,-sp,sp); if(free(P.x,P.y+dy)) P.y+=dy;
+  }else{
+    const ny=P.y+tour.hy*sp; if(free(P.x,ny)) P.y=ny;
+    const dx=clamp((cx+0.5-P.x)*4*dt,-sp,sp); if(free(P.x+dx,P.y)) P.x+=dx;
+  }
+  /* pinned by a pedestrian or a prop for a while: pick another way */
+  if(Math.abs(P.x-ox)+Math.abs(P.y-oy)<sp*0.1){
+    tour.stuck+=dt;
+    if(tour.stuck>1.2){tour.stuck=0;tour.tx=-1;tourDecide(cx,cy,true);}
+  }else tour.stuck=0;
+  /* same courtesy the player walk extends: a TALK box does not follow you down the street */
+  if(dlg&&Math.hypot(P.x-dlg.ax,P.y-dlg.ay)>2.6) closeDialogue();
+  P.bob+=dt*9;
+  if(optSound&&Math.random()<dt*3.5) beep(140+Math.random()*60,.03,.012);
+}
+
 function updateEnt(e,dt){
   if(e.kind==='npc'||e.kind==='cat'){
     e.t-=dt;
@@ -1738,6 +2021,11 @@ function updateEnt(e,dt){
       if(!blocked(nx,e.y))e.x=nx;else e.vx=-e.vx;
       if(!blocked(e.x,ny))e.y=ny;else e.vy=-e.vy;
     }
+  }else if(e.kind==='aero'){
+    /* straight and fast down a fixed sky lane; wraps like the cars */
+    e.x+=e.dx*e.spd*dt; e.y+=e.dy*e.spd*dt;
+    if(e.x<2)e.x=W-3; if(e.x>W-2)e.x=3;
+    if(e.y<2)e.y=H-3; if(e.y>H-2)e.y=3;
   }else if(e.kind==='drone'){
     e.t-=dt;
     if(e.t<=0){e.t=rf(1.4,4);const a=Math.atan2(e.vy,e.vx)+rf(-1.2,1.2);e.vx=Math.cos(a);e.vy=Math.sin(a);}
@@ -1745,41 +2033,123 @@ function updateEnt(e,dt){
     if(e.x<4||e.x>W-4)e.vx=-e.vx;
     if(e.y<4||e.y>H-4)e.vy=-e.vy;
     e.x=clamp(e.x,3,W-3);e.y=clamp(e.y,3,H-3);
-  }else if(e.kind==='car'){
-    /* Traffic obeys the junctions. A car crossing a perpendicular road holds
-       at the stop line unless its phase is green, so intersections pulse
-       instead of everything sliding through everything else. */
-    const ax=Math.floor(e.x+e.dx*1.6), ay=Math.floor(e.y+e.dy*1.6);
+  }else if(e.kind==='bike'){
+    /* Cyclists: the kerb side of the car lane, never turning. They obey the
+       same per-junction lights as the cars (planCross/sigPhase on their own
+       road), queue behind the bike ahead and brake for you - a car does not.
+       Cars ignore bikes in their follow test, so traffic overtakes them. */
+    if(e.jn===undefined){ planCross(e); e.turn=0; }
+    const vert=e.dy!==0, dir=vert?e.dy:e.dx, along=vert?e.y:e.x;
     let hold=false;
-    if(ax>=0&&ay>=0&&ax<W&&ay<H&&(T.flag[ay*W+ax]&ROAD)){
-      const cross=e.dx?(flagAt(ax,ay-1)&ROAD)&&(flagAt(ax,ay+1)&ROAD)
-                      :(flagAt(ax-1,ay)&ROAD)&&(flagAt(ax+1,ay)&ROAD);
-      if(cross){
-        /* one shared 18s cycle; axis decides which half is yours */
-        const green=((time/9)|0)&1;
-        if(e.dx?green:!green) hold=true;
+    if(e.jn&&!e.inJ){
+      const ds=(e.jStop-along)*dir;
+      if(ds<=-0.2) e.inJ=true;                        /* past the line: committed */
+      else if(ds<1.0){
+        const ph=vert?sigPhase(e.road,e.jn):sigPhase(e.jn,e.road);
+        if(vert?ph!==0:ph!==1) hold=true;
       }
     }
-    /* and don't drive into the car in front */
-    if(!hold) for(const o of nearEnts){
-      if(o===e||o.kind!=='car'||o.dx!==e.dx||o.dy!==e.dy) continue;
+    if(!hold) for(let i=0;i<nearEnts.length;i++){
+      const o=nearEnts[i];
+      if(o===e||o.kind!=='bike'||o.dx!==e.dx||o.dy!==e.dy) continue;
       const gx=(o.x-e.x)*e.dx+(o.y-e.y)*e.dy;
-      if(gx>0&&gx<2.4){ hold=true; break; }
+      const lat=Math.abs((o.x-e.x)*e.dy)+Math.abs((o.y-e.y)*e.dx);
+      if(lat<0.4&&gx>0&&gx<1.3){ hold=true; break; }
+    }
+    if(!hold&&P.roof===0){
+      const fx=(P.x-e.x)*e.dx+(P.y-e.y)*e.dy, lx=(P.x-e.x)*e.dy-(P.y-e.y)*e.dx;
+      if(fx>0&&fx<1.6&&lx*lx<0.42) hold=true;
     }
     e.hold=hold;
     if(!hold){ e.x+=e.dx*e.spd*dt; e.y+=e.dy*e.spd*dt; }
-    if(e.x<2)e.x=W-3; if(e.x>W-2)e.x=3;
-    if(e.y<2)e.y=H-3; if(e.y>H-2)e.y=3;
+    if(e.jn&&e.inJ){                                  /* clear of the box: plan the next */
+      const far=dir>0?e.jn.p+e.jn.w:e.jn.p;
+      if(((vert?e.y:e.x)-far)*dir>0.2){ planCross(e); e.turn=0; }
+    }
+    if(e.x<3||e.x>W-3||e.y<3||e.y>H-3){               /* the rim: wrap, as cars used to */
+      if(e.x<3)e.x=W-3.5; else if(e.x>W-3)e.x=3.5;
+      if(e.y<3)e.y=H-3.5; else if(e.y>H-3)e.y=3.5;
+      planCross(e); e.turn=0;
+    }
+  }else if(e.kind==='car'){
+    /* Traffic. Each frame a car finds the nearest thing it must stop for -
+       the car ahead in its lane, the player in its lane, or its stop line at
+       a red - and eases its speed toward what lets it halt there. Turns are
+       planned one junction ahead (planCross) and executed as a snap onto the
+       new road's lane, which reads fine at glyph resolution. Look-ahead is
+       8u because an 11u/s car needs 5.5u to stop at CAR_DEC. */
+    if(e.jn===undefined) planCross(e);
+    const vert=e.dy!==0, dir=vert?e.dy:e.dx;
+    const along=vert?e.y:e.x, half=e.len*0.5;
+    let gap=1e9, why=0, sgap=1e9;                    /* 1 car, 2 player, 3 signal */
+    for(let i=0;i<nearEnts.length;i++){
+      const o=nearEnts[i];
+      if(o===e||o.kind!=='car') continue;
+      const ox=o.x-e.x, oy=o.y-e.y;
+      const a=vert?oy*dir:ox*dir, l=vert?ox:oy;
+      if(a<=0||a>8||(l<0?-l:l)>0.75) continue;        /* not ahead in my lane */
+      if(e.inJ&&o.inJ&&o.v<0.1) continue;             /* two stopped in the box: no stand-off */
+      const g=a-half-o.len*0.5-0.3;
+      if(g<gap){gap=g;why=1;}
+    }
+    if(P.roof===0){
+      const px=P.x-e.x, py=P.y-e.y;
+      const a=vert?py*dir:px*dir, l=vert?px:py;
+      if(a>0&&a<half+6&&(l<0?-l:l)<0.85){ const g=a-half-0.5; if(g<gap){gap=g;why=2;} }
+    }
+    if(e.jn&&!e.inJ){
+      const ds=(e.jStop-along)*dir;
+      if(ds<=-0.4) e.inJ=true;                        /* past the line: committed */
+      else{
+        const ph=vert?sigPhase(e.road,e.jn):sigPhase(e.jn,e.road);
+        if(vert?ph!==0:ph!==1) sgap=ds;
+      }
+    }
+    /* a car boxed in by another car for 5s pushes through rather than
+       parking the whole street behind it - but it still obeys its light */
+    if(why===1&&e.v<0.05){ e.stuck=(e.stuck||0)+dt; if(e.stuck>5) gap=1e9; } else e.stuck=0;
+    if(sgap<gap){gap=sgap;why=3;}
+    let tv=e.spd;
+    if(gap<1e8) tv=Math.min(tv,gap<=0?0:Math.sqrt(2*CAR_DEC*gap));
+    if(e.turn&&(e.turnAt-along)*dir<2.5) tv=Math.min(tv,CAR_TURN_V);
+    e.brake=tv<e.v-0.5?1:0;
+    e.v+=clamp(tv-e.v,-CAR_DEC*dt,CAR_ACC*dt);
+    if(e.v<0.02) e.v=0;
+    if(why===2&&e.v===0&&time-carSayT>25){ carSayT=time; say('The traffic stops for you. Barely.','sys'); }
+    let step=e.v*dt;
+    if(e.turn){
+      const rem=(e.turnAt-along)*dir;
+      if(rem<=step){                                  /* snap onto the new lane */
+        const carry=step-rem>0?step-rem:0;
+        if(vert) e.y=e.turnAt; else e.x=e.turnAt;
+        e.road=e.jn; e.dx=e.ndx; e.dy=e.ndy;
+        e.x+=e.dx*carry; e.y+=e.dy*carry;
+        planCross(e);
+        step=0;
+      }
+    }
+    e.x+=e.dx*step; e.y+=e.dy*step;
+    if(e.jn&&e.inJ&&!e.turn){                         /* straight through: clear of the box? */
+      const far=dir>0?e.jn.p+e.jn.w:e.jn.p;
+      if(((vert?e.y:e.x)-far)*dir>0.2) planCross(e);
+    }
+    /* only a road with no drivable crossing ever reaches the rim */
+    if(e.x<3||e.x>W-3||e.y<3||e.y>H-3){
+      if(e.x<3)e.x=W-3.5; else if(e.x>W-3)e.x=3.5;
+      if(e.y<3)e.y=H-3.5; else if(e.y>H-3)e.y=3.5;
+      planCross(e);
+    }
     /* a car that passes through you isn't traffic, it's wallpaper */
     const cdx=P.x-e.x,cdy=P.y-e.y;
-    if(cdx*cdx+cdy*cdy<1.3){
+    if(cdx*cdx+cdy*cdy<1.3&&e.v>0.3){
       const m=Math.hypot(cdx,cdy)||1;
       const shove=(1.15-m)*3.2*dt;
-      const nx=P.x+(cdx/m)*shove+e.dx*dt*e.spd*0.5;
-      const ny=P.y+(cdy/m)*shove+e.dy*dt*e.spd*0.5;
+      const nx=P.x+(cdx/m)*shove+e.dx*dt*e.v*0.5;
+      const ny=P.y+(cdy/m)*shove+e.dy*dt*e.v*0.5;
       if(!blocked(nx,P.y)) P.x=nx;
       if(!blocked(P.x,ny)) P.y=ny;
-      if(!e.hit){ e.hit=1; say('Clipped by traffic. The driver does not slow down.','hot'); beep(300,.2,.06); }
+      /* you can still be clipped from the side - cars only look ahead */
+      if(!e.hit&&e.v>2){ e.hit=1; say('Clipped by traffic. The driver did not see you.','hot'); beep(300,.2,.06); }
     }else if(cdx*cdx+cdy*cdy>9) e.hit=0;
   }
 }
@@ -1849,12 +2219,37 @@ function updateTOD(){
    the vertical mullion goes sub-cell before the horizontal one does, so every
    facade collapsed into horizontal banding at every angle. Measured on real
    frames, 7/5 is the better module. */
-const WINU=7, WINV=5;          /* window panes per tile across / per world unit up */
+/* 3 panes per 3 m tile, ONE storey per world unit (the lift says 3 m/unit,
+   the help says 40 storeys for a 40-unit tower). At 7/5 a pane was 1.6 cells
+   wide at 10u and the storey line 0.25 rows: the lattice was sub-cell past
+   7u and aliased into speckle. The module is now placed in SCREEN cells
+   (cpp/rpp in render), so it holds its grid at any range instead of going
+   finer - which is why the coarsening experiment above failed and this
+   does not: the mullion is one screen column by construction, never a
+   world band that goes sub-cell. */
+const WINU=3, WINV=1;          /* window panes per tile across / storeys per world unit up */
 /* Lit windows use block and shade glyphs, not letters. Alphanumerics in a
    facade read as scattered text, not architecture — the eye tries to read
    them. Blocks at varying density read as lit glass at varying brightness,
    which is what a window actually is. */
 const WINCH=[G.FULL,G.FULL,G.S3,G.S3,G.S2,G.S2,G.S1,G.UP,G.DN,G.LF,G.RT,G.SP,G.SP,G.FULL];
+/* Shop interiors. One palette per shop TYPE, fixed for the whole city; the
+   only per-shop decision is which of the four types a face gets. Colour
+   never varies per shop or per tile - that would be the hue lottery.
+   Entries: back wall, shelf/lip, stock A, stock B, counter, keeper.
+   Dark entries sit >= ~55 on their max channel: alpha is e/(e+0.34) on
+   top of colour, so anything below ~40 goes quadratically black and the
+   per-cell grain on it vanishes (the counter became a flat black band). */
+const SHOP_PAL=[
+  [[158,92,40],[214,150,84],[255,232,180],[255,72,48],[124,70,34],[205,190,165]],   /* noodle bar  */
+  [[34,58,112],[96,132,190],[90,220,255],[220,90,255],[56,66,100],[168,178,200]],   /* electronics */
+  [[122,196,170],[224,244,236],[244,244,244],[64,255,120],[176,196,190],[240,240,240]], /* pharmacy */
+  [[108,44,80],[255,150,64],[255,208,120],[255,120,80],[96,58,44],[160,44,56]],     /* bar         */
+];
+const SHOP_SKIN=[190,150,120];
+const SHOP_OH=[0.10,0.16,0.09,0.15];             /* stock height on a shelf, world units */
+const SHOP_OW=[0.30,0.42,0.28,0.25];             /* stock half-width, fraction of a slot */
+const SHOP_OG=[G.BIG,G.FULL,G.FULL,G.RT];        /* bowls, screens, boxes, bottles */
 
 /* Saturated, per-building window colour. A small cached palette keeps the
    glyph-atlas key count bounded while still giving each tower its own hue. */
@@ -2005,7 +2400,7 @@ function render(){
     if(ry<0){stY=-1;sdY=(py-mapY)*ddY;}else{stY=1;sdY=(mapY+1-py)*ddY;}
 
     let yCeil=rows;              /* everything at/below this row is painted */
-    let nearBase=-1e9, zb=FAR;
+    let nearBase=-1e9, zb=FAR, zn=0, zph=-1; const zbase=sx*ZK;
     /* Mirror axis for canal reflections: the ground line of the nearest
        DETAILED WALL in this column. nearBase is unusable - the roof branch
        also assigns it (a roof plane) while leaving the wc* column unwritten,
@@ -2113,6 +2508,10 @@ function render(){
               put(FRAMP[clamp(((le3/(le3+0.10))*10+1.2)|0,1,10)],xpx,ys[y],r3,g3,b3);
             }
             if(zb===FAR){ zb=dist; nearBase=yNear; wy1=ry1; }
+            /* No staircase entry: a sprite's bottom row is always above the
+               ground plane's far edge at its depth, so a ground tile can never
+               clip one. It DOES end any roof plateau run. */
+            zph=-1;
             wy0=ry0; yCeil=ry0;
             continue;
           }
@@ -2163,6 +2562,13 @@ function render(){
             put(FRAMP[clamp(((le2b/(le2b+0.075))*10+bump+dth*0.75-0.37)|0,1,10)],xpx,ys[y],r2,g2,b2);
           }
           if(zb===FAR){ zb=dist; nearBase=yNear; wy1=ry1; }
+          /* One event per roof PLATEAU, keyed on the tile EXIT distance:
+             consecutive tiles of the same height overwrite the last slot.
+             Exact for sprites (anything above the plane never reaches the
+             rows it painted; anything beyond is clipped at the far edge) and
+             keeps a 15-tile roof from eating 15 slots. */
+          if(zn>0&&zph===hgt) zn--;
+          if(zn<ZK){ zD[zbase+zn]=dOut; zY[zbase+zn]=ry0; zn++; zph=hgt; } else zph=-1;
           wy0=ry0; yCeil=ry0;
         }
         continue;
@@ -2185,14 +2591,21 @@ function render(){
           const fade=1-(dist-VIEW)/(FAR-VIEW);
           const wcb=T.wc[ti];
           const b0=wcb?winCol(wcb,0.5):[T.r[ti],T.g[ti],T.b[ti]];
-          const br=b0[0]*0.26*fade+HAZE[0]*0.30,
-                bg=b0[1]*0.26*fade+HAZE[1]*0.30,
-                bb=b0[2]*0.26*fade+HAZE[2]*0.30;
+          /* 0.26 x winCol (max ~247) gave mx 73 at the VIEW seam against ~5%
+             for the detailed tier at 45u - the skyline BRIGHTENED at 46u. */
+          const br=b0[0]*0.10*fade+HAZE[0]*0.30,
+                bg=b0[1]*0.10*fade+HAZE[1]*0.30,
+                bb=b0[2]*0.10*fade+HAZE[2]*0.30;
           /* wallU distinguishes columns within the tile; without it every
              column of a row shared one value and the far skyline was flat
              slabs of colour instead of a textured mass. */
           const uf=hitSide===0?(py+dist*ry):(px+dist*rx);
           const ucell=((uf-Math.floor(uf))*6)|0;
+          /* far-tier silhouette fill: solid, tinted by the tower's window hue,
+             fading toward the haze; continuous with the detailed-tier fill */
+          ctx.globalAlpha=1; curA=-1;
+          ctx.fillStyle='rgb('+((b0[0]*0.05*fade+HAZE[0]*0.30)|0)+','+((b0[1]*0.05*fade+HAZE[1]*0.30)|0)+','+((b0[2]*0.05*fade+HAZE[2]*0.30)|0)+')';
+          ctx.fillRect(xpx,ys[y0f],ACW,ys[y1f+1]-ys[y0f]);
           for(let y=y0f;y<=y1f;y++){
             if(y===y0f){                       /* the same edge, far away */
               const rk=0.42+0.58*fade;
@@ -2201,11 +2614,18 @@ function render(){
             }
             const wv=hash3(hitX*13+ucell*7,hitY*7,y);
             if(wcb&&wv<0.17){
-              const wcl=winCol(wcb,wv*6), wk=0.44+0.50*fade;
-              put(G.DOT,xpx,ys[y],wcl[0]*wk,wcl[1]*wk,wcl[2]*wk);
+              /* G.DOT is 4% ink: at alpha 0.5 that is a 2% mark - the far
+                 windows were arithmetically there and optically absent.
+                 S2 is 12x the ink, so wk drops with it: 0.26 at the seam
+                 (mx 65, a 0.39, ~20% effective - between the detailed
+                 tier's 40u and 45u windows, no bright ring) and 0.14 at
+                 the far end (~13%, still 6x the wall silhouette). */
+              const wcl=winCol(wcb,wv*6), wk=0.14+0.12*fade;
+              put(G.S2,xpx,ys[y],wcl[0]*wk,wcl[1]*wk,wcl[2]*wk);
             }else{
-              const fk=0.84+wv*0.32;
-              put(wv<0.45?G.S1:(wv<0.8?G.DOT:G.S2),xpx,ys[y],br*fk,bg*fk,bb*fk);
+              /* one flat mark: a far tower is a silhouette, not static. The
+                 fk brightness grain was under one alpha quantum anyway. */
+              put(G.S1,xpx,ys[y],br,bg,bb);
             }
           }
           if(zb===FAR) zb=dist;
@@ -2238,7 +2658,7 @@ function render(){
          towers were the mottled patchwork. Street part falls off with
          height v inside the row loop. */
       const skB=sideDim*fog;
-      const lrB=(AMB[0]+0.16)*skB, lgB=(AMB[1]+0.155)*skB, lbB=(AMB[2]+0.18)*skB;
+      const lrB=(AMB[0]+0.20)*skB, lgB=(AMB[1]+0.195)*skB, lbB=(AMB[2]+0.22)*skB;
       const lrS=(LM[o]+lamp)*shade, lgS=(LM[o+1]+lamp*0.97)*shade, lbS=(LM[o+2]+lamp*0.88)*shade;
 
       const ar=T.r[ti],ag=T.g[ti],ab=T.b[ti];
@@ -2259,8 +2679,15 @@ function render(){
          testing it alone fires once per world unit and rules nine vertical
          lines through a ten-tile building — every facade read as one ruled
          surface and adjacent towers were inseparable. */
+      /* The corner band must be at least ONE screen column wide, or it only
+         fires when a ray happens to land in it: at a fixed 5% of the tile the
+         chance an edge got any corner column was 5.5/d - 37% at 15u, 12% at
+         46u - so most edges past 10u had no line and towers merged. */
+      const rlen=1/Math.sqrt(rx*rx+ry*ry);
+      const cosF=(hitSide===0?(rx<0?-rx:rx):(ry<0?-ry:ry))*rlen;
+      const cth=Math.min(0.35,1/Math.max(1,L1*CH*cosF/CW));
       let corner=false;
-      if(wallU<0.05||wallU>0.95){
+      if(wallU<cth||wallU>1-cth){
         const cs=wallU<0.5?-1:1;
         const ax=hitSide===0?hitX:hitX+cs, ay=hitSide===0?hitY+cs:hitY;
         if(ax<0||ay<0||ax>=W||ay>=H) corner=true;
@@ -2320,7 +2747,49 @@ function render(){
       /* haze is constant down a wall column — one distance per ray */
       const hz=(1-fog)*HAZE_K, keep=1-hz;
       const hzR=HAZE[0]*hz, hzG=HAZE[1]*hz, hzB=HAZE[2]*hz;
+      /* Window module in SCREEN cells. cpp/rpp: columns and rows one pane
+         spans on screen. Columns per world unit along the face are
+         L1*CH*|r_n|/CW with r_n the RAW ray component normal to the face:
+         dist is perpendicular depth and the plane vector is perpendicular
+         to the view direction, so no |r| normalisation belongs here (it
+         undercounted cpp by up to 23% at the screen edges and doubled the
+         mullion there). mulU: the first column of every pane is mullion -
+         exactly one cell, none once a pane is under 2.5 cells. spanV: the
+         spandrel is 42% of the storey or 1.15 rows, whichever is more, but
+         never so much that the glass drops under one row - past ~25u a
+         storey is <2.3 rows, and the window row is the signal, so it keeps
+         the guaranteed row and the spandrel goes intermittent instead. */
+      const cosW=hitSide===0?(rx<0?-rx:rx):(ry<0?-ry:ry);
+      const cpp=Math.max(0.5,L1*CH*cosW/(CW*WINU));
+      const rpp=L1/WINV;
+      const mulU=cpp>=2.5?1/cpp:0;
+      const spanV=Math.max(0,Math.min(Math.max(0.42,1.15/rpp),1-1.02/rpp));
       const invL1=1/L1;
+      /* Shop-interior parallax, once per wall hit: the ray continued 0.6u
+         past the glass plane. shU is the along-face shift, shV the height
+         shift per unit of (v - eye). Grazing rays clamp so the room does
+         not smear to infinity. Only inside 12u; further out the pane
+         stays the flat lit rectangle it was. */
+      const shNear=dist<12?Math.min(1,(12-dist)*0.4):0;
+      let shU=0,shV=0;
+      if(shNear>0){
+        const nn=Math.max(0.10,hitSide===0?Math.abs(rx):Math.abs(ry));
+        shU=(hitSide===0?ry:rx)*0.6/nn;
+        shV=0.6/(nn*Math.max(0.08,dist));   /* same floor L1 uses; dist can be 0 on a tile seam */
+      }
+      /* THE MASS. One solid fill per wall span, in the building's own hue,
+         under everything. put() only ever ADDS light through 25-50% glyph
+         ink, so without this the gaps between marks are sky-black and a
+         facade is half holes; with it a tower is a shape before it is a
+         texture. Skyglow term only (lrB), haze x1.5 so distant silhouettes
+         stay solid violet-grey against the stippled sky. Trees keep their
+         ragged top and get no fill. */
+      if(!isTree){
+        const fr0=(ar*lrB*0.36)*keep+hzR*1.5, fg0=(ag*lgB*0.36)*keep+hzG*1.5, fb0=(ab*lbB*0.36)*keep+hzB*1.5;
+        ctx.globalAlpha=1; curA=-1;
+        ctx.fillStyle='rgb('+(fr0|0)+','+(fg0|0)+','+(fb0|0)+')';
+        ctx.fillRect(xpx,ys[y0],ACW,ys[y1+1]-ys[y0]);
+      }
       for(let y=y0;y<=y1;y++){
         const v=(bottom-y)*invL1;           /* height up the face, world units */
         const sF=v<1.6?1:1/(1+(v-1.6)*0.75);
@@ -2381,7 +2850,7 @@ function render(){
           if(v<0.95&&(wallU>0.34&&wallU<0.66)){
             const tk2=0.5+lf*0.5;                       /* trunk */
             r=46*tk2*lr;g=34*tk2*lg;b=26*tk2*lb;
-            code=lf<0.5?G.V:G.S2;
+            code=G.S2;
           }else{
             const lit=(0.20+crown*0.85)*(0.30+clump*1.15)*(0.55+lf*0.90);
             r=ar*lr*lit;g=ag*lg*lit;b=ab*lb*lit;
@@ -2398,14 +2867,18 @@ function render(){
           r=ar*lr*mk2;g=ag*lg*mk2;b=ab*lb*mk2;
           code=lid>1?G.DN:(rib<1?G.S1:G.S2);
         }else if(corner){
-          r=ar*0.65*fog+3;g=ag*0.65*fog+3;b=ab*0.75*fog+4;code=G.V;
+          /* An edge is read by local contrast, not by area: G.V was 10% ink
+             at alpha 0.27 - a 2px line at barely 2x the mullion dither. Double
+             rule, and hot enough (mx ~140 at 6u, ~80 at 30u) to sit 3-4x above
+             concrete ink at any range. Hue stays the building's own. */
+          r=ar*1.6*fog+40;g=ag*1.6*fog+40;b=ab*1.6*fog+44;code=G.DV;
         }else{
           /* Facade: window grid with mullions, plus a darker slab line at
              each storey. This is what makes a wall read as a building. */
           const gu=wallU*WINU,gv=v*WINV;
           const cu=Math.floor(gu),cv=Math.floor(gv);
           const iu=gu-cu,iv=gv-cv;
-          const pane=(iu>0.12&&iu<0.88&&iv>0.14&&iv<0.86);
+          const pane=(iu>=mulU&&iv>=spanV);
           /* Storeys light as storeys: one hash decides whether the floor is
              occupied at all, a second which panes on it are lit. Deciding
              per-pane gave confetti with no dark bands — and dark bands are
@@ -2417,15 +2890,29 @@ function render(){
              whole face, and most segments must be DARK. */
           const along=hitSide===0?hitY:hitX, across=hitSide===0?hitX:hitY;
           const cuG=along*WINU+cu;
-          const floorLit=hash3(across*31+(cuG>>3)*53,cv,hitSide*7+17)<0.33;
-          if(pane&&v>1.35&&T.wc[ti]!==0&&floorLit&&hash3(hitX*7+cu,hitY*7+cv,cv)<0.50){
+          const floorLit=hash3(across*31+(cuG>>3)*53,cv,hitSide*7+17)<0.42;
+          /* Lit coin per pane: 0.55 while panes have mullions, rising to
+             0.80 as a pane shrinks under 2.5 cells (no mullions) so a lit
+             segment reads as one bright bar, not confetti. A ramp, not a
+             switch: a hard step at 2.5 cells popped a quarter of a face's
+             panes at once, and on an oblique wall that seam swept along
+             the face as you walked. */
+          if(pane&&v>1.35&&T.wc[ti]!==0&&floorLit&&hash3(hitX*7+cu,hitY*7+cv,cv)<clamp(0.55+(2.5-cpp)*0.25,0.55,0.80)){
             /* Interior depth: a bright core falling off toward the frame,
                plus a lift toward the head of the pane. A pane filled with
                one flat colour reads as a sticker; this reads as a lit room
                seen through glass. */
-            const du=iu-0.5,dv=iv-0.5;
-            const inset=clamp(1.18-(du*du+dv*dv)*2.2,0.42,1);
-            const ceil=0.86+0.30*(1-iv);
+            const du=(iu-mulU)/(1-mulU)-0.5,dv=(iv-spanV)/(1-spanV)-0.5;
+            /* radial falloff only once the GLASS is >=3 cells each way (glass
+               is cpp-1 columns by rpp*(1-spanV) rows); on a 1-2 cell pane it
+               sampled a random point of the curve per cell (0.42-1.0 = a
+               dozen alpha steps of pure lottery) */
+            const gRows=rpp*(1-spanV);
+            const inset=(cpp-1>=3&&gRows>=3)?clamp(1.18-(du*du+dv*dv)*2.2,0.42,1):1;
+            /* same gate: a 0-17% gradient over a 2-3 row pane is under one
+               colour quantum, so it flipped a level in some panes and not
+               others - per-pane brightness only until the glass is tall */
+            const ceil=gRows>=3?0.86+0.30*(1-iv):0.95;
             const wk=(0.70+hash3(hitX+cu,hitY+cv,3)*0.42)*fog*inset*ceil*(1-dayF*0.55);
             const wcol=winCol(T.wc[ti],hash3(cu,cv,hitX+hitY));
             r=wcol[0]*wk;g=wcol[1]*wk;b=wcol[2]*wk;
@@ -2440,18 +2927,25 @@ function render(){
               /* a pane out here is <=2 cells wide: one solid bright glyph
                  per cell, per-PANE brightness only — grain inside a
                  sub-cell pane just punches holes in the window */
-              code=wg<0.6?G.FULL:G.S3;
-              const cellK=0.88+wg*0.24; r*=cellK;g*=cellK;b*=cellK;
+              code=G.FULL;
             }else{
-              code=WINCH[(wg*WINCH.length)|0];
-              const cellK=0.80+wg*0.26; r*=cellK;g*=cellK;b*=cellK;
+              code=G.FULL;
             }
             /* Up close a single pane covers a big patch of screen and reads
                as a quilt square. Subdivide with fine mullions so the glass
                keeps a window grid at any distance. */
-            if(dist<7){
-              const su=(iu*3)%1, sv=(iv*3)%1;
-              if(su<0.16||sv<0.18){ r*=0.22;g*=0.22;b*=0.22; code=G.S2; }
+            /* Sash bars exactly ONE screen cell wide, placed off the cell's own
+               position across the glass - never a sub-cell world band. Only
+               the MIDDLE bar (su/sv in [1,1+one cell)); testing from 0 put a
+               second dark column against the mullion and a second dark row
+               against the spandrel. Only once the glass is >=6 cells that way. */
+            if(cpp-1>=6){
+              const su=(iu-mulU)*2/(1-mulU);
+              if(su>=1&&su<1+2/(cpp-1)){ r*=0.28;g*=0.28;b*=0.28; code=G.S2; }
+            }
+            if(gRows>=6){
+              const sv=(iv-spanV)*2/(1-spanV);
+              if(sv>=1&&sv<1+2/gRows){ r*=0.28;g*=0.28;b*=0.28; code=G.S2; }
             }
           }else if(v<1.35&&T.wc[ti]!==0&&streetSide&&
                    hash3(hitX*7,hitY*13,hitSide)<0.72){
@@ -2485,7 +2979,7 @@ function render(){
               }else{
                 const wt2=hash3((wallU*tf)|0,(v*tf)|0,5), k2=0.80+wt2*0.26;
                 r=ar*lr*k2;g=ag*lg*k2;b=ab*lb*k2;          /* bare wall bay */
-                code=wt2<0.5?G.S1:G.S2;
+                code=G.S2;
               }
             }else if(bayU>0.34&&bayU<0.66&&shopH<0.42){
               const dg=hash3((bayU*tf)|0,(v*tf)|0,bay+9);
@@ -2503,7 +2997,64 @@ function render(){
               const gk=(0.16+shopH*0.30)*(0.45+sg2*0.70)*fog;
               const wcol=winCol(T.wc[ti],shopH);
               r=wcol[0]*gk+8;g=wcol[1]*gk+8;b=wcol[2]*gk+10;
-              code=WINCH[(sg2*WINCH.length)|0];
+              code=G.S2;
+              if(shNear>0){
+                /* ---- the room behind the glass ----
+                   Back wall with two shelves of stock, a counter across the
+                   bottom, a keeper behind it. The room sits BEHIND the
+                   glass plane: sample coordinates are the ray continued
+                   into the tile (shU/shV), so walking past slides the
+                   shelves against the frame - that is the depth cue. Shop
+                   TYPE is a 4-way hash per tile face (so the 2-3 bays of a
+                   tile share one shop, and the parallax can carry stock
+                   across a post without it changing shop). Stock sits in
+                   world-anchored slots along the face, so it holds still.
+                   Every level here spans several alpha steps and every
+                   surface wider than a few cells carries per-cell grain. */
+                const sty=(hash3(hitX*3+hitSide,hitY*3,19)*4)|0;
+                const pal=SHOP_PAL[sty];
+                const uA=along+wallU+shU, vB=v+(v-P.z)*shV;      /* back wall */
+                const vC=v+(v-P.z)*shV*0.3;                       /* counter, nearer */
+                /* one screen row measured in vB-space: dvB/dv = 1+shV, so a
+                   plain invL1 ledge thinned below a row on grazing rays and
+                   the shelf line dashed */
+                const rowT=Math.max(0.06,invL1*(1+shV));
+                const gr=hash3((uA*tf)|0,(vB*tf)|0,sty+40);
+                let pc,ik,ic;
+                if(vC<0.42){
+                  if(vC>0.42-rowT){ pc=pal[1]; ik=1.05; ic=G.UP; }           /* counter lip */
+                  else{ pc=pal[4]; ik=0.50+gr*0.30; ic=gr<0.55?G.S2:G.S3; }  /* counter face */
+                }else if(vB<0.02){ pc=pal[4]; ik=0.25+gr*0.15; ic=G.S1; }    /* floor */
+                else{
+                  const figC=along+0.30+hash3(hitX,hitY,hitSide+23)*0.40;
+                  const slot=(uA*6)|0, su=uA*6-slot;
+                  const hB=vB<0.58?-1:(vB<0.80?0.58:0.80);         /* shelf tier base */
+                  const dv=vB-hB, hd=vB>0.86;
+                  /* keeper stands between counter and shelves, so is tested
+                     before them: a narrow head over wider shoulders, solid
+                     glyphs (a dot glyph leaves the cell black around it and
+                     read as a hole in the wall) */
+                  if(vB<0.98&&Math.abs(uA-figC)<(hd?0.04:0.07)){
+                    pc=hd?SHOP_SKIN:pal[5]; ik=(hd?0.95:0.75)*(0.85+gr*0.3); ic=hd?G.FULL:G.S3;
+                  }else if(hB>0&&dv<rowT){ pc=pal[1]; ik=0.95; ic=G.UP; }      /* shelf edge */
+                  else if(hB>0&&dv<rowT+SHOP_OH[sty]&&Math.abs(su-0.5)<SHOP_OW[sty]
+                          &&hash3(slot,hB*10,sty*5+hitSide)<0.62){            /* stock */
+                    pc=((slot&1)&&sty!==2)?pal[3]:pal[2];
+                    ik=(sty===1?0.75+0.45*hash3(slot,hB*10,(time*3)|0):1.0)*(0.85+gr*0.3);
+                    ic=SHOP_OG[sty];
+                  }else if((sty===0||sty===3)&&vB>0.92&&vB<1.0&&(slot&1)&&Math.abs(su-0.5)<0.15){
+                    pc=pal[3]; ik=1.2; ic=G.FULL;                             /* lanterns / neon */
+                  }else if(sty===2&&vB>0.86&&vB<1.0&&Math.abs(uA-along-0.5)<((vB>0.89&&vB<0.97)?0.11:0.05)){
+                    pc=pal[3]; ik=1.3; ic=G.FULL;                             /* green cross */
+                  }else{
+                    pc=pal[0]; ik=(vB>1.08?0.22:0.48)+gr*0.34; ic=gr<0.66?G.S1:G.S2;   /* wall / ceiling */
+                  }
+                }
+                /* interior plus a 22% ghost of the old glazing as reflection */
+                const kI=ik*fog*shNear*(1-dayF*0.4), kG=(1-shNear)+0.22*shNear;
+                r=r*kG+pc[0]*kI; g=g*kG+pc[1]*kI; b=b*kG+pc[2]*kI;
+                if(shNear>0.5) code=ic;
+              }
             }
           }else{
             const wt=hash3((wallU*tf)|0,(v*tf)|0,hitX*31+hitY);
@@ -2526,14 +3077,25 @@ function render(){
                a point-blank wall was a field of brown noise. Lay real brick:
                staggered courses with mortar joints, world-anchored so they
                hold still as you walk. */
-            let kk;
+            let kk,mark;
             if(T.wc[ti]===0){
               const bv=v*8, course=Math.floor(bv);
               const bu=wallU*6+((course&1)?0.5:0);
               const fu=bu-Math.floor(bu), fv=bv-course;
-              kk=(fu<0.09||fv<0.13) ? 0.30 : (0.70+wt*0.30);
+              const mortar=(fu<0.09||fv<0.13);
+              kk=mortar ? 0.30 : 0.85; mark=mortar ? G.S1 : G.S2;
             }else{
-              kk=(iv<0.16?0.45:1)*(pane?0.22:0.80)*(0.84+wt*0.22);
+              /* Two materials, two FIXED marks. Concrete (spandrel and
+                 mullion alike) is one flat S2 value; unlit glass is a darker
+                 S1. The window grid is the texture - the per-cell grain here
+                 was either sub-step (invisible) or a glyph lottery (static),
+                 and pane cells at 0.22 fell under put()'s draw threshold.
+                 Glass sits at 0.50, not lower: wall albedo peaks at 44-80 and
+                 lr is ~0.3-0.4 at 6u, so anything under ~0.45 straddles the
+                 mx<7 cutoff and panes pop in and out per tower and face.
+                 (The old iv<0.16 storey line is gone: the spandrel band of
+                 the screen-cell module IS the storey line now.) */
+              kk=pane?0.50:0.75; mark=pane?G.S1:G.S2;
             }
             r=ar*lr*kk;g=ag*lg*kk;b=ab*lb*kk;
             const le=(r+g+b)/765;
@@ -2541,7 +3103,7 @@ function render(){
                more than two ramp steps per cell - that is what read as
                static rather than a wall. Let luminance pick the mark and
                keep the grain sub-step. */
-            code=corner?G.V:WRAMP[clamp(((le/(le+0.055))*4.4+wt*0.85-0.35)|0,1,6)];
+            code=mark;
           }
         }
         const fr=r*keep+hzR, fg=g*keep+hzG, fb=b*keep+hzB;
@@ -2551,10 +3113,12 @@ function render(){
       }
       /* nearest slice defines the z-buffer and where the street starts */
       if(zb===FAR){ zb=dist; nearBase=bottom; wBase=bottom; wy1=y1; }
+      if(zn<ZK){ zD[zbase+zn]=dist; zY[zbase+zn]=y0; zn++; }
+      zph=-1;
       wy0=y0;
       yCeil=y0;
     }
-    zbuf[sx]=zb;
+    zbuf[sx]=zb; zN[sx]=zn;
 
     /* overcast lit from below by the whole city — the sky is never black
        here, it is a dim sodium-and-magenta haze brightening toward the
@@ -2712,7 +3276,13 @@ function render(){
          picked '.' (about 2% ink) and vanished, which is why a rooftop read
          as a black void. Bias the ramp so ground planes keep a dense shade
          glyph while staying dim - dark AND present. */
-      let gch=FRAMP[clamp(((le/(le+0.30))*10+bump+tex*0.42-0.21+(onRoof?2.2:0.5))|0,0,8)];
+      /* Street knee 0.30->0.06 and bias 0.5->2.5. Asphalt's whole drawn
+         range (le 0.025-0.20) used to land on '.'/DOT/':' - 0-5% ink - so
+         the ground was black with lint. Now: lit road -> '-'/S1, bright
+         -> S1, puddle -> S2 (clamped at 8, never S3/FULL). Alpha is
+         untouched, so it stays DIM, it just stops being holes. Unlit
+         asphalt (mx<7) still draws nothing, as before. */
+      let gch=FRAMP[clamp(((le/(le+(onRoof?0.30:0.06)))*10+bump+tex*0.42-0.21+(onRoof?2.2:2.5))|0,0,8)];
       /* ~1.5% of road tiles carry a grate mark in the tile centre */
       if(!onRoof&&rowDist<14&&(T.flag[ti]&ROAD)&&hash2(tx*131,ty*57)>0.985){
         const fxg=fx-tx,fyg=fy-ty;
@@ -2744,6 +3314,7 @@ function render(){
     }
   }
 
+  drawBeams(px,py,dx,dy,plX,plY,projRows,horizon);   /* on the floor, under the sprites */
   drawSprites(px,py,dx,dy,plX,plY,projRows,horizon);
 
   /* ---- rain ---- */
@@ -2782,7 +3353,90 @@ function render(){
   }
 }
 
+/* Headlight pools. LM is baked once per city, so a moving lamp can never
+   reach the floor pass; instead each near car paints a short wedge of
+   ground cells ahead of its nose in screen space - after the floor (it
+   sits on the asphalt the cast just drew) and before the sprites (people
+   and the car itself stand on it). Rows come from rdT[], the floor pass's
+   own ground distance per row, so the wedge lands on the same plane; tY is
+   affine along the car's axis, so each row solves for its distance along
+   the beam directly instead of sampling world points. A beam lying across
+   the screen (broadside car) is thinner than a row, so that case walks the
+   beam's own column span instead, with the same bumper-to-tip falloff. */
+function drawBeams(px,py,dx,dy,plX,plY,projRows,horizon){
+  const invDet=1/(plX*dy-dx*plY);
+  const kCol=cols/(2*PLANE);                 /* columns per world unit at tY=1 */
+  const yTop=Math.floor(horizon)+1, hwCap=cols>>3, half=cols*0.5;
+  for(const e of nearEnts){
+    if(e.kind!=='car') continue;
+    const rx=e.x-px,ry=e.y-py, d2=rx*rx+ry*ry;
+    if(d2>900) continue;                      /* past 30u the pool is one cell */
+    const tXc=invDet*(dy*rx-dx*ry), tYc=invDet*(-plY*rx+plX*ry);
+    const tXf=invDet*(dy*e.dx-dx*e.dy), tYf=invDet*(-plY*e.dx+plX*e.dy);
+    const a0=(e.len||2)*0.5+0.3, a1=a0+3.6, aSpan=a1-a0, iSpan=1/aSpan;   /* beam: bumper+0.3 .. +3.9u */
+    const ty0=tYc+a0*tYf, ty1=tYc+a1*tYf;
+    if(ty0<0.3&&ty1<0.3) continue;
+    const fog=Math.max(0,1-Math.sqrt(d2)/VIEW);
+    const rA=ty0>0.3?horizon+P.z*projRows/ty0:rows, rB=ty1>0.3?horizon+P.z*projRows/ty1:rows;
+    let yLo=Math.max(yTop,Math.ceil(Math.min(rA,rB))), yHi=Math.min(rows-1,Math.floor(Math.max(rA,rB)));
+    let flat=Math.abs(tYf)<0.05;
+    if(yHi<yLo){                              /* wedge thinner than a row: one smear */
+      flat=true; yLo=yHi=Math.round(Math.min(rA,rB));
+      if(yLo<yTop||yLo>=rows) continue;
+    }
+    const along=flat&&Math.abs(tXf)>0.3;      /* smear runs across the screen: index by column */
+    for(let y=yLo;y<=yHi;y++){
+      let a,tt;
+      if(flat){ a=(a0+a1)*0.5; tt=tYc+a*tYf; }
+      else{ tt=rdT[y]; a=(tt-tYc)/tYf; if(a<a0||a>a1) continue; }
+      if(tt<1.0) continue;                    /* the beam is on you: nothing to draw */
+      const sc=half/tt, isc=1/sc;             /* columns per tX unit at this depth */
+      const cc=half+(tXc+a*tXf)*sc;
+      let hw=(0.32+0.26*(a-a0))*kCol/tt;      /* 0.64u wide at the bumper, 2.5u at the end */
+      let c0,c1,k=0;
+      if(along){
+        const cA=half+(tXc+a0*tXf)*sc, cB=half+(tXc+a1*tXf)*sc;
+        c0=Math.max(0,Math.ceil(Math.min(cA,cB))); c1=Math.min(cols-1,Math.floor(Math.max(cA,cB)));
+      }else{
+        if(hw>hwCap) hw=hwCap;
+        const fall=flat?0.75:1-(a-a0)*iSpan;
+        k=fall*fall*0.62*fog;
+        if(k<0.05) continue;
+        c0=Math.max(0,Math.ceil(cc-hw)); c1=Math.min(cols-1,Math.floor(cc+hw));
+      }
+      const ihw=1/Math.max(0.5,hw);
+      for(let c=c0;c<=c1;c++){
+        if(tt>=zbuf[c]) continue;
+        let kk;
+        if(along){
+          const ac=((c-half)*isc-tXc)/tXf;     /* distance along the beam at this column */
+          if(ac<a0||ac>a1) continue;
+          const f=1-(ac-a0)*iSpan;
+          kk=f*f*0.62*fog;
+        }else{
+          const l=(c-cc)*ihw; kk=k*(1-0.55*l*l);  /* per-cell lateral falloff */
+        }
+        if(kk<0.05) continue;
+        put(kk>0.36?G.S2:(kk>0.18?G.S1:G.DOT),xs[c],ys[y],255*kk,226*kk,172*kk);
+      }
+    }
+  }
+}
+/* One hot cell on a car outline, clipped to the car's own drawn columns so
+   a lamp never floats free of a body the MAXW cap trimmed. Occlusion uses
+   the same depth staircase the body uses (zD/zY/zN), so a lamp is hidden
+   by the wall that hides the shell and not by the nearest wall in the
+   column - otherwise no lamp would ever draw from a rooftop. */
+function lampCell(xf,y,c0,c1,tY,r,g,b){
+  const c=Math.round(xf);
+  if(c<c0||c>c1||y<0||y>=rows) return;
+  let yc=rows;
+  { const bb=c*ZK, n=zN[c]; for(let i=0;i<n;i++){ if(zD[bb+i]<tY) yc=zY[bb+i]; else break; } }
+  if(y>=yc) return;
+  put(G.FULL,xs[c],ys[y],r,g,b);
+}
 const sprites=[];
+const BEACON=[255,60,60];
 function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
   sprites.length=0;
   for(const e of nearEnts){
@@ -2816,11 +3470,12 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
        than the camera axis - at the screen edge those differ by ~36deg, so a
        camera-axis blend makes a broadside car pump as you swivel it. */
     let wWorld=hh*(figure?0.34:0.5);
-    if(e.kind==='car'){
+    let boxSa=0; const lastRow=Math.floor(bottom);
+    if(e.kind==='car'||e.kind==='aero'||e.kind==='bike'){
       const rn=1/Math.max(1e-4,Math.sqrt(s.d));
       const ca=Math.abs((s.rx*rn)*e.dx+(s.ry*rn)*e.dy);   /* 1 = nose-on   */
       const sa=Math.sqrt(Math.max(0,1-ca*ca));            /* 1 = broadside */
-      wWorld=0.9*ca+(e.len||2)*sa;
+      wWorld=(e.brd||0.9)*ca+(e.len||2)*sa; boxSa=sa;
     }
     const wCols=Math.max(1,Math.round(wWorld*L1*CH/CW));
     const x0=Math.max(0,Math.round(scrX-wCols/2)),x1=Math.min(cols-1,Math.round(scrX+wCols/2));
@@ -2828,7 +3483,10 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
     if(y1<y0) continue;
 
     const dist=Math.sqrt(s.d);
-    const fog=Math.max(0,1-dist/VIEW);
+    /* aircraft lights carry: 0.40 fog floor for aeros so the hull is not
+       black past ~25u - but ramp to 0 over the last 5u, otherwise the 46u
+       cull above makes a full-bright dash pop into existence at the edge */
+    const fog=e.kind==='aero'?Math.min(1,(VIEW-dist)*0.2)*Math.max(0.40,1-dist/VIEW):Math.max(0,1-dist/VIEW);
     const ti=clamp(Math.floor(e.y),0,H-1)*W+clamp(Math.floor(e.x),0,W-1);
     const o=ti*3;
     let lr,lg,lb;
@@ -2841,6 +3499,10 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
          so a person never outshines a lit window. */
       const lmx=Math.max(lr,lg,lb), gcap=figure?0.65:1.10;
       if(lmx>gcap){const ks=gcap/lmx;lr*=ks;lg*=ks;lb*=ks;}
+      /* A car body is dark, never absent: its own lamps, dash and the wet
+         road under it keep the shell readable where the baked map is black.
+         0.30 x col~180 = 54 -> alpha ~0.35, a dim but present shape. */
+      if(e.kind==='car'){ if(lr<0.30)lr=0.30; if(lg<0.29)lg=0.29; if(lb<0.32)lb=0.32; }
     }
     const pulse=e.kind==='shard'?(0.6+0.4*Math.sin(e.pulse*3)):1;
     /* Height was uncapped: a vend at one tile projects ~1.6 screens tall
@@ -2877,7 +3539,10 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
        props are almost always clipped, and clip-relative v squashed every
        mask feature into the visible sliver. */
     const invH=1/Math.max(1e-4,bottom-top);
-    const iconRow=Math.round(top+(bottom-top)*(figure?0.10:0.42));
+    /* aero beacon on the cabin roof; clamp to y0 because for a 1-2 row
+       craft round(top+0.1h) can land on floor(top) < ceil(top) and the
+       beacon would never draw at exactly the range craft live at */
+    const iconRow=e.kind==='aero'?Math.max(y0,Math.round(top+(bottom-top)*0.10)):Math.round(top+(bottom-top)*(figure?0.10:0.42));
     /* Masks only once they can resolve; grain seed rides on the colour so
        texture sticks to the entity instead of swimming in screen space. */
     const mk=e.kind;
@@ -2885,17 +3550,50 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
        on it alone left a widened car as a flat one-colour bar past ~8.7
        units, i.e. everywhere traffic actually lives. The cabin/body mask
        resolves fine at two rows, so let width qualify it too. */
-    const shaped=!figure&&(span>=6||mk==='car')&&(cx1-cx0)>=4;
+    const shaped=!figure&&(mk==='bike'?(span>=4&&cx1>cx0):((span>=6||mk==='car'||mk==='aero')&&(cx1-cx0)>=(mk==='car'?2:4)));
     const grain=span>=10;
     const gseed=(e.col[0]*5+e.col[1]*3+e.col[2])|0;
 
+    /* Car frame, once per sprite. u is the horizontal axis in [-1,1] across
+       the UNclipped box. A world offset o moves the sprite centre on screen
+       by (cols/2)*d(tX/tY) = (cols/2)*(dtX - (tX/tY)*dtY)/tY - the second
+       term is what keeps a point sliding along the bearing fixed on screen;
+       without it a nose-on car at the screen edge is masked as a
+       three-quarter one. Divided by wCols/2 that is u. The tY/dist factor is
+       cos(angle off axis): with it the box corners land exactly at u=+-1,
+       because wWorld = B|cos|+L|sin| is the same bearing projection, so the
+       mask follows the drawn width at every screen position. cFU/cRU are u
+       per world unit along the car's forward and right axes. */
+    let cFU=0,cRU=0,cNear=0,cSide=1,cInvHW=1,cL=2,cFdn=0,cESgn=1;
+    if(mk==='car'){
+      cL=e.len||2;
+      const k2=2*PLANE*invDet*(tY/dist)/wWorld, q=tX/tY;
+      cFU=k2*((dy*e.dx-dx*e.dy)-q*(plX*e.dy-plY*e.dx));   /* u per unit forward        */
+      cRU=k2*((-dx*e.dx-dy*e.dy)-q*(plX*e.dx+plY*e.dy));  /* u per unit right (-dy,dx) */
+      cFdn=(s.rx*e.dx+s.ry*e.dy)/dist;          /* >0: driving away, tail toward you */
+      cNear=(cFdn>0?-0.5:0.5)*cL*cFU;           /* u of the end face turned toward you */
+      cSide=(s.rx*e.dy-s.ry*e.dx)>0?1:-1;       /* which flank faces you */
+      cESgn=cRU>0?cSide:-cSide;                 /* u direction from the end face's centre to the corner it shares with the flank */
+      cInvHW=2/Math.max(1,wCols);
+    }
+
     for(let x=cx0;x<=cx1;x++){
-      if(tY>=zbuf[x]) continue;
+      /* Occlusion at the sprite's DEPTH, not the column's nearest wall.
+         zbuf held only the first painted distance, so anything beyond a
+         one-storey shopfront was culled whole - a drone above the roofline
+         vanished - and from a rooftop the first hit is the roof under your
+         feet (<1.4u), so every sprite in the city was culled. yc is the
+         ceiling the painter had reached when it got to distance tY; rows
+         above it are open sky or farther mass. */
+      let yc=rows;
+      { const b=x*ZK, n=zN[x]; for(let i=0;i<n;i++){ if(zD[b+i]<tY) yc=zY[b+i]; else break; } }
+      if(y0>=yc) continue;
+      const yEnd=y1<yc?y1:yc-1;
       const xp=xs[x];
       const u=(x-cxm)/halfW, au=u<0?-u:u;
-      for(let y=y0;y<=y1;y++){
+      for(let y=y0;y<=yEnd;y++){
         const v=(y-top)*invH;
-        let code, sk=1;
+        let code, sk=1, ul=0;
         if(figure){
           /* An actual silhouette — head, shoulders, a gap between the legs.
              Cells outside it draw nothing, so the city shows through and a
@@ -2929,17 +3627,53 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
             code=v<0.30?G.S3:G.S2;
           }else if(mk==='lift'){   /* door frame around a see-through grille */
             code=(au>0.80||v<0.10||v>0.94)?G.S3:G.S1;
-          }else if(mk==='car'){    /* cabin set on a body, not a box */
-            if(v<0.42&&au>0.62) continue;
-            code=v<0.42?G.S3:G.S2;
+          }else if(mk==='aero'){   /* cabin on a hull; underlight strip on the true bottom row */
+            /* glow entities get a flat 0.55 light and the hull albedo is
+               muted, so at sk=1 the hull is ~19/255 on a black sky - lift
+               it; hull and cabin still differ by glyph step, not just tone */
+            if(y===lastRow){ if(au>0.84) continue; code=G.FULL; sk=2.4; ul=1; }
+            else if(v<0.40){ if(au>0.55) continue; code=G.S2; sk=1.3; }
+            else { if(au>0.96) continue; code=G.S3; sk=1.6; }
+          }else if(mk==='bike'){   /* rider leaning forward over a wheel row */
+            if(v<0.18)      { if(au>0.40) continue; code=G.S3; sk=1.25; }
+            else if(v<0.50) { if(au>0.30+0.35*boxSa) continue; code=G.S3; sk=0.95; }
+            else if(v<0.76) { if(au>0.34) continue; code=(!e.hold&&(((time*7+e.ph)|0)&1))?G.S2:G.S1; sk=0.75; }
+            else            { if(boxSa>0.5?(au<0.32):(au>0.55)) continue; code=G.BIG; sk=1.15; }
+          }else if(mk==='car'){    /* two faces, a cabin, wheels, a roofline */
+            const uc=(x-scrX)*cInvHW;                 /* u against the unclipped box */
+            const du=uc-cNear, eHW=Math.abs(cRU)*0.45; /* end-face half-width in u (B=0.9) */
+            /* one-sided test: everything from the shared corner outward is
+               the end face, so the rounded outer column never draws as a
+               bright flank sliver on the dark end. eHW==0 means broadside. */
+            if(eHW>1e-3&&du*cESgn<eHW){
+              /* end face (grille or boot): the darker plane, cabin ~75% of it */
+              const ab=Math.min(0.45,Math.abs(du/cRU)); /* eHW>0 here so cRU!=0 */
+              if(v<0.30){ if(ab>0.34) continue; code=v<0.10?G.S3:G.S2; sk=v<0.10?1.15:0.50; }
+              else if(v<0.42){ code=G.S3; sk=0.86; }   /* roofline / belt: >2 alpha quanta above the body */
+              else if(v<0.82){ code=G.S3; sk=0.70; }
+              else { code=G.S2; sk=0.42; }              /* bumper / underside */
+            }else{
+              /* flank: cabin set toward the rear, bonnet and boot lower than
+                 the roof, wheel masses dark at the bottom, roofline bright */
+              const aL=Math.abs(cFU)>1e-3?(uc-cRU*cSide*0.45)/(cFU*cL):0;  /* -0.5 tail .. +0.5 nose */
+              const inCab=aL>-0.40&&aL<0.22;
+              if(v<0.30){ if(!inCab) continue; code=v<0.10?G.S3:G.S2; sk=v<0.10?1.25:0.52; }
+              else if(v<0.42){ code=G.S3; sk=inCab?0.52:1.0; }
+              else if(v<0.82){ code=G.S3; sk=1.0; }
+              else { const wh=Math.abs(Math.abs(aL)-0.31)<0.10; code=wh?G.FULL:G.S2; sk=wh?0.28:0.60; }
+            }
           }else{                   /* cat/drone/shard: small, slab is fine */
             code=(v<0.30)?G.S3:G.S2;
           }
         }else{
           code=(v<0.30)?G.S3:G.S2;
+          if(mk==='aero'&&y===lastRow){ code=G.FULL; sk=2.4; ul=1; }
         }
-        if(x===midCol&&y===iconRow) code=e.ch;
-        else if(grain){
+        if(x===midCol&&y===iconRow){
+          code=e.ch;
+          if(mk==='aero'){ if(((time*3+e.ph)|0)&1){ code=G.BIG; sk=2.4; ul=2; } else code=G.S3; }
+        }
+        else if(grain&&code!==G.BIG){
           /* Texture for big fills: drop ~8% of cells and knock ~20% down
              one FULL ramp glyph - a 25-point fill change. Alpha grain under
              the 1/64 tone quantum was invisible; glyph steps are not. */
@@ -2948,7 +3682,47 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
           const gz=hash3((u+1)*3.5,v*9,gseed);
           if(gz>0.80) code=code===G.FULL?G.S3:(code===G.S3?G.S2:G.S1);
         }
-        put(code,xp,ys[y],kr*sk,kg*sk,kb*sk);
+        if(ul){ const uc=ul===2?BEACON:e.ucol; put(code,xp,ys[y],uc[0]*sk*fog,uc[1]*sk*fog,uc[2]*sk*fog); }
+        else put(code,xp,ys[y],kr*sk,kg*sk,kb*sk);
+      }
+    }
+    /* Lamps: hot cells on the box outline, after the body so they sit on
+       top of it. Headlamps ride the front corners, tails the rear ones,
+       each full when its end faces you and a dim lens from the side. They
+       fade slower than the shell (0.55+0.45*fog) - light carries further
+       than paint at night. A braking car runs its tails 1.5x and one row
+       taller. Colours over 255 are fine: put() normalises on the max.
+       Corners are placed with the same projection the body box uses
+       (columns per world unit at the car's depth = L1*CH/CW), so a lamp
+       always lands on the shell. The end facing you is drawn LAST: nose-on,
+       nose and tail corners share cells, and the dim far lens must not
+       overpaint the blazing near one. */
+    if(mk==='car'){
+      const kf=0.55+0.45*fog;
+      const brake=!!(e.brake||e.hold);
+      const lrn=1/Math.max(1e-4,dist);
+      const fdn=(e.dx*s.rx+e.dy*s.ry)*lrn;       /* +1 driving away, -1 coming at you */
+      const kh=kf*(0.28+0.72*Math.max(0,-fdn));
+      const kt=kf*(0.26+0.74*Math.max(0,fdn))*(brake?1.5:1.0);
+      const hRows=bottom-top;
+      const yh=Math.round(top+hRows*0.66), yt=Math.round(top+hRows*0.60);
+      const kx=invDet*(cols*0.5)/tY;              /* signed screen cols per world unit */
+      const hl=0.5*(e.len||2), rgx=-e.dy, rgy=e.dx; /* half length; right vector */
+      for(let pass=0;pass<2;pass++){
+        const head=(pass===1)===(fdn<0);           /* facing end on the second pass */
+        const ex=head?e.dx*hl:-e.dx*hl, ey=head?e.dy*hl:-e.dy*hl;
+        for(let sg=-1;sg<=1;sg+=2){
+          const ox=ex+rgx*sg*0.32, oy=ey+rgy*sg*0.32; /* lamps 0.32u off the axis */
+          const xf=scrX+kx*(dy*ox-dx*oy);
+          if(head) lampCell(xf,yh,cx0,cx1,tY,255*kh,236*kh,196*kh);
+          else{
+            lampCell(xf,yt,cx0,cx1,tY,255*kt,44*kt,26*kt);
+            /* second brake cell only once the body is tall enough to hold it
+               (v>=0.43 at 6 rows) - shorter and it floats above the roof or
+               inside the cabin cutout */
+            if(brake&&hRows>=6) lampCell(xf,yt-1,cx0,cx1,tY,220*kt,34*kt,20*kt);
+          }
+        }
       }
     }
   }
@@ -3076,7 +3850,7 @@ function newCity(){
   const s=randomSeed();
   try{const u=new URL(location.href);u.searchParams.set('seed',s);history.replaceState(null,'',u);}catch(e){}
   genCity(s);
-  P.cred=0;P.shards=0;logLines=[];
+  P.cred=0;P.shards=0;logLines=[];autoTour=false;nearTimer=0;
   closeDialogue();
   $('bSeed').textContent='seed / '+s;
   say('New city compiled from seed "'+s+'".','sys');
@@ -3110,7 +3884,7 @@ function boot(){
     barT=Math.max(barT,AC.currentTime+0.2);
     pump();
   }
-  say('W/S walk · A/D strafe · arrows or mouse to look · E to touch anything that glows','sys');
+  say('W/S walk · A/D strafe · arrows or mouse to look · E to touch anything that glows · T auto tour · N empty city','sys');
   last=performance.now();
 }
 $('boot').addEventListener('pointerdown',()=>{boot();},{passive:true});
@@ -3127,13 +3901,15 @@ window.__city={
   get ents(){return ents;},
   get lights(){return lights;},
   get near(){return nearEnts;},
+  get aeros(){return aeros;},
   tp:(x,y,a)=>{P.x=x+.5;P.y=y+.5;if(a!==undefined)P.a=a;},
   setExposure:(e,k)=>{EXPOSURE=e;if(k!==undefined)TONE_KNEE=k;},
   setClock:(h)=>{clock=h*60;updateTOD();},
   tod:()=>({hour:+(clock/60).toFixed(2),dayF:+dayF.toFixed(3),amb:AMB.map(v=>+v.toFixed(3))}),
   getExposure:()=>({EXPOSURE,TONE_KNEE}),
   stats:()=>({cols:cols,rows:rows,CW:CW,CH:CH,FS:FS,
-    lights:lights.length,ents:ents.length,atlas:sheetN,shards:shardTotal,ms:+emaMs.toFixed(2)})
+    lights:lights.length,ents:ents.length,cars:ents.reduce((n,e)=>n+(e.kind==='car'?1:0),0),
+    atlas:sheetN,shards:shardTotal,ms:+emaMs.toFixed(2)})
 };
 
 requestAnimationFrame(frame);
