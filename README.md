@@ -24,9 +24,10 @@ puddle — is a text character drawn to a `<canvas>`.
 | `↑` `↓` | look up / down |
 | `Shift` | run |
 | `E` | interact with anything that glows |
-| `G` | generate a new city |
+| `G` | solid material backing on/off — off gives the sparse, original ASCII look |
 | `T` | auto tour — the camera walks the city by itself; any input hands control back |
-| `N` | empty city — hide the people and traffic, keep the props |
+| `P` | empty city — hide the people and traffic, keep the props |
+| `N` | generate a new city |
 | `B` `R` `M` `F` | bloom · rain · music · fps |
 | `-` `=` | resolution |
 | `?` | help |
@@ -97,7 +98,7 @@ Work in progress. What's in and working:
 - [x] Pseudo-volumetric cars with headlights, taillights and headlight pools on the wet road
 - [x] Cyclists on the kerb lane and flying craft in sky lanes over the rooftops
 - [x] Shop interiors visible through the glass, with parallax
-- [x] Auto Tour (T) and Empty City (N) modes
+- [x] Auto Tour (T), Empty City (P), and the solid material backing behind the glyphs (G)
 - [ ] Facade readability at close range — still tuning
 - [ ] More interiors beyond the bar (shops, lobbies)
 - [ ] Day/night cycle — built, currently held at night on purpose

@@ -151,7 +151,7 @@
       <div class="r" style="margin:-4px 0 4px 32px">click the view for mouse-look · crane up, the towers are 40 storeys</div>
       <div><kbd>Shift</kbd> run &nbsp; <kbd>E</kbd> interact with anything that glows</div>
       <div class="r" style="margin:-4px 0 4px 32px">find a <b>service lift</b> (I) and ride it — then look down</div>
-      <div><kbd>T</kbd> auto tour &nbsp; <kbd>N</kbd> empty city &nbsp; <kbd>G</kbd> new city</div>
+      <div><kbd>T</kbd> auto tour &nbsp; <kbd>P</kbd> empty city &nbsp; <kbd>G</kbd> solid backing on/off &nbsp; <kbd>N</kbd> new city</div>
       <div><kbd>B</kbd> bloom &nbsp; <kbd>R</kbd> rain &nbsp; <kbd>F</kbd> fps</div>
       <div><kbd>M</kbd> mute &nbsp;<span class="r">— somewhere out there is a jazz bar. Follow the sound of the trumpet; the blue sign marks the door.</span></div>
       <div><kbd>-</kbd><kbd>=</kbd> resolution &nbsp; <kbd>?</kbd> help &nbsp; <kbd>Esc</kbd> close</div>
@@ -174,7 +174,7 @@
       <div class="wip">work in progress</div>
       <div class="seed" id="bSeed">—</div>
       <div class="go">press any key</div>
-      <div class="keys">w a s d walk &nbsp;&middot;&nbsp; e touch &nbsp;&middot;&nbsp; t auto tour &nbsp;&middot;&nbsp; n empty city &nbsp;&middot;&nbsp; m mute</div>
+      <div class="keys">w a s d walk &nbsp;&middot;&nbsp; e touch &nbsp;&middot;&nbsp; t auto tour &nbsp;&middot;&nbsp; p empty city &nbsp;&middot;&nbsp; g backing &nbsp;&middot;&nbsp; m mute</div>
     </div>
   </div>
 </div>
@@ -254,7 +254,7 @@ const G={
 const RAMP=[G.SP,C_('.'),G.DOT,C_(':'),C_('-'),C_('='),C_('+'),C_('*'),C_('#'),C_('%'),C_('@'),G.FULL];
 /* Ground ramp: dots into shade blocks. The symbol ramp above reads as typed
    characters on a page; this reads as a surface getting brighter. */
-const FRAMP=[G.SP,G.SP,C_('.'),G.DOT,C_(':'),C_(';'),C_('-'),C_('='),C_('+'),C_('#'),C_('%')];
+const FRAMP=[G.SP,G.SP,C_('.'),G.DOT,C_(':'),C_(';'),C_('|'),C_('!'),C_('+'),C_('#'),C_('%')];
 /* Characters, not shade blocks: at a 12px cell a block is a flat square and
    a wall of them is a mosaic; ':' '=' '#' '%' carry detail INSIDE the cell. */
 const WRAMP=[G.SP,C_(':'),C_('-'),C_('='),C_('+'),C_('#'),C_('%'),C_('@')];
@@ -452,6 +452,8 @@ function resize(){
   cols=Math.ceil(cv.width/ACW);rows=Math.ceil(cv.height/ACH);
   zbuf=new Float32Array(cols);
   zD=new Float32Array(cols*ZK);zY=new Int16Array(cols*ZK);zN=new Uint8Array(cols);
+  cellCode=new Uint16Array(cols*rows);cellR=new Uint16Array(cols*rows);cellG=new Uint16Array(cols*rows);cellB=new Uint16Array(cols*rows);
+  bkR8=new Uint8Array(cols*rows);bkG8=new Uint8Array(cols*rows);bkB8=new Uint8Array(cols*rows);bkOn=new Uint8Array(cols*rows);
   rdT=new Float32Array(rows+2);fogT=new Float32Array(rows+2);lampT=new Float32Array(rows+2);
   rdRoofT=new Float32Array(rows+2);
   fqT=new Float32Array(rows+2);skyThr=new Float32Array(rows+2);
@@ -1136,10 +1138,12 @@ function mkCar(x,y,dx,dy,road){
   const spd=rf(4.5,9);
   /* 1.3-1.7 units = 4-5 m. At ri(2,3) a car was 6-9 m and, broadside at 9u,
      filled 40% of the frame as a slab. h .62 = a low car, not a van. */
-  const e={kind:'car',x:x,y:y,dx:dx,dy:dy,spd:spd,v:spd,len:rf(1.3,1.7),h:0.62,zoff:0,
+  /* a fleet, not one car: [len, height, saturation, lightness, taxi?] */
+  const ty=pick([[1.3,0.58,.55,.26,0],[1.5,0.60,.55,.26,0],[1.6,0.72,.45,.24,0],[1.7,0.82,.30,.30,0],[1.5,0.50,.70,.30,0],[1.5,0.60,.90,.45,1]]);
+  const e={kind:'car',x:x,y:y,dx:dx,dy:dy,spd:spd,v:spd,len:ty[0],h:ty[1],zoff:0,
     road:road,jn:null,inJ:false,turn:0,brake:0,hold:false,stuck:0,solid:true,rad:0.6,
     /* dark paint - the lights do the talking; pastel bodies read as slabs */
-    ch:C_('='),col:hsl(pick([20,38,200,326])+ri(-10,10),.55,.26)};
+    ch:C_('='),col:ty[4]?hsl(48,.92,.46):hsl(pick([20,38,200,326,150,270])+ri(-10,10),ty[2],ty[3])};
   planCross(e);
   return e;
   /* No headlight/taillight lights here. They were baked into LM at tile
@@ -1481,9 +1485,10 @@ addEventListener('keydown',e=>{
   if(k==='r'){optRain=!optRain;}
   if(k==='f'){optFps=!optFps;elFps.style.display=optFps?'block':'none';}
   if(k==='m'){toggleSound();}
-  if(k==='g'){newCity();}
+  if(k==='g'){optBack=!optBack;say(optBack?'Solid backing on.':'Sparse ASCII: backing off.','sys');}
+  if(k==='n'){newCity();}
   if(k==='t'){ if(autoTour) tourStop(); else tourStart(); }
-  if(k==='n'){ emptyCity=!emptyCity; nearTimer=0;
+  if(k==='p'){ emptyCity=!emptyCity; nearTimer=0;
     say(emptyCity?'EMPTY CITY. Nobody. Just the neon and the rain.':'The city fills back up.','sys'); }
   if(k==='-'||k==='_'){zoom=clamp(zoom+1,-3,8);resize();say('grid '+cols+'x'+rows,'sys');}
   if(k==='='||k==='+'){zoom=clamp(zoom-1,-3,8);resize();say('grid '+cols+'x'+rows,'sys');}
@@ -2301,30 +2306,77 @@ let curKey=-1,curSY=0,curA=-1;
    brightness from alpha, so the tone curve below only touches alpha —
    highlights roll off instead of clipping, and hue is preserved.
    Without it, standing near a sign clipped ~40% of the screen to white. */
+/* ── the frame is a CELL BUFFER, painted in one flush ─────────────────────
+   put() used to blit immediately. It now records the cell, and flush()
+   paints (1) a dark material-coloured BACKING behind every solid-surface
+   cell - merged into row runs, one fillRect per run - then (2) the glyphs.
+   That backing is the reference's "new look": the black gaps between
+   characters fill with the building's own colour, so a tower reads as a
+   solid mass with text for detail instead of text floating on nothing. */
+let cellCode=new Uint16Array(1),cellR=new Uint16Array(1),cellG=new Uint16Array(1),cellB=new Uint16Array(1);
+let bkR8=new Uint8Array(1),bkG8=new Uint8Array(1),bkB8=new Uint8Array(1),bkOn=new Uint8Array(1);
+let bkr=0,bkg=0,bkb=0,bkon=0,optBack=true;
+/* backing colour for the cells about to be put(); quantised to 16 levels so
+   neighbouring columns at slightly different fog merge into one run */
+function setBack(r,g,b){
+  bkr=(r>255?255:r)&0xF0; bkg=(g>255?255:g)&0xF0; bkb=(b>255?255:b)&0xF0; bkon=1;
+}
+function noBack(){ bkon=0; }
 function put(code,px,py,r,g,b){
+  const cx=(px/ACW)|0, cy=(py/ACH)|0;
+  if(cx<0||cy<0||cx>=cols||cy>=rows) return;
+  const i=cy*cols+cx;
+  if(bkon){ bkOn[i]=1; bkR8[i]=bkr; bkG8[i]=bkg; bkB8[i]=bkb; }
   if(code===G.SP)return;
   const mx=r>g?(r>b?r:b):(g>b?g:b);
-  if(mx<7)return;
-  const inv=5/mx;
-  const key=(Math.round(r*inv)*36)+(Math.round(g*inv)*6)+Math.round(b*inv);
-  if(key!==curKey){
-    curKey=key;
-    let row=sheetRow[key];
-    if(row<0) row=bakeRow(key);
-    curSY=row*ACH;
+  if(mx<7)return;                      /* drew nothing before; leaves the cell alone now */
+  cellCode[i]=code; cellR[i]=r>1023?1023:r; cellG[i]=g>1023?1023:g; cellB[i]=b>1023?1023:b;
+}
+function flush(){
+  if(optBack){
+    ctx.globalAlpha=1; curA=1;
+    for(let y=0;y<rows;y++){
+      const row=y*cols; let x=0;
+      while(x<cols){
+        if(!bkOn[row+x]){x++;continue;}
+        const r=bkR8[row+x],g=bkG8[row+x],b=bkB8[row+x];
+        let x1=x+1;
+        while(x1<cols&&bkOn[row+x1]&&bkR8[row+x1]===r&&bkG8[row+x1]===g&&bkB8[row+x1]===b) x1++;
+        ctx.fillStyle='rgb('+r+','+g+','+b+')';
+        ctx.fillRect(xs[x],ys[y],(x1-x)*ACW,ACH);
+        x=x1;
+      }
+    }
   }
-  const e=mx*EXPOSURE*(1/255);
-  /* quantised so neighbouring cells share a value — each distinct alpha is
-     a canvas state change, and the steps are far below perceptible */
-  const a=((e/(e+TONE_KNEE))*64|0)*0.015625;
-  if(a!==curA){curA=a;ctx.globalAlpha=a;}
-  const ci=code<9800?CLUT[code]:-1;
-  if(ci<0)return;
-  ctx.drawImage(sheet,ci*ACW,curSY,ACW,ACH,px,py,ACW,ACH);
+  curKey=-1;
+  for(let y=0;y<rows;y++){
+    const row=y*cols, py=ys[y];
+    for(let x=0;x<cols;x++){
+      const i=row+x, code=cellCode[i];
+      if(!code) continue;
+      const r=cellR[i],g=cellG[i],b=cellB[i];
+      const mx=r>g?(r>b?r:b):(g>b?g:b);
+      const inv=5/mx;
+      const key=(Math.round(r*inv)*36)+(Math.round(g*inv)*6)+Math.round(b*inv);
+      if(key!==curKey){
+        curKey=key;
+        let rw=sheetRow[key];
+        if(rw<0) rw=bakeRow(key);
+        curSY=rw*ACH;
+      }
+      const e=mx*EXPOSURE*(1/255);
+      const a=((e/(e+TONE_KNEE))*64|0)*0.015625;
+      if(a!==curA){curA=a;ctx.globalAlpha=a;}
+      const ci=code<9800?CLUT[code]:-1;
+      if(ci<0)continue;
+      ctx.drawImage(sheet,ci*ACW,curSY,ACW,ACH,xs[x],py,ACW,ACH);
+    }
+  }
 }
 let ACW=1,ACH=1;
 
 function render(){
+  cellCode.fill(0); bkOn.fill(0); noBack();
   const px=P.x,py=P.y;
   const dx=Math.cos(P.a),dy=Math.sin(P.a);
   const plX=-dy*PLANE,plY=dx*PLANE;
@@ -2453,6 +2505,7 @@ function render(){
           const gfog=Math.max(0.22,1-dist/(FAR*1.6));
           const ghz=(1-gfog)*0.35, gkeep=1-ghz;
           if(dist>VIEW){
+            noBack();
             /* Past the detailed range: same shading, none of the per-cell
                world-space work (grit, panel joints, parapet lip). */
             const o5=ti*3;
@@ -2492,6 +2545,7 @@ function render(){
              per-tile panel variance, and a bright parapet lip on the row
              where the roof actually ends. */
           if(!solid){
+            setBack(10*rfog+4,12*rfog+4,20*rfog+6);
             /* The street, seen from above. This is where all the light in a
                night city lives - lamps, signs, wet asphalt - so it reads as
                glowing canyons cut between the dark roofs. Uses the baked
@@ -2530,6 +2584,7 @@ function render(){
              lights changed nothing. Coverage, not exposure, was the problem:
              FRAMP was landing on a 1-2px mark, so 97% of each cell was never
              painted. Fix coverage and the lights only need +11% over base. */
+          setBack(16*rfog+4,17*rfog+4,22*rfog+6);
           const rvar=0.86+hash2(mapX*13,mapY*29)*0.24;
           const lr2=(AMB[0]+0.68*rvar)*rfog,
                 lg2=(AMB[1]+0.70*rvar)*rfog,
@@ -2594,6 +2649,7 @@ function render(){
          handful of cells; this cheap pass carries the skyline out ~2.6x
          for a fraction of the cost. */
       if(dist>VIEW){
+        noBack();
         const y0f=Math.max(0,Math.ceil(top)), y1f=Math.min(yCeil-1,Math.floor(bottom));
         if(y1f>=y0f){
           const fade=1-(dist-VIEW)/(FAR-VIEW);
@@ -2773,6 +2829,12 @@ function render(){
       const mulU=cpp>=2.5?1/cpp:0;
       const spanV=Math.max(0,Math.min(Math.max(0.42,1.15/rpp),1-1.02/rpp));
       const invL1=1/L1;
+      /* Material backing for this face: the building's hue, dark, fading
+         with distance. wc===0 surfaces (bar shell, plant, blank masonry)
+         take their albedo instead. */
+      { const bkf=fog*(0.55+0.45*fog);
+        if(T.wc[ti]){ const bc=winCol(T.wc[ti],0.5); setBack(bc[0]*0.30*bkf+6,bc[1]*0.30*bkf+6,bc[2]*0.32*bkf+8); }
+        else setBack(ar*0.62*bkf+5,ag*0.62*bkf+5,ab*0.66*bkf+6); }
       /* Shop-interior parallax, once per wall hit: the ray continued 0.6u
          past the glass plane. shU is the along-face shift, shV the height
          shift per unit of (v - eye). Grazing rays clamp so the room does
@@ -3129,6 +3191,7 @@ function render(){
     /* On a ray that hits nothing, sky ended at floor(horizon)-1 and floor
        began at floor(horizon)+1, leaving one unpainted scanline of clear
        colour straight across the horizon. */
+    noBack();
     const skyTo=Math.min(rows-1,yCeil-1,Math.floor(horizon));
     /* Key on BOTH ray components. plX=-dy*PLANE, so rx spans only 1.44*|dy|
        across the whole screen: facing straight down an X-axis street it
@@ -3291,6 +3354,7 @@ function render(){
         const fxg=fx-tx,fyg=fy-ty;
         if(fxg>0.28&&fxg<0.72&&fyg>0.3&&fyg<0.7) gch=G.DH;
       }
+      if(onRoof) setBack(15*fog+4,16*fog+4,21*fog+6); else setBack(11*fog+4,12*fog+4,22*fog+6);
       put(gch,xpx,ys[y],r,g,b);
 
       /* Canal reflection: mirror this column's wall about the horizon. The
@@ -3317,9 +3381,12 @@ function render(){
     }
   }
 
+  noBack();
   drawBeams(px,py,dx,dy,plX,plY,projRows,horizon);   /* on the floor, under the sprites */
   drawSprites(px,py,dx,dy,plX,plY,projRows,horizon);
 
+  flush();                                   /* backing runs, then every glyph */
+  noBack();
   /* ---- rain ---- */
   if(optRain){
     const pw=0.35+rainPow*0.9;
@@ -3437,7 +3504,7 @@ function lampCell(xf,y,c0,c1,tY,r,g,b){
   { const bb=c*ZK, n=zN[c]; for(let i=0;i<n;i++){ if(zD[bb+i]<tY) yc=zY[bb+i]; else break; } }
   if(y>=yc) return;
   /* a pool is a soft wash on the asphalt, not a row of white LEDs */
-  put(C_('+'),xs[c],ys[y],r*0.55,g*0.55,b*0.55);
+  put(C_('*'),xs[c],ys[y],r*0.55,g*0.55,b*0.55);
 }
 const sprites=[];
 const BEACON=[255,60,60];
