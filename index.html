@@ -2595,7 +2595,7 @@ function render(){
     const rd=EPR/p;
     rdT[y]=rd; rdRoofT[y]=EPRR/p;
     fogT[y]=1-rd*invVIEW;
-    fqT[y]=fqBase/rd;                 /* was a divide per floor cell */
+    fqT[y]=0.25*fqBase/rd;            /* one hash cell per FOUR screen cells: the ground fills the bottom of the frame, so its churn dominates */
     let lp=rd<lampR?(1-rd/lampR):0;
     lampT[y]=lp*lp*lampK;
   }
@@ -3023,7 +3023,7 @@ function render(){
          got ONE glyph and ONE brightness, which is where the big soft
          rounded rectangles came from. */
       const cosW=hitSide===0?(rx<0?-rx:rx):(ry<0?-ry:ry);
-      const tf=clamp(Math.pow(2,Math.round(Math.log2(fqBase*Math.max(0.25,cosW)/Math.max(0.5,dist)))),8,256);
+      const tf=clamp(Math.pow(2,Math.round(Math.log2(0.25*fqBase*Math.max(0.25,cosW)/Math.max(0.5,dist)))),2,256);
       /* haze is constant down a wall column — one distance per ray */
       const hz=(1-fog)*HAZE_K, keep=1-hz;
       const hzR=HAZE[0]*hz, hzG=HAZE[1]*hz, hzB=HAZE[2]*hz;
@@ -3041,8 +3041,23 @@ function render(){
          the guaranteed row and the spandrel goes intermittent instead. */
       const cpp=Math.max(0.5,L1*CH*cosW/(CW*WINU));
       const rpp=L1/WINV;
-      const mulU=cpp>=2.5?1/cpp:0;
-      const spanV=Math.max(0,Math.min(Math.max(0.42,1.15/rpp),1-1.02/rpp));
+      /* mulU and spanV are the mullion and spandrel THICKNESS as a fraction
+         of the module, and both were derived from L1 - so they rescaled on
+         every single frame as dist changed. gu/gv are world-anchored, but the
+         boundary they are compared against was not, so every cell sitting
+         near a pane edge flipped between frame and glass continuously as you
+         walked. With panes only a few cells wide that is a large share of the
+         facade, and it is the biggest remaining source of "blurry when I
+         move" above the horizon.
+         Quantising cpp/rpp to octaves keeps the whole distance behaviour -
+         the spandrel is still guaranteed at least ~1.15 rows, the mullion
+         still vanishes when a pane is under 2.5 columns - but the thresholds
+         now hold constant over a whole octave of approach instead of drifting
+         every frame. Same trick the grain already uses. */
+      const cppQ=Math.pow(2,Math.round(Math.log2(Math.max(0.5,cpp))));
+      const rppQ=Math.pow(2,Math.round(Math.log2(Math.max(0.25,rpp))));
+      const mulU=cppQ>=2.5?1/cppQ:0;
+      const spanV=Math.max(0,Math.min(Math.max(0.42,1.15/rppQ),1-1.02/rppQ));
       const invL1=1/L1;
       /* Material backing for this face: the building's hue, dark, fading
          with distance. wc===0 surfaces (bar shell, plant, blank masonry)
@@ -3778,7 +3793,7 @@ function render(){
       /* Grain frequency tracks distance so one hash cell stays about one
          screen cell — a fixed world frequency makes the near rows collapse
          into long identical runs. */
-      const fq=onRoof?fqBase/rowDist:fqT[y];
+      const fq=onRoof?0.25*fqBase/rowDist:fqT[y];
       /* screen-scale hash survives ONLY as sub-step dither: it feathers
          which side of a ramp boundary a cell lands on, never the band */
       const tex=hash2((fx*fq)|0,(fy*fq)|0);
@@ -3938,7 +3953,7 @@ function render(){
          If lamp pools show visible contour ARCS where the old noise dissolved
          them, widen (tex-0.5)*0.7 to *1.1 - still under half the old 2.4 -
          before reverting. */
-      let gch=onRoof?FRAMP[clamp(((le/(le+0.30))*10+bump+tex*2.4-1.5+0.8)|0,0,9)]
+      let gch=onRoof?FRAMP[clamp(((le/(le+0.30))*10+bump+tex*1.1-0.55+0.8)|0,0,9)]
                     :SRAMP[clamp(((le/(le+0.10))*10+bump+(tex-0.5)*0.7-0.25)|0,0,9)];
       /* ~1.5% of road tiles carry a grate mark in the tile centre */
       if(!onRoof&&rowDist<14&&(T.flag[ti]&ROAD)&&hash2(tx*131,ty*57)>0.985){
