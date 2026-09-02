@@ -254,8 +254,10 @@ const G={
 const RAMP=[G.SP,C_('.'),G.DOT,C_(':'),C_('-'),C_('='),C_('+'),C_('*'),C_('#'),C_('%'),C_('@'),G.FULL];
 /* Ground ramp: dots into shade blocks. The symbol ramp above reads as typed
    characters on a page; this reads as a surface getting brighter. */
-const FRAMP=[G.SP,G.SP,C_('.'),G.DOT,C_(':'),C_('-'),G.S1,G.S1,G.S2,G.S3,G.FULL];
-const WRAMP=[G.SP,G.S1,G.S1,G.S2,G.S2,G.S3,G.S3,G.FULL];
+const FRAMP=[G.SP,G.SP,C_('.'),G.DOT,C_(':'),C_(';'),C_('-'),C_('='),C_('+'),C_('#'),C_('%')];
+/* Characters, not shade blocks: at a 12px cell a block is a flat square and
+   a wall of them is a mosaic; ':' '=' '#' '%' carry detail INSIDE the cell. */
+const WRAMP=[G.SP,C_(':'),C_('-'),C_('='),C_('+'),C_('#'),C_('%'),C_('@')];
 
 let CW=9,CH=19,FS=16,BASE=15,AS=1,TSY=1,FONT="16px monospace";
 
@@ -1132,9 +1134,12 @@ function planCross(e){
    hold: legacy flag, kept false on cars; the lamp code reads brake||hold. */
 function mkCar(x,y,dx,dy,road){
   const spd=rf(4.5,9);
-  const e={kind:'car',x:x,y:y,dx:dx,dy:dy,spd:spd,v:spd,len:ri(2,3),h:0.75,zoff:0,
+  /* 1.3-1.7 units = 4-5 m. At ri(2,3) a car was 6-9 m and, broadside at 9u,
+     filled 40% of the frame as a slab. h .62 = a low car, not a van. */
+  const e={kind:'car',x:x,y:y,dx:dx,dy:dy,spd:spd,v:spd,len:rf(1.3,1.7),h:0.62,zoff:0,
     road:road,jn:null,inJ:false,turn:0,brake:0,hold:false,stuck:0,solid:true,rad:0.6,
-    ch:G.S3,col:hsl(pick([20,38,200,326])+ri(-10,10),.34,.62)};
+    /* dark paint - the lights do the talking; pastel bodies read as slabs */
+    ch:C_('='),col:hsl(pick([20,38,200,326])+ri(-10,10),.55,.26)};
   planCross(e);
   return e;
   /* No headlight/taillight lights here. They were baked into LM at tile
@@ -2232,7 +2237,10 @@ const WINU=3, WINV=1;          /* window panes per tile across / storeys per wor
    facade read as scattered text, not architecture — the eye tries to read
    them. Blocks at varying density read as lit glass at varying brightness,
    which is what a window actually is. */
-const WINCH=[G.FULL,G.FULL,G.S3,G.S3,G.S2,G.S2,G.S1,G.UP,G.DN,G.LF,G.RT,G.SP,G.SP,G.FULL];
+const WINCH=[C_('8'),C_('#'),C_('H'),C_('%'),C_('B'),C_('&'),C_('='),C_('0'),C_('@'),C_('M'),C_('W'),C_(':'),C_('+'),C_('8')];
+/* one window character per BUILDING, so a tower reads as a grid of the same
+   digit the way the reference's do, not a random keyboard */
+const WCH=[C_('8'),C_('0'),C_('H'),C_('#'),C_('B'),C_('%'),C_('&'),C_('@')];
 /* Shop interiors. One palette per shop TYPE, fixed for the whole city; the
    only per-shop decision is which of the four types a face gets. Colour
    never varies per shop or per tile - that would be the hue lottery.
@@ -2923,14 +2931,9 @@ function render(){
                and a single colour turned it into a flat slab of teal. That
                is what those huge rectangles were. */
             const wg=hash3((wallU*tf)|0,(v*tf)|0,cu*7+cv);
-            if(dist>7){
-              /* a pane out here is <=2 cells wide: one solid bright glyph
-                 per cell, per-PANE brightness only — grain inside a
-                 sub-cell pane just punches holes in the window */
-              code=G.FULL;
-            }else{
-              code=G.FULL;
-            }
+            /* A lit window is a bright CHARACTER, the same one across the
+               whole building - a solid block was a flat cyan rectangle. */
+            code=WCH[T.wc[ti]&7];
             /* Up close a single pane covers a big patch of screen and reads
                as a quilt square. Subdivide with fine mullions so the glass
                keeps a window grid at any distance. */
@@ -2985,7 +2988,7 @@ function render(){
               const dg=hash3((bayU*tf)|0,(v*tf)|0,bay+9);
               const wg=(0.30+0.70*Math.max(0,1-v*0.8))*(0.66+dg*0.5);
               r=255*wg;g=196*wg;b=126*wg;                  /* open doorway */
-              code=v<0.22?G.FULL:(dg<0.45?G.S3:(dg<0.8?G.S2:G.S1));
+              code=v<0.22?C_('#'):(dg<0.45?C_('%'):(dg<0.8?C_('=')+0:C_(':')));
             }else{
               /* Glazing with grain at SCREEN resolution, in glyph AND
                  level. Colour was constant per bay, so one bay up close
@@ -2997,7 +3000,7 @@ function render(){
               const gk=(0.16+shopH*0.30)*(0.45+sg2*0.70)*fog;
               const wcol=winCol(T.wc[ti],shopH);
               r=wcol[0]*gk+8;g=wcol[1]*gk+8;b=wcol[2]*gk+10;
-              code=G.S2;
+              code=C_('=');
               if(shNear>0){
                 /* ---- the room behind the glass ----
                    Back wall with two shelves of stock, a counter across the
@@ -3392,7 +3395,7 @@ function drawBeams(px,py,dx,dy,plX,plY,projRows,horizon){
       if(tt<1.0) continue;                    /* the beam is on you: nothing to draw */
       const sc=half/tt, isc=1/sc;             /* columns per tX unit at this depth */
       const cc=half+(tXc+a*tXf)*sc;
-      let hw=(0.32+0.26*(a-a0))*kCol/tt;      /* 0.64u wide at the bumper, 2.5u at the end */
+      let hw=(0.20+0.15*(a-a0))*kCol/tt;      /* 0.4u wide at the bumper, ~1.5u at the end */
       let c0,c1,k=0;
       if(along){
         const cA=half+(tXc+a0*tXf)*sc, cB=half+(tXc+a1*tXf)*sc;
@@ -3400,7 +3403,7 @@ function drawBeams(px,py,dx,dy,plX,plY,projRows,horizon){
       }else{
         if(hw>hwCap) hw=hwCap;
         const fall=flat?0.75:1-(a-a0)*iSpan;
-        k=fall*fall*0.62*fog;
+        k=fall*fall*0.36*fog;
         if(k<0.05) continue;
         c0=Math.max(0,Math.ceil(cc-hw)); c1=Math.min(cols-1,Math.floor(cc+hw));
       }
@@ -3433,7 +3436,8 @@ function lampCell(xf,y,c0,c1,tY,r,g,b){
   let yc=rows;
   { const bb=c*ZK, n=zN[c]; for(let i=0;i<n;i++){ if(zD[bb+i]<tY) yc=zY[bb+i]; else break; } }
   if(y>=yc) return;
-  put(G.FULL,xs[c],ys[y],r,g,b);
+  /* a pool is a soft wash on the asphalt, not a row of white LEDs */
+  put(C_('+'),xs[c],ys[y],r*0.55,g*0.55,b*0.55);
 }
 const sprites=[];
 const BEACON=[255,60,60];
@@ -3497,7 +3501,7 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
       /* A figure standing in a sign's light pool used to blow out to full
          white. People are the darkest thing on the street — cap the light
          so a person never outshines a lit window. */
-      const lmx=Math.max(lr,lg,lb), gcap=figure?0.65:1.10;
+      const lmx=Math.max(lr,lg,lb), gcap=figure?0.46:1.10;
       if(lmx>gcap){const ks=gcap/lmx;lr*=ks;lg*=ks;lb*=ks;}
       /* A car body is dark, never absent: its own lamps, dash and the wet
          road under it keep the shell readable where the baked map is black.
@@ -3513,7 +3517,7 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
     /* People fade much sooner and further than props: a pedestrian filling
        the frame reads as a glitch, not a person. */
     const ov=hh*L1/rows;
-    const ovCap=figure?1.8:3.5, ovOn=figure?0.40:0.95, ovFloor=figure?0.08:0.25;
+    const ovCap=figure?1.6:3.5, ovOn=figure?0.22:0.95, ovFloor=figure?0.06:0.25;
     if(ov>ovCap) continue;
     const nearFade=ov<=ovOn?1:Math.max(ovFloor,1-(ov-ovOn)*(figure?1.05:0.52));
     const kr=e.col[0]*lr*fog*pulse*nearFade,kg=e.col[1]*lg*fog*pulse*nearFade,kb=e.col[2]*lb*fog*pulse*nearFade;
@@ -3602,11 +3606,13 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
              read as a flat blob at middle distance. Now the head catches the
              light, the torso falls off toward its edges, and the legs sit in
              shadow - shape you can read at three cells tall. */
-          if(v<0.18)      { if(au>0.46) continue; code=G.S3; sk=1.28-au*0.30; }
-          else if(v<0.30) { if(au>0.62) continue; code=G.S3; sk=1.08; }
-          else if(v<0.58) { if(au>0.98) continue; code=G.S3; sk=0.94-au*0.20; }
-          else if(v<0.66) { if(au>0.66) continue; code=G.S2; sk=0.70; }
-          else            { if(au>0.62||au<0.16) continue; code=G.S3; sk=0.56; }
+          /* letters, not blocks: a block-person up close was a translucent
+             grey slab; '8' head, '#' torso, '|' legs reads as a figure */
+          if(v<0.18)      { if(au>0.46) continue; code=C_('8'); sk=1.10-au*0.30; }
+          else if(v<0.30) { if(au>0.62) continue; code=C_('#'); sk=0.95; }
+          else if(v<0.58) { if(au>0.98) continue; code=C_('#'); sk=0.82-au*0.20; }
+          else if(v<0.66) { if(au>0.66) continue; code=C_('='); sk=0.62; }
+          else            { if(au>0.62||au<0.16) continue; code=C_('|'); sk=0.50; }
           /* one side toward the street light — a rim that survives any size */
           if(u>0.28) sk*=1.20;
         }else if(shaped){
@@ -3648,22 +3654,22 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
             if(eHW>1e-3&&du*cESgn<eHW){
               /* end face (grille or boot): the darker plane, cabin ~75% of it */
               const ab=Math.min(0.45,Math.abs(du/cRU)); /* eHW>0 here so cRU!=0 */
-              if(v<0.30){ if(ab>0.34) continue; code=v<0.10?G.S3:G.S2; sk=v<0.10?1.15:0.50; }
-              else if(v<0.42){ code=G.S3; sk=0.86; }   /* roofline / belt: >2 alpha quanta above the body */
-              else if(v<0.82){ code=G.S3; sk=0.70; }
-              else { code=G.S2; sk=0.42; }              /* bumper / underside */
+              if(v<0.30){ if(ab>0.34) continue; code=v<0.10?C_('='):C_('#'); sk=v<0.10?1.15:0.50; }
+              else if(v<0.42){ code=C_('='); sk=0.86; }   /* roofline / belt: >2 alpha quanta above the body */
+              else if(v<0.82){ code=C_('#'); sk=0.70; }
+              else { code=C_('='); sk=0.42; }              /* bumper / underside */
             }else{
               /* flank: cabin set toward the rear, bonnet and boot lower than
                  the roof, wheel masses dark at the bottom, roofline bright */
               const aL=Math.abs(cFU)>1e-3?(uc-cRU*cSide*0.45)/(cFU*cL):0;  /* -0.5 tail .. +0.5 nose */
               const inCab=aL>-0.40&&aL<0.22;
-              if(v<0.30){ if(!inCab) continue; code=v<0.10?G.S3:G.S2; sk=v<0.10?1.25:0.52; }
-              else if(v<0.42){ code=G.S3; sk=inCab?0.52:1.0; }
-              else if(v<0.82){ code=G.S3; sk=1.0; }
-              else { const wh=Math.abs(Math.abs(aL)-0.31)<0.10; code=wh?G.FULL:G.S2; sk=wh?0.28:0.60; }
+              if(v<0.30){ if(!inCab) continue; code=v<0.10?C_('='):C_('H'); sk=v<0.10?1.25:0.52; }
+              else if(v<0.42){ code=C_('='); sk=inCab?0.52:1.0; }
+              else if(v<0.82){ code=C_('#'); sk=1.0; }
+              else { const wh=Math.abs(Math.abs(aL)-0.31)<0.10; code=wh?C_('o'):C_('='); sk=wh?0.28:0.60; }
             }
           }else{                   /* cat/drone/shard: small, slab is fine */
-            code=(v<0.30)?G.S3:G.S2;
+            code=(v<0.30)?C_('o'):C_('=');
           }
         }else{
           code=(v<0.30)?G.S3:G.S2;
