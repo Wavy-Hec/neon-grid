@@ -2318,7 +2318,7 @@ function updateTOD(){
    finer - which is why the coarsening experiment above failed and this
    does not: the mullion is one screen column by construction, never a
    world band that goes sub-cell. */
-const WINU=3, WINV=1;          /* window panes per tile across / storeys per world unit up */
+const WINU=5, WINV=1.5;        /* window panes per tile across / storeys per world unit up */
 /* Lit windows use block and shade glyphs, not letters. Alphanumerics in a
    facade read as scattered text, not architecture — the eye tries to read
    them. Blocks at varying density read as lit glass at varying brightness,
@@ -2384,7 +2384,7 @@ let eyeH=0;   /* camera height used to skip tiles the ray passes over */
    (near-black 55-65%%, dim 20-28%%, mid 8-12%%, bright 3-5%% with <1.5%% hot).
    Measured live: 1.00/0.30 gave bright 13%%; 0.85/0.34 lands NB 66 / MID 12 /
    BRT 4.8 / hot 0.3 - the dark-city profile where neon actually reads. */
-let EXPOSURE=0.85, TONE_KNEE=0.34;
+let EXPOSURE=1.15, TONE_KNEE=0.30;
 /* Swept live against a 3-vantage luminance census, not guessed. The merged
    plan's own numbers (road gain 1.55, glass 0.50/spandrel 1.30/mullion 1.60)
    measured nb 21 / dim 42 / mid 30 / bright 5.9 with the GROUND at mean 80
@@ -2396,8 +2396,8 @@ let EXPOSURE=0.85, TONE_KNEE=0.34;
    24, mullion 36, corner 72, lit pane 156 - five rungs, each at least one
    step of the 12-step backing quantiser apart, so every one of them is a
    visible edge rather than arithmetic nobody can see. */
-let ROADG=0.30, ROADCAP=120, WALLF=0.0, PANEG=0.90;
-let GLASSK=0.36, SPANK=0.95, MULLK=1.16, CORNK=2.70;
+let ROADG=0.22, ROADCAP=104, WALLF=0.0, PANEG=0.62;
+let GLASSK=1.05, SPANK=0.30, MULLK=0.22, CORNK=1.30;
 let curKey=-1,curSY=0,curA=-1;
 /* Hue comes from the normalised colour (which picks the atlas) and
    brightness from alpha, so the tone curve below only touches alpha —
@@ -3194,14 +3194,14 @@ function render(){
              whole face, and most segments must be DARK. */
           const along=hitSide===0?hitY:hitX, across=hitSide===0?hitX:hitY;
           const cuG=along*WINU+cu;
-          const floorLit=hash3(across*31+(cuG>>3)*53,cv,hitSide*7+17)<0.42;
+          const floorLit=hash3(across*31+(cuG>>3)*53,cv,hitSide*7+17)<0.58;
           /* Lit coin per pane: 0.55 while panes have mullions, rising to
              0.80 as a pane shrinks under 2.5 cells (no mullions) so a lit
              segment reads as one bright bar, not confetti. A ramp, not a
              switch: a hard step at 2.5 cells popped a quarter of a face's
              panes at once, and on an oblique wall that seam swept along
              the face as you walked. */
-          if(pane&&v>1.35&&T.wc[ti]!==0&&floorLit&&hash3(hitX*7+cu,hitY*7+cv,cv)<clamp(0.32*Math.min(1,cpp*1.1),0.07,0.34)){
+          if(pane&&v>1.35&&T.wc[ti]!==0&&floorLit&&hash3(hitX*7+cu,hitY*7+cv,cv)<clamp(0.54*Math.min(1,cpp*1.1),0.26,0.58)){
             /* Interior depth: a bright core falling off toward the frame,
                plus a lift toward the head of the pane. A pane filled with
                one flat colour reads as a sticker; this reads as a lit room
@@ -3739,7 +3739,7 @@ function render(){
          stays dim, it just stops being empty. Matches the FAR tiers at
          2595/2635, which already use knee 0.10. Roof half unchanged: it
          runs gain 1.0 and already lands on index ~5. */
-      let gch=FRAMP[clamp(((le/(le+(onRoof?0.30:0.10)))*10+bump+tex*0.42-0.21+(onRoof?0.8:1.5))|0,0,7)];
+      let gch=FRAMP[clamp(((le/(le+(onRoof?0.30:0.10)))*10+bump+tex*0.42-0.21+(onRoof?0.8:0.45))|0,0,7)];
       /* ~1.5% of road tiles carry a grate mark in the tile centre */
       if(!onRoof&&rowDist<14&&(T.flag[ti]&ROAD)&&hash2(tx*131,ty*57)>0.985){
         const fxg=fx-tx,fyg=fy-ty;
