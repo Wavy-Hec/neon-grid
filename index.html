@@ -456,6 +456,8 @@ function resize(){
   zD=new Float32Array(cols*ZK);zY=new Int16Array(cols*ZK);zN=new Uint8Array(cols);
   cellCode=new Uint16Array(cols*rows);cellR=new Uint16Array(cols*rows);cellG=new Uint16Array(cols*rows);cellB=new Uint16Array(cols*rows);
   bkR8=new Uint8Array(cols*rows);bkG8=new Uint8Array(cols*rows);bkB8=new Uint8Array(cols*rows);bkOn=new Uint8Array(cols*rows);
+  fgOn=new Uint8Array(cols*rows);fgF=new Float32Array(cols*rows);
+  fgR=new Uint8Array(cols*rows);fgG=new Uint8Array(cols*rows);fgB=new Uint8Array(cols*rows);
   rdT=new Float32Array(rows+2);fogT=new Float32Array(rows+2);lampT=new Float32Array(rows+2);
   rdRoofT=new Float32Array(rows+2);
   fqT=new Float32Array(rows+2);skyThr=new Float32Array(rows+2);
@@ -2414,6 +2416,15 @@ let curKey=-1,curSY=0,curA=-1;
    solid mass with text for detail instead of text floating on nothing. */
 let cellCode=new Uint16Array(1),cellR=new Uint16Array(1),cellG=new Uint16Array(1),cellB=new Uint16Array(1);
 let bkR8=new Uint8Array(1),bkG8=new Uint8Array(1),bkB8=new Uint8Array(1),bkOn=new Uint8Array(1);
+/* FRINGE: sub-cell coverage for a silhouette edge. fgOn marks the cell, fgF
+   is where the covered part starts as a fraction of cell height, and fgR/G/B
+   is its colour. Painted as its own rect after the backing runs, so it lands
+   on top of whatever is behind (sky, or a farther building) and under the
+   glyphs. One slot per cell, FIRST writer wins - the front-to-back march
+   means the first writer is the nearest surface. */
+let fgOn=new Uint8Array(1),fgF=new Float32Array(1),
+    fgR=new Uint8Array(1),fgG=new Uint8Array(1),fgB=new Uint8Array(1);
+let fgN=0;
 let bkr=0,bkg=0,bkb=0,bkon=0,optBack=true;
 /* backing colour for the cells about to be put(); quantised to 16 levels so
    neighbouring columns at slightly different fog merge into one run */
@@ -2429,6 +2440,18 @@ function setBack(r,g,b){
   bkb=Math.round((b>255?255:b)/q)*q; bkon=1;
 }
 function noBack(){ bkon=0; }
+/* Cover the lower (1-f) of cell (cx,cy) with r,g,b. f is 0 at the cell's top
+   edge and 1 at its bottom, so f is exactly the sub-cell position of the
+   silhouette. Nothing is drawn for f>=0.985 - that is a sliver thinner than
+   a device pixel at this cell size, and drawing it only makes the edge
+   flicker as it crosses the boundary. */
+function edgeLow(px,cy,f,r,g,b){
+  if(cy<0||cy>=rows||f>=0.985) return;
+  const cx=(px/ACW)|0; if(cx<0||cx>=cols) return;
+  const i=cy*cols+cx; if(fgOn[i]) return;
+  fgOn[i]=1; fgF[i]=f<0?0:f; fgN++;
+  fgR[i]=r>255?255:r|0; fgG[i]=g>255?255:g|0; fgB[i]=b>255?255:b|0;
+}
 function put(code,px,py,r,g,b){
   const cx=(px/ACW)|0, cy=(py/ACH)|0;
   if(cx<0||cy<0||cx>=cols||cy>=rows) return;
@@ -2440,7 +2463,7 @@ function put(code,px,py,r,g,b){
   cellCode[i]=code; cellR[i]=r>1023?1023:r; cellG[i]=g>1023?1023:g; cellB[i]=b>1023?1023:b;
 }
 function flush(){
-  window.__cellBuf=cellCode; window.__cellDim=[cols,rows]; window.__bkOn=bkOn;   /* debug hook */
+  window.__cellBuf=cellCode; window.__cellDim=[cols,rows]; window.__bkOn=bkOn; window.__fgN=fgN;   /* debug hook */
   if(optBack){
     ctx.globalAlpha=1; curA=1;
     for(let y=0;y<rows;y++){
@@ -2453,6 +2476,18 @@ function flush(){
         ctx.fillStyle='rgb('+r+','+g+','+b+')';
         ctx.fillRect(xs[x],ys[y],(x1-x)*ACW,ACH);
         x=x1;
+      }
+    }
+    /* the sub-cell edges, one rect each - only ever a couple per column */
+    if(fgN){
+      for(let y=0;y<rows;y++){
+        const row=y*cols, yt=ys[y];
+        for(let x=0;x<cols;x++){
+          const i=row+x; if(!fgOn[i]) continue;
+          const off=fgF[i]*ACH;
+          ctx.fillStyle='rgb('+fgR[i]+','+fgG[i]+','+fgB[i]+')';
+          ctx.fillRect(xs[x],yt+off,ACW,ACH-off);
+        }
       }
     }
   }
@@ -2484,7 +2519,7 @@ function flush(){
 let ACW=1,ACH=1;
 
 function render(){
-  cellCode.fill(0); bkOn.fill(0); noBack();
+  cellCode.fill(0); bkOn.fill(0); if(fgN){fgOn.fill(0);fgN=0;} noBack();
   const px=P.x,py=P.y;
   const dx=Math.cos(P.a),dy=Math.sin(P.a);
   const plX=-dy*PLANE,plY=dx*PLANE;
@@ -2777,13 +2812,22 @@ function render(){
              fading toward the haze; continuous with the detailed-tier fill */
           ctx.globalAlpha=1; curA=-1;
           ctx.fillStyle='rgb('+((b0[0]*0.05*fade+HAZE[0]*0.30)|0)+','+((b0[1]*0.05*fade+HAZE[1]*0.30)|0)+','+((b0[2]*0.05*fade+HAZE[2]*0.30)|0)+')';
-          ctx.fillRect(xpx,ys[y0f],ACW,ys[y1f+1]-ys[y0f]);
+          /* This one fills straight to the canvas, so it never needed to be
+             cell-aligned at all: exact float bounds make every distant
+             roofline a clean diagonal instead of a 14px staircase. */
+          const fpy0=Math.max(0,top*ACH), fpy1=Math.min(yCeil*ACH,bottom*ACH);
+          if(fpy1>fpy0) ctx.fillRect(xpx,fpy0,ACW,fpy1-fpy0);
+          /* The lip that reads AS the roofline. It used to be a G.DN glyph
+             in cell y0f, so the whole distant skyline stepped in whole
+             cells; as a rect it lands wherever the roof actually is. */
+          if(top*ACH>=-ACH&&fpy1>fpy0){
+            const rk=0.42+0.58*fade;
+            const lipH=Math.min(ACH*0.5,fpy1-fpy0);
+            ctx.fillStyle='rgb('+((30*rk+3)|0)+','+((33*rk+3)|0)+','+((42*rk+4)|0)+')';
+            ctx.fillRect(xpx,fpy0,ACW,lipH);
+          }
           for(let y=y0f;y<=y1f;y++){
-            if(y===y0f){                       /* the same edge, far away */
-              const rk=0.42+0.58*fade;
-              put(G.DN,xpx,ys[y],30*rk+3,33*rk+3,42*rk+4);
-              continue;
-            }
+            if(y===y0f) continue;              /* the lip is drawn above, sub-cell */
             const wv=hash3(hitX*13+ucell*7,hitY*7,y);
             if(wcb&&wv<0.17){
               /* G.DOT is 4% ink: at alpha 0.5 that is a 2% mark - the far
@@ -2849,6 +2893,8 @@ function render(){
       }
       const y0=Math.max(0,Math.ceil(topT)),y1=Math.min(yCeil-1,Math.floor(bottom));
       if(y1<y0){ yCeil=Math.min(yCeil,y0); continue; }
+      /* Where the roofline actually falls inside the cell above y0. */
+      const topFrac=topT-(y0-1);
       /* A real corner, not a tile seam. wallU is a fractional world coord, so
          testing it alone fires once per world unit and rules nine vertical
          lines through a ten-tile building — every facade read as one ruled
@@ -3305,6 +3351,7 @@ function render(){
             code=mark;
           }
         }
+        if(y===y0&&y0>0&&topFrac>0&&topFrac<0.985) edgeLow(xpx,y0-1,topFrac,bkr,bkg,bkb);
         if(litPane) setBack(r*0.72+6,g*0.72+6,b*0.72+8);
         else{
           /* The backing IS the facade. On an unlit wall every cell but the
@@ -3386,7 +3433,17 @@ function render(){
        reached -1, which read rdT[-1]=undefined, produced NaN coords that
        slipped every bounds guard, and cached a junk atlas under key NaN */
     const fStart=Math.max(0,Math.floor(horizon)+1,Math.min(rows,Math.floor(nearBase)+1));
-    for(let y=fStart;y<rows;y++){
+    /* The wall fills its bottom cell whole, so the base of every building
+       was pushed down to the next cell line - the staircase where the wall
+       meets the road. Run the floor one row earlier and let it paint only
+       the part of that cell BELOW the true base; the wall's own backing
+       already occupies the part above it. */
+    let baseRow=-1,baseFrac=0;
+    if(nearBase>-1e8){
+      const br=Math.floor(nearBase);
+      if(br>=Math.floor(horizon)+1&&br>=0&&br<rows&&br<fStart){ baseRow=br; baseFrac=nearBase-br; }
+    }
+    for(let y=(baseRow>=0?baseRow:fStart);y<rows;y++){
       /* Two planes. Standing on a roof, the ray meets the roof surface first
          (a shorter drop, so a nearer intersection); past the parapet it
          misses and carries on down to the street. Casting both and taking
@@ -3543,6 +3600,7 @@ function render(){
         if(fxg>0.28&&fxg<0.72&&fyg>0.3&&fyg<0.7) gch=G.DH;
       }
       if(onRoof) setBack(15*fog+4,16*fog+4,21*fog+6); else setBack(11*fog+4,12*fog+4,22*fog+6);
+      if(y===baseRow){ edgeLow(xpx,y,baseFrac,bkr,bkg,bkb); continue; }
       /* Road paint. Worn white, so it lifts the cell well clear of the
          asphalt without becoming a light source. Everything is keyed on the
          cell's own position inside the tile, so the paint is a stripe with
