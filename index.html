@@ -630,10 +630,23 @@ function genCity(seed){
   }
 
   const vr=[],hr=[];
+  /* Road width is the camera's only bound on apparent building height. The
+     block border is a 1-tile WALK ring (carveBlock), so the facade-to-facade
+     span is w+2: at the old modal w=2 that is 4 u = 12 m against a rf(9,19)
+     street wall - a 3.5:1 slot, tighter than Wall Street. Standing centred
+     you are 2 u off the wall, so the visible wall top is only
+     0.5+29*2/79.3651 = 1.23 u and the eye sits 40.6% up it: the player reads
+     as tall as the city. w>=4 puts you 3 u off (top 1.60 u, eye 31.3%) and
+     drops the near wall's `bottom` row from 48.8 to 42.2, which is 15 rows of
+     visible asphalt instead of 9. It also puts every road over the r.w>=3
+     gate at lines 654/658 and 1240/1252, so the centre dashes and the
+     sign-code road paint finally exist on the 44% of streets that had none.
+     Block interiors are unchanged: spans() makes the block width equal to the
+     spacing term alone, so those literals must NOT move. */
   let x=ri(6,10);
-  while(x<W-10){const w=chance(.20)?5:(chance(.45)?3:2);vr.push({p:x,w:w});x+=w+ri(10,21);}
+  while(x<W-10){const w=chance(.20)?7:(chance(.45)?5:4);vr.push({p:x,w:w});x+=w+ri(10,21);}
   let y=ri(5,9);
-  while(y<H-9){const w=chance(.18)?4:(chance(.45)?3:2);hr.push({p:y,w:w});y+=w+ri(8,18);}
+  while(y<H-9){const w=chance(.18)?6:(chance(.45)?5:4);hr.push({p:y,w:w});y+=w+ri(8,18);}
 
   /* wet asphalt: ONE albedo. put() quantises hue to 20% steps, so any
      per-tile channel jitter becomes a saturated random hue per tile —
@@ -1282,11 +1295,32 @@ function populate(vr,hr){
   /* street trees: sidewalk tiles that face a road, spaced out */
   for(let y=5;y<H-5;y++)for(let x=5;x<W-5;x++){
     if((T.flag[y*W+x]&WALK)===0) continue;
+    /* The kerb requirement STAYS: the pavement is one tile wide. carveBlock
+       rings the block with WALK (xx===x0||xx===x1||yy===y0||yy===y1) and
+       spans() guarantees ROAD immediately outside x0-1/x1+1/y0-1/y1+1, so
+       every pavement tile in the city faces a road. There is no row to plant
+       one back on, and distance is set by the road width: a tree centre sits
+       w/2+0.5 from the carriageway centre, so the widening above already
+       moves the modal pass from 1.5u to 2.5u, i.e. 111.11/d = 74 columns of
+       160 down to 44 (46% of the frame -> 28%).
+       What is controllable here is height and count. The frame shows
+       rows/projRows*d = 58/79.365*d = 0.731d world units of vertical extent,
+       of which 0.5+0.3654d sits above the ground, so a crown only clears the
+       top edge past d=(h-0.5)/0.3654: 8.21u at the old 3.5u (setH quantises
+       rf(2.2,3.6) to 2.25-3.5), which is why every tree inside the detailed
+       range was a green column running off the top of the screen. 1.5-2.5u
+       puts the crown on screen from 2.74-5.47u and still reads as a street
+       tree at 3-5x eye height.
+       Density halves with it. NOT %13: (x*7+y*13)%13 reduces to (7x)%13, y
+       cancels and the trees become vertical stripes. %11 keeps both
+       coefficients live -> 1/11 * .32 = 2.9% of kerb tiles (~1.4 per ring)
+       against the old 1/9 * .55 = 6.1% (~3.1), so passing one inside 1.5u is
+       the exception rather than every block. */
     if(!(flagAt(x+1,y)&ROAD||flagAt(x-1,y)&ROAD||flagAt(x,y+1)&ROAD||flagAt(x,y-1)&ROAD)) continue;
-    if(((x*7+y*13)%9)!==0||!chance(.55)) continue;
+    if(((x*7+y*13)%11)!==0||!chance(.32)) continue;
     if(!roomy(x,y)) continue;
     set(x,y,G.S2,[26,68,38],SOLID|TREE);
-    setH(x,y,x,y,rf(2.2,3.6));
+    setH(x,y,x,y,rf(1.6,2.4));
   }
   for(const [kind,n] of [['food',46],['vend',44],['term',30],['shrine',18],['fixer',16]])
     for(let i=0;i<n;i++){const s=findOpen((x,y)=>near(x,y)&&roomy(x,y));if(s)ents.push(mkProp(s.x,s.y,kind));}
@@ -1324,6 +1358,13 @@ function populate(vr,hr){
     const lx=Math.floor(e.rx), ly=Math.floor(e.ry);
     for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++) liftAt.add((ly+dy)*W+(lx+dx));
   }
+  /* Lifts were placed before the rooftop plant pass, and a plant tile that
+     lands on a lift's target raises that tile - dropping the player inside
+     geometry. Re-read every lift's roof height after the plant pass. */
+  const fixLifts=()=>{ for(const e of ents) if(e.kind==='lift'){
+    const i=Math.floor(e.ry)*W+Math.floor(e.rx);
+    if(T.flag[i]&SOLID) e.roofH=T.hgt[i]*0.25;
+  } };
   let plantN=0;
   for(let i=0;i<26000&&plantN<430;i++){
     const x=ri(3,W-4), y=ri(3,H-4), idx=y*W+x;
@@ -1425,6 +1466,8 @@ function populate(vr,hr){
     const dir=chance(.5)?1:-1;
     ents.push(mkBike(ri(6,W-6)+.5,bikeLane(r,dir,true),dir,0,r));
   }
+
+  fixLifts();
 
   /* Give each pedestrian a hangout — the nearest stand, shrine or fixer.
      Without one they diffuse evenly across the whole map. */
@@ -2924,7 +2967,13 @@ function render(){
          texture. Skyglow term only (lrB), haze x1.5 so distant silhouettes
          stay solid violet-grey against the stippled sky. Trees keep their
          ragged top and get no fill. */
-      if(!isTree){
+      /* Overwritten cell-for-cell by flush()'s backing pass, so it is dead
+         whenever optBack is on - the wall y loop has no continue/break, so
+         put() sets bkOn for every row y0..y1 including the G.SP cells. But
+         'g' turns the backing off (L1541) and then this fill is the only
+         building mass, and the only hz*1.5 that keeps distant silhouettes
+         off pure black. Skip, don't delete. */
+      if(!isTree&&!optBack){
         const fr0=(ar*lrB*0.36)*keep+hzR*1.5, fg0=(ag*lgB*0.36)*keep+hzG*1.5, fb0=(ab*lbB*0.36)*keep+hzB*1.5;
         ctx.globalAlpha=1; curA=-1;
         ctx.fillStyle='rgb('+(fr0|0)+','+(fg0|0)+','+(fb0|0)+')';
@@ -3256,7 +3305,35 @@ function render(){
             code=mark;
           }
         }
-        if(litPane) setBack(r*0.72+6,g*0.72+6,b*0.72+8); else setBack(bkWr,bkWg,bkWb);
+        if(litPane) setBack(r*0.72+6,g*0.72+6,b*0.72+8);
+        else{
+          /* The backing IS the facade. On an unlit wall every cell but the
+             spandrel rule emits G.SP (see the mark test above), so ~98% of a
+             tower's pixels are this one value - and bkWr/bkWg/bkWb depend
+             only on T.wc and dist, with no AMB, LM, lamp, sideDim or v term.
+             dist is constant down a column, so a face was flat from pavement
+             to roofline: measured 72 -> 72 on the blue channel from v=0.5 to
+             v=20 on a cyan tower at 6u. Carry the same lr/lg/lb the glyphs
+             get. 0.55+1.5*lr == 1.00 exactly at lr=0.30, which is lrB at 6u,
+             so an unlit wall keeps today's tone.
+             Low clamp: at 40u lrB is 0.046 and the raw factor would be 0.62,
+             darkening far faces that have no haze floor of their own (the
+             only hz*1.5 in the wall path is the fill above, now skipped).
+             High clamp: LM accumulates additively over overlapping lights and
+             lr reaches ~1.7 in a sign pool, where an unclamped 3.1 would pin
+             channels at 255 one at a time - a flat slab again, only white and
+             desaturated. 2.2 is the largest factor that keeps the brightest
+             backing (82 blue at 2u) under 255.
+             Holds only while NIGHT_ONLY is true: AMB is mutated in place at
+             L2278 and AMB_DAY would put lrB near 0.91, parking the factor at
+             the 2.2 cap city-wide. It degrades to today's flat look rather
+             than clipping hue, but retune the pair (0.55, 1.5) if day ever
+             switches on. */
+          const blR=0.55+1.5*lr, blG=0.55+1.5*lg, blB=0.55+1.5*lb;
+          setBack(bkWr*(blR<1?1:(blR>2.2?2.2:blR)),
+                  bkWg*(blG<1?1:(blG>2.2?2.2:blG)),
+                  bkWb*(blB<1?1:(blB>2.2?2.2:blB)));
+        }
         const fr=r*keep+hzR, fg=g*keep+hzG, fb=b*keep+hzB;
         /* stash the column so the canal can mirror it a few rows below */
         wcR[y]=fr; wcG[y]=fg; wcB[y]=fb; wcC[y]=code;
@@ -3440,7 +3517,26 @@ function render(){
       /* The wet road is BACKING plus the odd glint. Letting it reach '#'
          painted long solid bands across the carriageway; capped at '-' the
          reflections read as sheen on asphalt. */
-      let gch=FRAMP[clamp(((le/(le+(onRoof?0.30:0.30)))*10+bump+tex*0.42-0.21+(onRoof?0.8:0.2))|0,0,7)];
+      /* FRAMP[0..4] are all G.SP, so a street cell draws a mark only at
+         index>=5. Knee 0.30 + bias 0.2 needed le>=0.254 to get there, but
+         the road's ENTIRE achievable range falls short: unlit asphalt
+         le=0.008, lamp-lit dry 0.071, damp 0.067, and even the brightest
+         cell in the city - a full puddle on the centre line between a lamp
+         pair, LM~1.13 - only reaches le=0.225, which maps to index 4.3.
+         Every road cell resolved to SPACE, so the T.sign lane paint below
+         (which bypasses this ramp) was the only mark on the street: black
+         ground with faint dashes.
+         Knee 0.10 / bias 1.5 maps the real range onto 2..8 at the current
+         gain 0.66: unlit 0.008->2.1 blank, lit dry 0.071->5.4 '.', damp
+         0.067->5.3 '.', puddle 0.126->6.9 ':', peak puddle 0.225->8.2
+         clamped to '-'. The clamp bites from le>=0.133, i.e. full puddles
+         under a lamp only, and neighbours at 0.10-0.13 still grade through
+         ':' so the cap is a highlight, not a slab. Colours are untouched,
+         so put()'s alpha and hue quantisation are unchanged - the road
+         stays dim, it just stops being empty. Matches the FAR tiers at
+         2595/2635, which already use knee 0.10. Roof half unchanged: it
+         runs gain 1.0 and already lands on index ~5. */
+      let gch=FRAMP[clamp(((le/(le+(onRoof?0.30:0.10)))*10+bump+tex*0.42-0.21+(onRoof?0.8:1.5))|0,0,7)];
       /* ~1.5% of road tiles carry a grate mark in the tile centre */
       if(!onRoof&&rowDist<14&&(T.flag[ti]&ROAD)&&hash2(tx*131,ty*57)>0.985){
         const fxg=fx-tx,fyg=fy-ty;
