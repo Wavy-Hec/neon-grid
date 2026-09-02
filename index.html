@@ -254,10 +254,12 @@ const G={
 const RAMP=[G.SP,C_('.'),G.DOT,C_(':'),C_('-'),C_('='),C_('+'),C_('*'),C_('#'),C_('%'),C_('@'),G.FULL];
 /* Ground ramp: dots into shade blocks. The symbol ramp above reads as typed
    characters on a page; this reads as a surface getting brighter. */
-const FRAMP=[G.SP,G.SP,C_('.'),G.DOT,C_(':'),C_(';'),C_('|'),C_('!'),C_('+'),C_('#'),C_('%')];
+const FRAMP=[G.SP,G.SP,G.SP,G.SP,G.SP,C_('.'),C_(':'),C_('-'),C_('='),C_('#'),C_('%')];
 /* Characters, not shade blocks: at a 12px cell a block is a flat square and
    a wall of them is a mosaic; ':' '=' '#' '%' carry detail INSIDE the cell. */
-const WRAMP=[G.SP,C_(':'),C_('-'),C_('='),C_('+'),C_('#'),C_('%'),C_('@')];
+/* Bottom half BLANK: a dim wall cell shows the material backing and nothing
+   else. Marks appear only where the surface is genuinely catching light. */
+const WRAMP=[G.SP,G.SP,G.SP,C_('.'),C_(':'),C_('-'),C_('='),C_('#')];
 
 let CW=9,CH=19,FS=16,BASE=15,AS=1,TSY=1,FONT="16px monospace";
 
@@ -2333,6 +2335,7 @@ function put(code,px,py,r,g,b){
   cellCode[i]=code; cellR[i]=r>1023?1023:r; cellG[i]=g>1023?1023:g; cellB[i]=b>1023?1023:b;
 }
 function flush(){
+  window.__cellBuf=cellCode; window.__cellDim=[cols,rows];   /* debug hook */
   if(optBack){
     ctx.globalAlpha=1; curA=1;
     for(let y=0;y<rows;y++){
@@ -2622,7 +2625,7 @@ function render(){
                instead of every cell taking the same one. */
             const fq2=fqk*p2;
             const dth=hash2((fx2*fq2)|0,(fy2*fq2)|0);
-            put(FRAMP[clamp(((le2b/(le2b+0.075))*10+bump+dth*0.75-0.37)|0,1,10)],xpx,ys[y],r2,g2,b2);
+            put(FRAMP[clamp(((le2b/(le2b+0.30))*10+bump+dth*0.75-0.37)|0,0,10)],xpx,ys[y],r2,g2,b2);
           }
           if(zb===FAR){ zb=dist; nearBase=yNear; wy1=ry1; }
           /* One event per roof PLATEAU, keyed on the tile EXIT distance:
@@ -2685,11 +2688,13 @@ function render(){
                  tier's 40u and 45u windows, no bright ring) and 0.14 at
                  the far end (~13%, still 6x the wall silhouette). */
               const wcl=winCol(wcb,wv*6), wk=0.14+0.12*fade;
-              put(G.S2,xpx,ys[y],wcl[0]*wk,wcl[1]*wk,wcl[2]*wk);
+              put(C_(':'),xpx,ys[y],wcl[0]*wk*2.4,wcl[1]*wk*2.4,wcl[2]*wk*2.4);
             }else{
               /* one flat mark: a far tower is a silhouette, not static. The
                  fk brightness grain was under one alpha quantum anyway. */
-              put(G.S1,xpx,ys[y],br,bg,bb);
+              /* the mass is carried by its own dark colour; a mark in every
+                 cell out here is the static that made the skyline mush */
+              if(wv>0.86) put(C_('.'),xpx,ys[y],br,bg,bb);
             }
           }
           if(zb===FAR) zb=dist;
@@ -2832,9 +2837,12 @@ function render(){
       /* Material backing for this face: the building's hue, dark, fading
          with distance. wc===0 surfaces (bar shell, plant, blank masonry)
          take their albedo instead. */
+      let bkWr,bkWg,bkWb;
       { const bkf=fog*(0.55+0.45*fog);
-        if(T.wc[ti]){ const bc=winCol(T.wc[ti],0.5); setBack(bc[0]*0.30*bkf+6,bc[1]*0.30*bkf+6,bc[2]*0.32*bkf+8); }
-        else setBack(ar*0.62*bkf+5,ag*0.62*bkf+5,ab*0.66*bkf+6); }
+        if(T.wc[ti]){ const bc=winCol(T.wc[ti],0.5); bkWr=bc[0]*0.30*bkf+6;bkWg=bc[1]*0.30*bkf+6;bkWb=bc[2]*0.32*bkf+8; }
+        else{ const bkm=(T.flag[ti]&TREE)?0.30:0.62;
+              bkWr=ar*bkm*bkf+5;bkWg=ag*bkm*bkf+5;bkWb=ab*bkm*bkf+6; }
+        setBack(bkWr,bkWg,bkWb); }
       /* Shop-interior parallax, once per wall hit: the ray continued 0.6u
          past the glass plane. shU is the along-face shift, shV the height
          shift per unit of (v - eye). Grazing rays clamp so the room does
@@ -2861,6 +2869,7 @@ function render(){
         ctx.fillRect(xpx,ys[y0],ACW,ys[y1+1]-ys[y0]);
       }
       for(let y=y0;y<=y1;y++){
+        let litPane=0;
         const v=(bottom-y)*invL1;           /* height up the face, world units */
         const sF=v<1.6?1:1/(1+(v-1.6)*0.75);
         const lr=lrB+lrS*sF, lg=lgB+lgS*sF, lb=lbB+lbS*sF;
@@ -2920,11 +2929,12 @@ function render(){
           if(v<0.95&&(wallU>0.34&&wallU<0.66)){
             const tk2=0.5+lf*0.5;                       /* trunk */
             r=46*tk2*lr;g=34*tk2*lg;b=26*tk2*lb;
-            code=G.S2;
+            code=C_('|');
           }else{
             const lit=(0.20+crown*0.85)*(0.30+clump*1.15)*(0.55+lf*0.90);
             r=ar*lr*lit;g=ag*lg*lit;b=ab*lb*lit;
-            code=lf<0.24?G.SP:(lf<0.52?G.DOT:(lf<0.78?G.S1:G.S2));
+            /* leaves are clumps against the dark backing, not a full field */
+            code=lf<0.62?G.SP:(lf<0.82?C_('.'):(lf<0.94?C_('o'):C_('*')));
           }
         }else if(isPlant){
           /* Rooftop machinery: ribbed sheet metal with a lid line. Ribs are
@@ -2967,7 +2977,7 @@ function render(){
              switch: a hard step at 2.5 cells popped a quarter of a face's
              panes at once, and on an oblique wall that seam swept along
              the face as you walked. */
-          if(pane&&v>1.35&&T.wc[ti]!==0&&floorLit&&hash3(hitX*7+cu,hitY*7+cv,cv)<clamp(0.55+(2.5-cpp)*0.25,0.55,0.80)){
+          if(pane&&v>1.35&&T.wc[ti]!==0&&floorLit&&hash3(hitX*7+cu,hitY*7+cv,cv)<clamp(0.32*Math.min(1,cpp*1.1),0.07,0.34)){
             /* Interior depth: a bright core falling off toward the frame,
                plus a lift toward the head of the pane. A pane filled with
                one flat colour reads as a sticker; this reads as a lit room
@@ -2993,9 +3003,12 @@ function render(){
                and a single colour turned it into a flat slab of teal. That
                is what those huge rectangles were. */
             const wg=hash3((wallU*tf)|0,(v*tf)|0,cu*7+cv);
-            /* A lit window is a bright CHARACTER, the same one across the
-               whole building - a solid block was a flat cyan rectangle. */
-            code=WCH[T.wc[ti]&7];
+            /* The GLOW is the backing; the character is a glazing bar on top,
+               one cell in three or so. Painting the building's window glyph
+               in every cell of a multi-cell pane is what produced solid
+               ############ runs across a whole storey. */
+            litPane=1;
+            code=(wg<0.34)?WCH[T.wc[ti]&7]:G.SP;
             /* Up close a single pane covers a big patch of screen and reads
                as a quilt square. Subdivide with fine mullions so the glass
                keeps a window grid at any distance. */
@@ -3040,17 +3053,17 @@ function render(){
                 const st=(((bayU*9)|0)&1)?0.68:1;          /* fabric stripes */
                 const lit=(0.35+0.45*(1.35-v)/0.33)*st*fog;
                 r=aw[0]*lit;g=aw[1]*lit;b=aw[2]*lit;
-                code=st<1?G.S3:G.DN;                       /* awning lip */
+                code=st<1?C_('='):C_('-');                 /* awning lip */
               }else{
                 const wt2=hash3((wallU*tf)|0,(v*tf)|0,5), k2=0.80+wt2*0.26;
-                r=ar*lr*k2;g=ag*lg*k2;b=ab*lb*k2;          /* bare wall bay */
+                r=ar*lr*k2*0.75;g=ag*lg*k2*0.75;b=ab*lb*k2*0.75;  /* bare wall bay */
                 code=G.S2;
               }
             }else if(bayU>0.34&&bayU<0.66&&shopH<0.42){
               const dg=hash3((bayU*tf)|0,(v*tf)|0,bay+9);
               const wg=(0.30+0.70*Math.max(0,1-v*0.8))*(0.66+dg*0.5);
               r=255*wg;g=196*wg;b=126*wg;                  /* open doorway */
-              code=v<0.22?C_('#'):(dg<0.45?C_('%'):(dg<0.8?C_('=')+0:C_(':')));
+              code=v<0.22?C_('='):(dg<0.55?G.SP:(dg<0.82?C_('.'):C_(':')));
             }else{
               /* Glazing with grain at SCREEN resolution, in glyph AND
                  level. Colour was constant per bay, so one bay up close
@@ -3062,7 +3075,8 @@ function render(){
               const gk=(0.16+shopH*0.30)*(0.45+sg2*0.70)*fog;
               const wcol=winCol(T.wc[ti],shopH);
               r=wcol[0]*gk+8;g=wcol[1]*gk+8;b=wcol[2]*gk+10;
-              code=C_('=');
+              /* glass is the backing; a mark only where it catches light */
+              code=sg2<0.62?G.SP:(sg2<0.86?C_('.'):C_('='));
               if(shNear>0){
                 /* ---- the room behind the glass ----
                    Back wall with two shelves of stock, a counter across the
@@ -3087,9 +3101,9 @@ function render(){
                 const gr=hash3((uA*tf)|0,(vB*tf)|0,sty+40);
                 let pc,ik,ic;
                 if(vC<0.42){
-                  if(vC>0.42-rowT){ pc=pal[1]; ik=1.05; ic=G.UP; }           /* counter lip */
-                  else{ pc=pal[4]; ik=0.50+gr*0.30; ic=gr<0.55?G.S2:G.S3; }  /* counter face */
-                }else if(vB<0.02){ pc=pal[4]; ik=0.25+gr*0.15; ic=G.S1; }    /* floor */
+                  if(vC>0.42-rowT){ pc=pal[1]; ik=1.05; ic=C_('-'); }         /* counter lip */
+                  else{ pc=pal[4]; ik=0.50+gr*0.30; ic=gr<0.72?G.SP:C_('.'); }  /* counter face */
+                }else if(vB<0.02){ pc=pal[4]; ik=0.25+gr*0.15; ic=G.SP; }    /* floor */
                 else{
                   const figC=along+0.30+hash3(hitX,hitY,hitSide+23)*0.40;
                   const slot=(uA*6)|0, su=uA*6-slot;
@@ -3100,19 +3114,19 @@ function render(){
                      glyphs (a dot glyph leaves the cell black around it and
                      read as a hole in the wall) */
                   if(vB<0.98&&Math.abs(uA-figC)<(hd?0.04:0.07)){
-                    pc=hd?SHOP_SKIN:pal[5]; ik=(hd?0.95:0.75)*(0.85+gr*0.3); ic=hd?G.FULL:G.S3;
-                  }else if(hB>0&&dv<rowT){ pc=pal[1]; ik=0.95; ic=G.UP; }      /* shelf edge */
+                    pc=hd?SHOP_SKIN:pal[5]; ik=(hd?0.95:0.75)*(0.85+gr*0.3); ic=hd?C_('8'):C_('#');
+                  }else if(hB>0&&dv<rowT){ pc=pal[1]; ik=0.95; ic=C_('-'); }    /* shelf edge */
                   else if(hB>0&&dv<rowT+SHOP_OH[sty]&&Math.abs(su-0.5)<SHOP_OW[sty]
                           &&hash3(slot,hB*10,sty*5+hitSide)<0.62){            /* stock */
                     pc=((slot&1)&&sty!==2)?pal[3]:pal[2];
                     ik=(sty===1?0.75+0.45*hash3(slot,hB*10,(time*3)|0):1.0)*(0.85+gr*0.3);
                     ic=SHOP_OG[sty];
                   }else if((sty===0||sty===3)&&vB>0.92&&vB<1.0&&(slot&1)&&Math.abs(su-0.5)<0.15){
-                    pc=pal[3]; ik=1.2; ic=G.FULL;                             /* lanterns / neon */
+                    pc=pal[3]; ik=1.2; ic=C_('o');                             /* lanterns / neon */
                   }else if(sty===2&&vB>0.86&&vB<1.0&&Math.abs(uA-along-0.5)<((vB>0.89&&vB<0.97)?0.11:0.05)){
-                    pc=pal[3]; ik=1.3; ic=G.FULL;                             /* green cross */
+                    pc=pal[3]; ik=1.3; ic=C_('+');                             /* green cross */
                   }else{
-                    pc=pal[0]; ik=(vB>1.08?0.22:0.48)+gr*0.34; ic=gr<0.66?G.S1:G.S2;   /* wall / ceiling */
+                    pc=pal[0]; ik=(vB>1.08?0.22:0.48)+gr*0.34; ic=gr<0.80?G.SP:C_('.');   /* wall / ceiling */
                   }
                 }
                 /* interior plus a 22% ghost of the old glazing as reflection */
@@ -3148,7 +3162,8 @@ function render(){
               const bu=wallU*6+((course&1)?0.5:0);
               const fu=bu-Math.floor(bu), fv=bv-course;
               const mortar=(fu<0.09||fv<0.13);
-              kk=mortar ? 0.30 : 0.85; mark=mortar ? G.S1 : G.S2;
+              /* the brick face is the BACKING; only the mortar is drawn */
+              kk=mortar ? 0.55 : 0.85; mark=mortar ? C_('-') : G.SP;
             }else{
               /* Two materials, two FIXED marks. Concrete (spandrel and
                  mullion alike) is one flat S2 value; unlit glass is a darker
@@ -3160,7 +3175,11 @@ function render(){
                  mx<7 cutoff and panes pop in and out per tower and face.
                  (The old iv<0.16 storey line is gone: the spandrel band of
                  the screen-cell module IS the storey line now.) */
-              kk=pane?0.50:0.75; mark=pane?G.S1:G.S2;
+              /* Glass and concrete are the BACKING now. Drawing a solid
+                 block in every cell is what made a tower a slab of texture;
+                 the only mark left on an unlit facade is the thin spandrel
+                 rule under each storey, which is the line the eye needs. */
+              kk=pane?0.50:0.75; mark=(!pane&&iv<spanV+0.34/Math.max(1,rpp))?C_('-'):G.SP;
             }
             r=ar*lr*kk;g=ag*lg*kk;b=ab*lb*kk;
             const le=(r+g+b)/765;
@@ -3171,6 +3190,7 @@ function render(){
             code=mark;
           }
         }
+        if(litPane) setBack(r*0.72+6,g*0.72+6,b*0.72+8); else setBack(bkWr,bkWg,bkWb);
         const fr=r*keep+hzR, fg=g*keep+hzG, fb=b*keep+hzB;
         /* stash the column so the canal can mirror it a few rows below */
         wcR[y]=fr; wcG[y]=fg; wcB[y]=fb; wcC[y]=code;
@@ -3348,7 +3368,13 @@ function render(){
          -> S1, puddle -> S2 (clamped at 8, never S3/FULL). Alpha is
          untouched, so it stays DIM, it just stops being holes. Unlit
          asphalt (mx<7) still draws nothing, as before. */
-      let gch=FRAMP[clamp(((le/(le+(onRoof?0.30:0.06)))*10+bump+tex*0.42-0.21+(onRoof?2.2:2.5))|0,0,8)];
+      /* knee 0.06 saturated every road cell to the top of the ramp - that
+         was the '+' carpet. 0.20 keeps dark asphalt blank and spends the
+         marks on kerbs, lane lines and the neon pooling in the wet. */
+      /* The wet road is BACKING plus the odd glint. Letting it reach '#'
+         painted long solid bands across the carriageway; capped at '-' the
+         reflections read as sheen on asphalt. */
+      let gch=FRAMP[clamp(((le/(le+(onRoof?0.30:0.30)))*10+bump+tex*0.42-0.21+(onRoof?0.8:0.2))|0,0,7)];
       /* ~1.5% of road tiles carry a grate mark in the tile centre */
       if(!onRoof&&rowDist<14&&(T.flag[ti]&ROAD)&&hash2(tx*131,ty*57)>0.985){
         const fxg=fx-tx,fyg=fy-ty;
@@ -3755,8 +3781,15 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
           const gz=hash3((u+1)*3.5,v*9,gseed);
           if(gz>0.80) code=code===G.FULL?G.S3:(code===G.S3?G.S2:G.S1);
         }
-        if(ul){ const uc=ul===2?BEACON:e.ucol; put(code,xp,ys[y],uc[0]*sk*fog,uc[1]*sk*fog,uc[2]*sk*fog); }
-        else put(code,xp,ys[y],kr*sk,kg*sk,kb*sk);
+        /* A sprite is a SHAPE: its colour fills the cell as backing and the
+           character is detail on top. Painting the mask glyph into every cell
+           is what turned a nearby car into a 22x5 block of '#'. */
+        let pr,pg,pb;
+        if(ul){ const uc=ul===2?BEACON:e.ucol; pr=uc[0]*sk*fog;pg=uc[1]*sk*fog;pb=uc[2]*sk*fog; }
+        else { pr=kr*sk;pg=kg*sk;pb=kb*sk; }
+        setBack(pr*0.62+4,pg*0.62+4,pb*0.62+4);
+        put(((x*7+y*13+gseed)%5)?G.SP:code,xp,ys[y],pr,pg,pb);
+        noBack();
       }
     }
     /* Lamps: hot cells on the box outline, after the body so they sit on
