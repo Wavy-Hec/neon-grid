@@ -26,13 +26,6 @@
   canvas#c{position:absolute;inset:0;width:100%;height:100%;display:block;background:#01030a;cursor:crosshair;
     image-rendering:pixelated;image-rendering:crisp-edges;-ms-interpolation-mode:nearest-neighbor}
 
-  #crt{
-    position:absolute;inset:0;pointer-events:none;z-index:5;
-    background:
-      repeating-linear-gradient(to bottom,rgba(0,0,0,.07) 0 1px,rgba(0,0,0,0) 1px 3px),
-      radial-gradient(130% 105% at 50% 50%,rgba(0,0,0,0) 52%,rgba(0,0,0,.36) 100%);
-  }
-
   .panel{
     position:absolute;z-index:8;pointer-events:none;
     background:var(--panel);border:1px solid var(--edge);
@@ -114,19 +107,6 @@
 <body>
 <div id="stage">
   <canvas id="c"></canvas>
-  <div id="crt"></div>
-
-  <div id="hud" class="panel">
-    <div><span class="k">LOC</span> <span class="dist" id="hDist">—</span></div>
-    <div><span class="k">TIME</span> <b id="hTime">00:00</b> <span class="k">RAIN</span> <b id="hRain">—</b></div>
-    <div><span class="k">CR</span> <b id="hCred">0</b></div>
-  </div>
-
-  <div id="minwrap" class="panel">
-    <canvas id="mini"></canvas>
-    <div id="minlbl">SAT-LINK</div>
-  </div>
-
   <div id="log" class="panel"></div>
   <div id="prompt" class="panel"></div>
 
@@ -254,12 +234,12 @@ const G={
 const RAMP=[G.SP,C_('.'),G.DOT,C_(':'),C_('-'),C_('='),C_('+'),C_('*'),C_('#'),C_('%'),C_('@'),G.FULL];
 /* Ground ramp: dots into shade blocks. The symbol ramp above reads as typed
    characters on a page; this reads as a surface getting brighter. */
-const FRAMP=[G.SP,G.SP,G.SP,G.SP,G.SP,C_('.'),C_(':'),C_('-'),C_('='),C_('#'),C_('%')];
+const FRAMP=[G.SP,C_('.'),C_('.'),C_(':'),C_(':'),C_('-'),C_('='),C_('+'),C_('#'),C_('%'),C_('@')];
 /* Characters, not shade blocks: at a 12px cell a block is a flat square and
    a wall of them is a mosaic; ':' '=' '#' '%' carry detail INSIDE the cell. */
 /* Bottom half BLANK: a dim wall cell shows the material backing and nothing
    else. Marks appear only where the surface is genuinely catching light. */
-const WRAMP=[G.SP,G.SP,G.SP,C_('.'),C_(':'),C_('-'),C_('='),C_('#')];
+const WRAMP=[G.SP,C_('.'),C_(':'),C_('-'),C_('='),C_('+'),C_('#'),C_('%')];
 
 let CW=9,CH=19,FS=16,BASE=15,AS=1,TSY=1,FONT="16px monospace";
 
@@ -1529,7 +1509,10 @@ function hiddenEnt(e){return emptyCity&&HIDE_KINDS[e.kind]===1&&e.prompt!=='LIST
 const reduceMotion=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const $=id=>document.getElementById(id);
-const elHud={d:$('hDist'),t:$('hTime'),r:$('hRain'),c:$('hCred')};
+/* HUD removed from the page; these stay as detached nodes so every writer
+   downstream keeps working without a guard. */
+const mkOff=()=>document.createElement('span');
+const elHud={d:mkOff(),t:mkOff(),r:mkOff(),c:mkOff()};
 const elLog=$('log'),elPrompt=$('prompt'),elTalk=$('talk'),
       elWho=$('tWho'),elTxt=$('tTxt'),elFps=$('fps'),elHelp=$('help');
 
@@ -2413,8 +2396,8 @@ let EXPOSURE=0.85, TONE_KNEE=0.34;
    24, mullion 36, corner 72, lit pane 156 - five rungs, each at least one
    step of the 12-step backing quantiser apart, so every one of them is a
    visible edge rather than arithmetic nobody can see. */
-let ROADG=0.30, ROADCAP=120, WALLF=0.55, PANEG=0.90;
-let GLASSK=0.20, SPANK=0.52, MULLK=0.64, CORNK=1.50;
+let ROADG=0.30, ROADCAP=120, WALLF=0.0, PANEG=0.90;
+let GLASSK=0.36, SPANK=0.95, MULLK=1.16, CORNK=2.70;
 let curKey=-1,curSY=0,curA=-1;
 /* Hue comes from the normalised colour (which picks the atlas) and
    brightness from alpha, so the tone curve below only touches alpha —
@@ -2853,24 +2836,39 @@ function render(){
             ctx.fillStyle='rgb('+((30*rk+3)|0)+','+((33*rk+3)|0)+','+((42*rk+4)|0)+')';
             ctx.fillRect(xpx,fpy0,ACW,lipH);
           }
+          /* Beyond VIEW a tower was 69% bare silhouette fill with a 17%
+             scatter of dots - which is why the city "looks horrible when you
+             get far": it stops being a building and becomes a slab.
+             Two changes. (1) The hash is keyed on the STOREY and the column
+             within the tile, not the screen row, so every cell of one storey
+             shares a value: that is a window GRID with real rows, and being
+             world-anchored it cannot crawl as the camera moves - keying on y
+             was re-rolling the whole facade every time the projection shifted
+             a row. (2) Every cell now carries a mark, so a far tower is the
+             same field of characters a near one is. The old comment here
+             warned that a mark in every cell was "static that made the
+             skyline mush" - it was, while the marks were RANDOM per row.
+             Structured by storey, density reads as architecture. */
+          const invL1f=dist/projRows;
           for(let y=y0f;y<=y1f;y++){
             if(y===y0f) continue;              /* the lip is drawn above, sub-cell */
-            const wv=hash3(hitX*13+ucell*7,hitY*7,y);
-            if(wcb&&wv<0.17){
+            const storey=((bottom-y)*invL1f)|0;
+            const wv=hash3(hitX*13+ucell*7,hitY*7,storey);
+            if(wcb&&wv<0.42){
               /* G.DOT is 4% ink: at alpha 0.5 that is a 2% mark - the far
                  windows were arithmetically there and optically absent.
                  S2 is 12x the ink, so wk drops with it: 0.26 at the seam
                  (mx 65, a 0.39, ~20% effective - between the detailed
                  tier's 40u and 45u windows, no bright ring) and 0.14 at
                  the far end (~13%, still 6x the wall silhouette). */
-              const wcl=winCol(wcb,wv*6), wk=0.14+0.12*fade;
+              const wcl=winCol(wcb,wv*6), wk=0.17+0.15*fade;
               put(C_(':'),xpx,ys[y],wcl[0]*wk*2.4,wcl[1]*wk*2.4,wcl[2]*wk*2.4);
             }else{
-              /* one flat mark: a far tower is a silhouette, not static. The
-                 fk brightness grain was under one alpha quantum anyway. */
-              /* the mass is carried by its own dark colour; a mark in every
-                 cell out here is the static that made the skyline mush */
-              if(wv>0.86) put(C_('.'),xpx,ys[y],br,bg,bb);
+              /* the unlit part of the far facade - still a character in
+                 every cell, one step per storey band so it reads as masonry
+                 rather than noise */
+              put(wv<0.62?C_('.'):(wv<0.84?C_(':'):C_('-')),
+                  xpx,ys[y],br*1.5,bg*1.5,bb*1.5);
             }
           }
           if(zb===FAR) zb=dist;
@@ -2990,7 +2988,8 @@ function render(){
          grain cell spanned ~4 screen cells on a large window — every pane
          got ONE glyph and ONE brightness, which is where the big soft
          rounded rectangles came from. */
-      const tf=clamp(Math.pow(2,Math.round(Math.log2(fqBase/Math.max(0.5,dist)))),8,256);
+      const cosW=hitSide===0?(rx<0?-rx:rx):(ry<0?-ry:ry);
+      const tf=clamp(Math.pow(2,Math.round(Math.log2(fqBase*Math.max(0.25,cosW)/Math.max(0.5,dist)))),8,256);
       /* haze is constant down a wall column — one distance per ray */
       const hz=(1-fog)*HAZE_K, keep=1-hz;
       const hzR=HAZE[0]*hz, hzG=HAZE[1]*hz, hzB=HAZE[2]*hz;
@@ -3006,7 +3005,6 @@ function render(){
          never so much that the glass drops under one row - past ~25u a
          storey is <2.3 rows, and the window row is the signal, so it keeps
          the guaranteed row and the spandrel goes intermittent instead. */
-      const cosW=hitSide===0?(rx<0?-rx:rx):(ry<0?-ry:ry);
       const cpp=Math.max(0.5,L1*CH*cosW/(CW*WINU));
       const rpp=L1/WINV;
       const mulU=cpp>=2.5?1/cpp:0;
@@ -3405,7 +3403,16 @@ function render(){
                  block in every cell is what made a tower a slab of texture;
                  the only mark left on an unlit facade is the thin spandrel
                  rule under each storey, which is the line the eye needs. */
-              kk=pane?0.50:0.75; mark=(!pane&&iv<spanV+0.34/Math.max(1,rpp))?C_('-'):G.SP;
+              kk=pane?0.50:0.75;
+              /* DENSE, like the reference. This emitted G.SP in every cell
+                 but the thin spandrel rule, so ~98% of a facade was bare
+                 backing - the colour wash. Now the glass carries the
+                 building's own window mark varied per cell and the frame
+                 carries a glazing bar, so a tower is a FIELD OF CHARACTERS
+                 in its own hue, which is what the reference actually is. */
+              const dg=hash3(hitX*31+((wallU*tf)|0),hitY*17+((v*tf)|0),11);
+              mark=pane?WCH[(T.wc[ti]+((dg*4)|0))&7]
+                       :((iv<spanV+0.34/Math.max(1,rpp))?C_('-'):(dg<0.5?C_(':'):C_('.')));
               /* The module was computed and then spent entirely on kk, which
                  tints a glyph that is G.SP everywhere but the thin spandrel
                  rule. put() writes the backing for EVERY cell including the
@@ -3834,40 +3841,16 @@ function render(){
 
   flush();                                   /* backing runs, then every glyph */
   noBack();
-  /* ---- rain ---- */
-  if(optRain){
-    const pw=0.35+rainPow*0.9;
-    for(const d of rain){
-      const cx=Math.floor(d.x),cy=Math.floor(d.y);
-      if(cx<0||cy<0||cx>=cols||cy>=rows) continue;
-      const a=d.a*pw*150*(0.42+d.z*0.90);
-      put(d.c,xs[cx],ys[cy],a*0.72,a*0.86,a*1.0);
-      /* a near drop covers more than one cell in a frame - give it a tail */
-      if(d.z>0.72&&cy>0) put(d.c,xs[cx],ys[cy-1],a*0.34,a*0.41,a*0.48);
-    }
-  }
+  /* Rain drawing removed. flush() is called ABOVE this point and nothing
+     flushes again, so put() here only ever wrote into a cell buffer that was
+     already painted - the rain has never produced a single pixel. The wet
+     road still reads rainPow; only the (invisible) drops are gone. */
   ctx.globalAlpha=1;
 
-  if(optBloom&&canFilter){
-    ctx.save();
-    /* The 5x downscale IS the low-pass. ctx.filter='blur' allocates a whole
-       extra Skia image-filter layer and pass on top of it for very little
-       visible gain — smoothing the upscale instead is far cheaper. */
-    bctx.globalCompositeOperation='source-over';
-    bctx.drawImage(cv,0,0,bcv.width,bcv.height);
-    /* v -> v*v: additive 0.28x of the AVERAGE lifted every near-black cell
-       next to anything lit — that was the low-contrast mud. Squaring
-       crushes the dim DC and keeps the hot cores, so neon pops MORE while
-       dark streets stay dark. */
-    bctx.globalCompositeOperation='multiply';
-    bctx.drawImage(bcv,0,0);
-    bctx.globalCompositeOperation='source-over';
-    ctx.imageSmoothingEnabled=true;          /* restored by ctx.restore() */
-    ctx.globalCompositeOperation='lighter';
-    ctx.globalAlpha=0.14;
-    ctx.drawImage(bcv,0,0,cv.width,cv.height);
-    ctx.restore();
-  }
+  /* BLOOM DELETED. It downscaled the frame 4.5x, squared it, and composited
+     it back bilinear-upscaled at 0.14 over a renderer that is
+     imageSmoothingEnabled=false and integer-aligned everywhere else - i.e. it
+     was the one deliberate source of blur in a pixel-exact pipeline. */
 }
 
 /* Headlight pools. LM is baked once per city, so a moving lamp can never
@@ -4258,7 +4241,7 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
 /* ══════════════════════════════════════════════════════════════════
    11. minimap
    ══════════════════════════════════════════════════════════════════ */
-const mini=document.getElementById('mini');
+const mini=document.getElementById('mini')||document.createElement('canvas');
 const mctx=mini.getContext('2d');
 const miniBase=document.createElement('canvas');
 function buildMinimap(){
@@ -4347,7 +4330,7 @@ function frame(ts){
        the player is standing and looking. Check that first. */
     miniTimer=.30;
     const mv=Math.abs(P.x-miniLX)+Math.abs(P.y-miniLY)+Math.abs(P.a-miniLA)*7;
-    if(mv>0.05){ miniLX=P.x; miniLY=P.y; miniLA=P.a; drawMini(); }
+    if(mv>0.05){ miniLX=P.x; miniLY=P.y; miniLA=P.a; }   /* minimap removed */
   }
   emaMs=emaMs*0.92+(performance.now()-t0)*0.08;
   if(degrade<1){
