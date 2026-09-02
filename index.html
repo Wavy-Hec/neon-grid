@@ -241,6 +241,13 @@ const FRAMP=[G.SP,C_('.'),C_('.'),C_(':'),C_(':'),C_('-'),C_('='),C_('+'),C_('#'
    monotonically, indices 0..9 to match the ground clamp. Used only by the
    street half of the ground ramp; roofs keep FRAMP. */
 const SRAMP=[G.SP,C_('.'),C_(','),C_(':'),C_(';'),C_('-'),C_('~'),C_('='),C_('*'),C_('#')];
+/* Shade blocks are filled rectangles - a 25/50/75/100% dither at 2x2 device
+   px - so a run of them is a flat slab, not text. This maps each to a
+   character of comparable ink so a surface keeps its value but regains
+   structure. Anything that is already a character passes straight through. */
+function blkCh(c){
+  return c===G.FULL?C_('#'):c===G.S3?C_('%'):c===G.S2?C_('='):c===G.S1?C_(':'):c;
+}
 /* Characters, not shade blocks: at a 12px cell a block is a flat square and
    a wall of them is a mosaic; ':' '=' '#' '%' carry detail INSIDE the cell. */
 /* Bottom half BLANK: a dim wall cell shows the material backing and nothing
@@ -2352,7 +2359,7 @@ const SHOP_PAL=[
 const SHOP_SKIN=[190,150,120];
 const SHOP_OH=[0.10,0.16,0.09,0.15];             /* stock height on a shelf, world units */
 const SHOP_OW=[0.30,0.42,0.28,0.25];             /* stock half-width, fraction of a slot */
-const SHOP_OG=[G.BIG,G.FULL,G.FULL,G.RT];        /* bowls, screens, boxes, bottles */
+const SHOP_OG=[G.BIG,C_('#'),C_('%'),C_('|')];   /* bowls, screens, boxes, bottles */
 
 /* Saturated, per-building window colour. A small cached palette keeps the
    glyph-atlas key count bounded while still giving each tower its own hue. */
@@ -3154,10 +3161,15 @@ function render(){
              If a near sign now reads as broken rather than lit, lift ONLY the
              0.17 near constant in sFill toward 0.30 - scaling its fog term
              instead blows out the skyline. */
+          /* The 14u cutoff kept solid tiles for far signs on the argument
+             that a distant sign should be a point of light. Measured over 300
+             frames, filled rectangles still peaked at 15.6% of all inked
+             cells, and a sign at 15-25u is exactly the size where a slab of
+             them reads as a smear. Characters at every distance: the value
+             ramp is unchanged, so a far sign is the same brightness it was. */
           code=onLetter?T.ch[ti]
-              :(sEdge?(dist>14?G.S1:C_('-'))
-                     :(dist>14?(sGrain>0.66?G.FULL:(sGrain>0.30?G.S3:G.S2))
-                              :(sGrain>0.66?C_('%'):(sGrain>0.30?C_('#'):C_('=')))));
+              :(sEdge?C_('-')
+                     :(sGrain>0.66?C_('%'):(sGrain>0.30?C_('#'):C_('='))));
         }else if(y===y0&&top>=0&&!isTree){
           /* Parapet. Without a cap the top row takes whatever the ramp
              happened to land on, and two overlapping towers merge into
@@ -3380,7 +3392,7 @@ function render(){
               }else{
                 const wt2=hash3((wallU*tf)|0,(v*tf)|0,5), k2=0.80+wt2*0.26;
                 r=ar*lr*k2*0.75;g=ag*lg*k2*0.75;b=ab*lb*k2*0.75;  /* bare wall bay */
-                code=G.S2;
+                code=wt2<0.34?C_(':'):(wt2<0.72?C_('-'):C_('='));
               }
             }else if(bayU>0.34&&bayU<0.66&&shopH<0.42){
               const dg=hash3((bayU*tf)|0,(v*tf)|0,bay+9);
@@ -3670,7 +3682,7 @@ function render(){
       /* st is uniform in [0,thr], so this splits painted cells into the S1
          share solved above and dots for the rest - same colour, same alpha,
          only a different glyph, so no canvas state change. */
-      put(st<skyBlk[y]?G.S1:skyCh[y],xpx,ys[y],skyR[y],skyG[y],skyB[y]);
+      put(st<skyBlk[y]?C_(','):skyCh[y],xpx,ys[y],skyR[y],skyG[y],skyB[y]);
     }
 
     /* ---- floor ---- */
@@ -4169,7 +4181,7 @@ function drawBeams(px,py,dx,dy,plX,plY,projRows,horizon){
           const l=(c-cc)*ihw; kk=k*(1-0.55*l*l);  /* per-cell lateral falloff */
         }
         if(kk<0.05) continue;
-        put(kk>0.36?G.S2:(kk>0.18?G.S1:G.DOT),xs[c],ys[y],255*kk,226*kk,172*kk);
+        put(kk>0.36?C_('='):(kk>0.18?C_(':'):C_('.')),xs[c],ys[y],255*kk,226*kk,172*kk);
       }
     }
   }
@@ -4443,8 +4455,14 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
         let pr,pg,pb;
         if(ul){ const uc=ul===2?BEACON:e.ucol; pr=uc[0]*sk*fog;pg=uc[1]*sk*fog;pb=uc[2]*sk*fog; }
         else { pr=kr*sk;pg=kg*sk;pb=kb*sk; }
-        setBack(pr*0.62+4,pg*0.62+4,pb*0.62+4);
-        put(((x*7+y*13+gseed)%5)?G.SP:code,xp,ys[y],pr,pg,pb);
+        /* The body backing was ONE value over every cell of the sprite, and
+           the glyph fired on 1 cell in 5 - so a near pedestrian or car was a
+           flat blob with a few specks on it. Vary the backing per cell and
+           ink 3 cells in 5 with a CHARACTER (blkCh), which is punctuation-
+           weight, not the slab the old comment was right to fear. */
+        const sv=hash3(x*13+gseed,y*7+3,11), sm=0.50+sv*0.24;
+        setBack(pr*sm+4,pg*sm+4,pb*sm+4);
+        put(((x*7+y*13+gseed)%5)<3?blkCh(code):G.SP,xp,ys[y],pr,pg,pb);
         noBack();
       }
     }
