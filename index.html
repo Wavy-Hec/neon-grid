@@ -2402,6 +2402,19 @@ let eyeH=0;   /* camera height used to skip tiles the ray passes over */
    Measured live: 1.00/0.30 gave bright 13%%; 0.85/0.34 lands NB 66 / MID 12 /
    BRT 4.8 / hot 0.3 - the dark-city profile where neon actually reads. */
 let EXPOSURE=0.85, TONE_KNEE=0.34;
+/* Swept live against a 3-vantage luminance census, not guessed. The merged
+   plan's own numbers (road gain 1.55, glass 0.50/spandrel 1.30/mullion 1.60)
+   measured nb 21 / dim 42 / mid 30 / bright 5.9 with the GROUND at mean 80
+   and the walls at 68: it inverted the image - a pale street under pale
+   facades, which is the wash being removed. Scaling the whole wall module by
+   0.40 and the road gain to 0.30 measures nb 53 / dim 32 / mid 11 / bright
+   4.1, ground 43, walls 53 - the dark-city profile.
+   The module still reads: at a near facade the ladder is glass 12, spandrel
+   24, mullion 36, corner 72, lit pane 156 - five rungs, each at least one
+   step of the 12-step backing quantiser apart, so every one of them is a
+   visible edge rather than arithmetic nobody can see. */
+let ROADG=0.30, ROADCAP=120, WALLF=0.55, PANEG=0.90;
+let GLASSK=0.20, SPANK=0.52, MULLK=0.64, CORNK=1.50;
 let curKey=-1,curSY=0,curA=-1;
 /* Hue comes from the normalised colour (which picks the atlas) and
    brightness from alpha, so the tone curve below only touches alpha —
@@ -2416,6 +2429,12 @@ let curKey=-1,curSY=0,curA=-1;
    solid mass with text for detail instead of text floating on nothing. */
 let cellCode=new Uint16Array(1),cellR=new Uint16Array(1),cellG=new Uint16Array(1),cellB=new Uint16Array(1);
 let bkR8=new Uint8Array(1),bkG8=new Uint8Array(1),bkB8=new Uint8Array(1),bkOn=new Uint8Array(1);
+/* Backing colours are rounded to a step of 12, so at most 22^3 distinct
+   triples can ever exist. Putting the window module into the backing breaks
+   a facade row into a run per mullion instead of one run per face - roughly
+   700-1500 extra fillRects on a street view - and the dominant cost of each
+   is building the css string and re-parsing it. Cache them. */
+const bkStyle=new Map();
 /* FRINGE: sub-cell coverage for a silhouette edge. fgOn marks the cell, fgF
    is where the covered part starts as a fraction of cell height, and fgR/G/B
    is its colour. Painted as its own rect after the backing runs, so it lands
@@ -2464,6 +2483,11 @@ function put(code,px,py,r,g,b){
 }
 function flush(){
   window.__cellBuf=cellCode; window.__cellDim=[cols,rows]; window.__bkOn=bkOn; window.__fgN=fgN;   /* debug hook */
+  window.__tune=v=>{ if(v.ROADG!==undefined)ROADG=v.ROADG; if(v.ROADCAP!==undefined)ROADCAP=v.ROADCAP;
+                     if(v.WALLF!==undefined)WALLF=v.WALLF; if(v.PANEG!==undefined)PANEG=v.PANEG;
+                     if(v.GLASSK!==undefined)GLASSK=v.GLASSK; if(v.SPANK!==undefined)SPANK=v.SPANK;
+                     if(v.MULLK!==undefined)MULLK=v.MULLK; if(v.CORNK!==undefined)CORNK=v.CORNK;
+                     return {ROADG,ROADCAP,WALLF,PANEG,GLASSK,SPANK,MULLK,CORNK}; };
   if(optBack){
     ctx.globalAlpha=1; curA=1;
     for(let y=0;y<rows;y++){
@@ -2473,7 +2497,10 @@ function flush(){
         const r=bkR8[row+x],g=bkG8[row+x],b=bkB8[row+x];
         let x1=x+1;
         while(x1<cols&&bkOn[row+x1]&&bkR8[row+x1]===r&&bkG8[row+x1]===g&&bkB8[row+x1]===b) x1++;
-        ctx.fillStyle='rgb('+r+','+g+','+b+')';
+        const bkSK=(r<<16)|(g<<8)|b;
+        let bkSS=bkStyle.get(bkSK);
+        if(bkSS===undefined){ bkSS='rgb('+r+','+g+','+b+')'; bkStyle.set(bkSK,bkSS); }
+        ctx.fillStyle=bkSS;
         ctx.fillRect(xs[x],ys[y],(x1-x)*ACW,ACH);
         x=x1;
       }
@@ -2990,10 +3017,27 @@ function render(){
          take their albedo instead. */
       let bkWr,bkWg,bkWb;
       { const bkf=fog*(0.55+0.45*fog);
-        if(T.wc[ti]){ const bc=winCol(T.wc[ti],0.5); bkWr=bc[0]*0.30*bkf+6;bkWg=bc[1]*0.30*bkf+6;bkWb=bc[2]*0.32*bkf+8; }
+        if(T.wc[ti]){ const bc=winCol(T.wc[ti],0.5); bkWr=bc[0]*0.30*bkf;bkWg=bc[1]*0.30*bkf;bkWb=bc[2]*0.32*bkf; }
         else{ const bkm=(T.flag[ti]&TREE)?0.30:0.62;
-              bkWr=ar*bkm*bkf+5;bkWg=ag*bkm*bkf+5;bkWb=ab*bkm*bkf+6; }
-        setBack(bkWr,bkWg,bkWb); }
+              bkWr=ar*bkm*bkf;bkWg=ag*bkm*bkf;bkWb=ab*bkm*bkf; }
+        /* The haze floor moved OUT of bkW* and is added AFTER the light
+           multiply in the row loop, so bkW* is pure material and a face can
+           go properly dark without a distant one quantising to black.
+           6/6/7, not 4/4/6: setBack ROUNDS to a step of 12, so a +4 floor
+           rounds to ZERO - at 40u red and green land on 4.1 and 4.3 and the
+           far skyline dissolves into the (1,3,10) clear colour. 6 is the
+           smallest value that still rounds up to 12, and it changes no other
+           cell in the frame.
+           This slice-level backing is read by NOTHING but edgeLow, for the
+           sub-cell roofline fringe one row above y0. It has to carry the
+           same light the wall's TOP row carries or it rules a bright halo
+           along every roofline: lrB/lgB/lbB are exactly the v->top limit of
+           lr/lg/lb, and the 0.55 floor below is the same one the row loop
+           applies, so the fringe lands on the wall's own top-row value.
+           Three multiplies per SLICE, not per cell. */
+        setBack(bkWr*(lrB<0.55?0.55:lrB)+6,
+                bkWg*(lgB<0.55?0.55:lgB)+6,
+                bkWb*(lbB<0.55?0.55:lbB)+7); }
       /* Shop-interior parallax, once per wall hit: the ray continued 0.6u
          past the glass plane. shU is the along-face shift, shV the height
          shift per unit of (v - eye). Grazing rays clamp so the room does
@@ -3026,7 +3070,7 @@ function render(){
         ctx.fillRect(xpx,ys[y0],ACW,ys[y1+1]-ys[y0]);
       }
       for(let y=y0;y<=y1;y++){
-        let litPane=0;
+        let litPane=0,bkK=1;
         const v=(bottom-y)*invL1;           /* height up the face, world units */
         const sF=v<1.6?1:1/(1+(v-1.6)*0.75);
         const lr=lrB+lrS*sF, lg=lgB+lgS*sF, lb=lbB+lbS*sF;
@@ -3113,6 +3157,27 @@ function render(){
              rule, and hot enough (mx ~140 at 6u, ~80 at 30u) to sit 3-4x above
              concrete ink at any range. Hue stays the building's own. */
           r=ar*1.6*fog+40;g=ag*1.6*fog+40;b=ab*1.6*fog+44;code=G.DV;
+          /* G.DV is two 1px strokes in a 10x14 cell - ~20% ink at alpha
+             ~0.57 - laid over a backing IDENTICAL to the two facades it is
+             meant to cut apart: this branch sets r/g/b/code and never
+             litPane, so the corner column fell through to the same
+             setBack(bkWr*..., bkWg*..., bkWb*...) as its neighbour, with the
+             same bkW* and the same dist. Byte-identical after the step-12
+             quantiser. That is why two towers still merged - the blue wash
+             and the salmon wash simply abutted.
+             2.6x on the building's own hue (so no new colour enters and the
+             albedo lottery is untouched): at 5u the seam is q(36,108,132)
+             against a q(24,72,84) mullion and a q(12,24,36) glass - 4 and 8
+             quantiser steps of blue. At 20u q(24,60,60) against a q12 mass,
+             which is the range where nothing else separates one silhouette
+             from the next. It reads as a lit arris, so the G.DV glyph now
+             agrees with the backing instead of fighting it.
+             It cannot clip: the 2.2 ceiling below caps the PRODUCT l*bkK,
+             not l, so the brightest possible corner is exactly the
+             brightest possible facade (74 blue at 2u -> 74*2.2+7 = 170).
+             cth already sizes this band to about one screen column at every
+             range, so it costs two run boundaries per building edge. */
+          bkK=CORNK;
         }else{
           /* Facade: window grid with mullions, plus a darker slab line at
              each storey. This is what makes a wall read as a building. */
@@ -3341,6 +3406,34 @@ function render(){
                  the only mark left on an unlit facade is the thin spandrel
                  rule under each storey, which is the line the eye needs. */
               kk=pane?0.50:0.75; mark=(!pane&&iv<spanV+0.34/Math.max(1,rpp))?C_('-'):G.SP;
+              /* The module was computed and then spent entirely on kk, which
+                 tints a glyph that is G.SP everywhere but the thin spandrel
+                 rule. put() writes the backing for EVERY cell including the
+                 G.SP ones (the early return is after the backing write), so
+                 ~98% of an unlit facade was one number that depends only on
+                 T.wc, dist and the row light - a smooth vertical wash with
+                 the lattice invisible inside it.
+                 Same three materials, in the layer that owns the pixels:
+                 glass dark, spandrel bright (concrete catching skyglow),
+                 mullion brightest. At 5u street level that is q(12,24,36) /
+                 q(24,60,72) / q(24,72,84) - three separated levels where
+                 there was one. Area mean is 0.96, so the mass barely dims
+                 while the frame appears; the darkening comes from the light
+                 term below, not from here.
+                 NO distance ramp is needed. spanV guarantees the spandrel is
+                 >=1.15 rows and the glass >=1.02 rows, so the split is never
+                 sub-row at any range, and past ~35u the +7 floor dominates:
+                 at 40u glass (0.16+7) and spandrel (0.4+7) BOTH round to 12,
+                 so the modulation quantises to zero before it can crawl and
+                 a far tower goes back to a flat silhouette on its own.
+                 The u axis needs no guard either - mulU is already 0
+                 whenever cpp<2.5 (past ~14.8u*cosW), so beyond there this
+                 reduces to pure horizontal storey banding, which is the
+                 strongest 'this is a building' cue anyway.
+                 Deliberately not set on brick (wc===0, above), where the
+                 courses are already sub-cell, nor on the shopfront band,
+                 which has its own awnings and interiors. */
+              bkK=pane?GLASSK:(iv<spanV?SPANK:MULLK);
             }
             r=ar*lr*kk;g=ag*lg*kk;b=ab*lb*kk;
             const le=(r+g+b)/765;
@@ -3352,7 +3445,21 @@ function render(){
           }
         }
         if(y===y0&&y0>0&&topFrac>0&&topFrac<0.985) edgeLow(xpx,y0-1,topFrac,bkr,bkg,bkb);
-        if(litPane) setBack(r*0.72+6,g*0.72+6,b*0.72+8);
+        /* 0.72 was tuned when the facade backing was one flat mid value it
+           only had to match. Measured, it did not even do that: at 5u the
+           lit-pane backing was (36,120,120) and the UNLIT wall beside it
+           (36,108,120) - one quantiser step apart on one channel, i.e. the
+           window grid, the strongest structure cue in the renderer, was
+           literally invisible on a near facade.
+           0.90 with a +4/+4/+7 floor puts a near pane at q(48,156,156)
+           against q(12,24,36) glass and q(24,72,84) mullion: 4.3:1 and
+           1.9:1. At 20u q(36,108,120) against a q12 mass - 10:1, the sparse
+           bright dots a far tower needs. Not 0.95-1.05: the in-pane glyph
+           composites source-over at alpha ~0.61, and above ~0.92 the mark
+           lands BELOW its own backing and the WCH texture inverts.
+           No clipping: worst reachable case is the top lightness bucket at
+           2u, 274.8*0.90+7 = 254.3, under setBack's 255 clamp. */
+        if(litPane) setBack(r*PANEG+4,g*PANEG+4,b*PANEG+7);
         else{
           /* The backing IS the facade. On an unlit wall every cell but the
              spandrel rule emits G.SP (see the mark test above), so ~98% of a
@@ -3376,10 +3483,42 @@ function render(){
              the 2.2 cap city-wide. It degrades to today's flat look rather
              than clipping hue, but retune the pair (0.55, 1.5) if day ever
              switches on. */
-          const blR=0.55+1.5*lr, blG=0.55+1.5*lg, blB=0.55+1.5*lb;
-          setBack(bkWr*(blR<1?1:(blR>2.2?2.2:blR)),
-                  bkWg*(blG<1?1:(blG>2.2?2.2:blG)),
-                  bkWb*(blB<1?1:(blB>2.2?2.2:blB)));
+          /* THE BACKING IS THE FACADE, so this one expression sets both the
+             city's tone and, through bkK, its structure.
+             (1) A pure LIGHT factor. 0.55+1.5*l with a LOW CLAMP OF 1 could
+             only ever multiply UP - it was a brightener, never a shader - so
+             a near facade sat at 84-113 on its max channel and 51% of the
+             frame lived in the MID band. That is the wash, and it is why a
+             lit window could not out-read the wall around it.
+             (2) The floor is 0.55, not 0 and not 1. At 0 a mid tower dies:
+             past ~15u the raw l falls to 0.15-0.25, every channel pins on
+             the +6 floor, and the face goes flat q12 - losing the storey
+             banding and the corner exactly where the screenshot shows the
+             problem. At 0.55 a 20u face still bands 12 <-> 36 and a 30u face
+             12 <-> 24, while a near facade (l = 0.67 at street level) is not
+             touched at all. Past ~35u it flattens to 12 anyway, which is
+             correct - a far tower should be a silhouette carrying only its
+             lit windows.
+             (3) bkK multiplies AFTER the floor. Folding it in before would
+             clamp glass's 0.50 straight back up to 0.55 and the grid would
+             do nothing.
+             (4) The 2.2 ceiling now caps the PRODUCT l*bkK, not l. That is
+             what makes a 2.6x corner inside a sign pool safe: the brightest
+             backing in the city stays exactly where the old comment put it
+             (74 blue at 2u -> 74*2.2+7 = 170), so no channel can pin at 255
+             and go white and desaturated.
+             (5) The +6/+6/+7 floors are added last, outside the multiply.
+             That is the job the old low clamp of 1 was really doing, done
+             without brightening anything: at 40u a face lands on 0.3+7 =
+             7.3, which rounds up to 12 and holds its silhouette against the
+             (1,3,10) sky.
+             Still holds only while NIGHT_ONLY is true - AMB_DAY would put
+             lrB near 0.91 and park everything at the cap; retune 0.55/2.2
+             if day ever switches on. Cost: cheaper than what it replaces. */
+          let mR=lr<WALLF?WALLF:lr, mG=lg<WALLF?WALLF:lg, mB=lb<WALLF?WALLF:lb;
+          mR*=bkK; mG*=bkK; mB*=bkK;
+          if(mR>2.2)mR=2.2; if(mG>2.2)mG=2.2; if(mB>2.2)mB=2.2;
+          setBack(bkWr*mR+6,bkWg*mG+6,bkWb*mB+7);
         }
         const fr=r*keep+hzR, fg=g*keep+hzG, fb=b*keep+hzB;
         /* stash the column so the canal can mirror it a few rows below */
@@ -3599,7 +3738,17 @@ function render(){
         const fxg=fx-tx,fyg=fy-ty;
         if(fxg>0.28&&fxg<0.72&&fyg>0.3&&fyg<0.7) gch=G.DH;
       }
-      if(onRoof) setBack(15*fog+4,16*fog+4,21*fog+6); else setBack(11*fog+4,12*fog+4,22*fog+6);
+      /* Roof keeps its per-row constant (bare concrete under open sky; its
+         rvar and per-cell gravel already vary it). The STREET's flat per-row
+         backing survives ONLY for the baseRow sliver below, because
+         edgeLow() reads bkr/bkg/bkb directly and then `continue`s before the
+         real street backing is set further down. Dropping it outright would
+         hand edgeLow the WALL backing left over from the slice loop -
+         noBack() clears bkon but not bkr/bkg/bkb - painting the base of
+         every building with the facade colour and blurring precisely the
+         wall/road boundary this change exists to sharpen. */
+      if(onRoof) setBack(15*fog+4,16*fog+4,21*fog+6);
+      else if(y===baseRow) setBack(11*fog+4,12*fog+4,22*fog+6);
       if(y===baseRow){ edgeLow(xpx,y,baseFrac,bkr,bkg,bkb); continue; }
       /* Road paint. Worn white, so it lifts the cell well clear of the
          asphalt without becoming a light source. Everything is keyed on the
@@ -3621,6 +3770,37 @@ function render(){
             gch=m===3?C_('='):C_('-');
           }
         }
+      }
+      /* The street's backing IS the street - ~97% of a floor cell's pixels -
+         and the per-row constant above threw away albedo, LM, the lamp, the
+         wet-asphalt smear, tk and the lane paint, every one of them already
+         computed into mr/mg/mb four lines up. After setBack's step-12
+         rounding the whole carriageway collapsed to exactly three colours:
+         rgb(12,12,24) near, rgb(12,12,12) mid, rgb(0,0,12) far. The glyph
+         could not rescue it - unlit asphalt is (2.3,1.9,3.1), so mx<7 and
+         put() draws NOTHING, and a lamp-lit '.' adds 0.07 of effective
+         luminance over a backing of 12. That is the dark speckled field.
+         Gain 1.55 spreads the road's real range across the step-12 ladder:
+         unlit 12, hazed far 12 (unchanged - no far regression), lamp pool
+         36, puddle (96,84,72), and pavement 48 against road 36 under the
+         same lamp, so the kerb line finally reads. Every rung is at least
+         one quantiser step apart.
+         CAP 120, not the raw 237: road paint reaches mr~149 and a near zebra
+         covers 2/3 of a tile, so at full gain it would lay down a white slab
+         brighter than a lit window (156) - the same wash being removed here.
+         WATER takes 0.85, not 1.55: the canal has to stay a dark mirror. The
+         reflection put() below only reaches ~27 at k=0.45*fog with alpha
+         ~0.21, so a brightened backing would drown it - and the canal is the
+         view being complained about. At 0.85 water lands on 12-24, where it
+         is today.
+         setBack was already called once per floor cell, so this is arguments
+         plus one branch. The cost is extra run boundaries, and perspective
+         contains it: all but ~2 rows sit inside 24u, where 5-15 screen cells
+         fit in one 0.625-unit puddle hash cell and still merge. */
+      if(!onRoof){
+        const sbG=water?0.85:ROADG,
+              sb0=mr*sbG+6, sb1=mg*sbG+6, sb2=mb*sbG+7;
+        setBack(sb0>ROADCAP?ROADCAP:sb0, sb1>ROADCAP?ROADCAP:sb1, sb2>ROADCAP?ROADCAP:sb2);
       }
       put(gch,xpx,ys[y],mr,mg,mb);
 
