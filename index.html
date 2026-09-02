@@ -29,8 +29,8 @@
   #crt{
     position:absolute;inset:0;pointer-events:none;z-index:5;
     background:
-      repeating-linear-gradient(to bottom,rgba(0,0,0,.16) 0 1px,rgba(0,0,0,0) 1px 3px),
-      radial-gradient(130% 105% at 50% 50%,rgba(0,0,0,0) 46%,rgba(0,0,0,.52) 100%);
+      repeating-linear-gradient(to bottom,rgba(0,0,0,.07) 0 1px,rgba(0,0,0,0) 1px 3px),
+      radial-gradient(130% 105% at 50% 50%,rgba(0,0,0,0) 52%,rgba(0,0,0,.36) 100%);
   }
 
   .panel{
@@ -2247,7 +2247,10 @@ const WINU=3, WINV=1;          /* window panes per tile across / storeys per wor
 const WINCH=[C_('8'),C_('#'),C_('H'),C_('%'),C_('B'),C_('&'),C_('='),C_('0'),C_('@'),C_('M'),C_('W'),C_(':'),C_('+'),C_('8')];
 /* one window character per BUILDING, so a tower reads as a grid of the same
    digit the way the reference's do, not a random keyboard */
-const WCH=[C_('8'),C_('0'),C_('H'),C_('#'),C_('B'),C_('%'),C_('&'),C_('@')];
+/* Neutral marks. Letters in the glass read as words the eye tries to parse -
+   the user's "letters in buildings". A window is a lit rectangle with a
+   glazing bar, so the mark is punctuation, one kind per building. */
+const WCH=[C_(':'),C_('='),C_('-'),C_('|'),C_('.'),C_('+'),C_(':'),C_('=')];
 /* Shop interiors. One palette per shop TYPE, fixed for the whole city; the
    only per-shop decision is which of the four types a face gets. Colour
    never varies per shop or per tile - that would be the hue lottery.
@@ -2321,7 +2324,11 @@ let bkr=0,bkg=0,bkb=0,bkon=0,optBack=true;
 /* backing colour for the cells about to be put(); quantised to 16 levels so
    neighbouring columns at slightly different fog merge into one run */
 function setBack(r,g,b){
-  bkr=(r>255?255:r)&0xF0; bkg=(g>255?255:g)&0xF0; bkb=(b>255?255:b)&0xF0; bkon=1;
+  /* 8 levels, not 16: neighbouring columns at slightly different fog now
+     land on the SAME value, so a wall is one wide run that does not re-split
+     every frame as you walk. That re-splitting is a large part of what read
+     as shimmer in motion. */
+  bkr=(r>255?255:r)&0xE0; bkg=(g>255?255:g)&0xE0; bkb=(b>255?255:b)&0xE0; bkon=1;
 }
 function noBack(){ bkon=0; }
 function put(code,px,py,r,g,b){
@@ -2899,7 +2906,11 @@ function render(){
           const sFill=(0.17+0.50*(1-fog))*sTube*(0.74+sGrain*0.52);
           /* panel dim, letter hot — at equal brightness the filler drowned
              the glyph and the word never read as a word */
-          const onLetter=letterCol&&y===yLetter&&dist<24;
+          /* A single letter per tile spread over a facade reads as random
+             characters stuck to the building. Spell the sign out only when
+             you are close enough to read the whole word; beyond that the
+             panel alone is the sign. */
+          const onLetter=letterCol&&y===yLetter&&dist<10;
           /* daylight drowns neon — a sign at full night brightness under an
              overcast noon sky reads as a bug, not as a sign */
           const k=flick*chase*dead*(onLetter?1.7:(sEdge?0.07:sFill))*(1-dayF*0.62);
@@ -3114,7 +3125,7 @@ function render(){
                      glyphs (a dot glyph leaves the cell black around it and
                      read as a hole in the wall) */
                   if(vB<0.98&&Math.abs(uA-figC)<(hd?0.04:0.07)){
-                    pc=hd?SHOP_SKIN:pal[5]; ik=(hd?0.95:0.75)*(0.85+gr*0.3); ic=hd?C_('8'):C_('#');
+                    pc=hd?SHOP_SKIN:pal[5]; ik=(hd?0.95:0.75)*(0.85+gr*0.3); ic=hd?C_('o'):C_(':');
                   }else if(hB>0&&dv<rowT){ pc=pal[1]; ik=0.95; ic=C_('-'); }    /* shelf edge */
                   else if(hB>0&&dv<rowT+SHOP_OH[sty]&&Math.abs(su-0.5)<SHOP_OW[sty]
                           &&hash3(slot,hB*10,sty*5+hitSide)<0.62){            /* stock */
@@ -3443,7 +3454,7 @@ function render(){
     bctx.globalCompositeOperation='source-over';
     ctx.imageSmoothingEnabled=true;          /* restored by ctx.restore() */
     ctx.globalCompositeOperation='lighter';
-    ctx.globalAlpha=0.26;
+    ctx.globalAlpha=0.14;
     ctx.drawImage(bcv,0,0,cv.width,cv.height);
     ctx.restore();
   }
@@ -3701,9 +3712,9 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
              shadow - shape you can read at three cells tall. */
           /* letters, not blocks: a block-person up close was a translucent
              grey slab; '8' head, '#' torso, '|' legs reads as a figure */
-          if(v<0.18)      { if(au>0.46) continue; code=C_('8'); sk=1.10-au*0.30; }
-          else if(v<0.30) { if(au>0.62) continue; code=C_('#'); sk=0.95; }
-          else if(v<0.58) { if(au>0.98) continue; code=C_('#'); sk=0.82-au*0.20; }
+          if(v<0.18)      { if(au>0.46) continue; code=C_('o'); sk=1.10-au*0.30; }
+          else if(v<0.30) { if(au>0.62) continue; code=C_('='); sk=0.95; }
+          else if(v<0.58) { if(au>0.98) continue; code=C_(':'); sk=0.82-au*0.20; }
           else if(v<0.66) { if(au>0.66) continue; code=C_('='); sk=0.62; }
           else            { if(au>0.62||au<0.16) continue; code=C_('|'); sk=0.50; }
           /* one side toward the street light — a rim that survives any size */
@@ -3747,18 +3758,18 @@ function drawSprites(px,py,dx,dy,plX,plY,projRows,horizon){
             if(eHW>1e-3&&du*cESgn<eHW){
               /* end face (grille or boot): the darker plane, cabin ~75% of it */
               const ab=Math.min(0.45,Math.abs(du/cRU)); /* eHW>0 here so cRU!=0 */
-              if(v<0.30){ if(ab>0.34) continue; code=v<0.10?C_('='):C_('#'); sk=v<0.10?1.15:0.50; }
+              if(v<0.30){ if(ab>0.34) continue; code=v<0.10?C_('='):C_(':'); sk=v<0.10?1.15:0.50; }
               else if(v<0.42){ code=C_('='); sk=0.86; }   /* roofline / belt: >2 alpha quanta above the body */
-              else if(v<0.82){ code=C_('#'); sk=0.70; }
+              else if(v<0.82){ code=C_(':'); sk=0.70; }
               else { code=C_('='); sk=0.42; }              /* bumper / underside */
             }else{
               /* flank: cabin set toward the rear, bonnet and boot lower than
                  the roof, wheel masses dark at the bottom, roofline bright */
               const aL=Math.abs(cFU)>1e-3?(uc-cRU*cSide*0.45)/(cFU*cL):0;  /* -0.5 tail .. +0.5 nose */
               const inCab=aL>-0.40&&aL<0.22;
-              if(v<0.30){ if(!inCab) continue; code=v<0.10?C_('='):C_('H'); sk=v<0.10?1.25:0.52; }
+              if(v<0.30){ if(!inCab) continue; code=v<0.10?C_('='):C_('o'); sk=v<0.10?1.25:0.52; }
               else if(v<0.42){ code=C_('='); sk=inCab?0.52:1.0; }
-              else if(v<0.82){ code=C_('#'); sk=1.0; }
+              else if(v<0.82){ code=C_(':'); sk=1.0; }
               else { const wh=Math.abs(Math.abs(aL)-0.31)<0.10; code=wh?C_('o'):C_('='); sk=wh?0.28:0.60; }
             }
           }else{                   /* cat/drone/shard: small, slab is fine */
