@@ -91,6 +91,11 @@ Work in progress. What's in and working:
 - [x] Two-tier renderer: detailed raycast to 46 units, cheap far skyline out to 120
 - [x] Smoothed mouse/key look (camera eases toward a target orientation)
 - [x] Matrix-style boot sequence that constructs the view column by column
+- [x] Traffic: lanes, per-junction signals, cars that brake for the car ahead and for you, turns at junctions
+- [x] Pseudo-volumetric cars with headlights, taillights and headlight pools on the wet road
+- [x] Cyclists on the kerb lane and flying craft in sky lanes over the rooftops
+- [x] Shop interiors visible through the glass, with parallax
+- [x] Auto Tour (T) and Empty City (N) modes
 - [ ] Facade readability at close range — still tuning
 - [ ] More interiors beyond the bar (shops, lobbies)
 - [ ] Day/night cycle — built, currently held at night on purpose
