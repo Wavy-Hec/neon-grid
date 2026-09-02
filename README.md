@@ -24,7 +24,9 @@ puddle — is a text character drawn to a `<canvas>`.
 | `↑` `↓` | look up / down |
 | `Shift` | run |
 | `E` | interact with anything that glows |
-| `N` | generate a new city |
+| `G` | generate a new city |
+| `T` | auto tour — the camera walks the city by itself; any input hands control back |
+| `N` | empty city — hide the people and traffic, keep the props |
 | `B` `R` `M` `F` | bloom · rain · music · fps |
 | `-` `=` | resolution |
 | `?` | help |
