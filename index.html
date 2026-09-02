@@ -235,6 +235,12 @@ const RAMP=[G.SP,C_('.'),G.DOT,C_(':'),C_('-'),C_('='),C_('+'),C_('*'),C_('#'),C
 /* Ground ramp: dots into shade blocks. The symbol ramp above reads as typed
    characters on a page; this reads as a surface getting brighter. */
 const FRAMP=[G.SP,C_('.'),C_('.'),C_(':'),C_(':'),C_('-'),C_('='),C_('+'),C_('#'),C_('%'),C_('@')];
+/* Street ramp. FRAMP spends slots 1,2 on '.' and 3,4 on ':', and the ground
+   pass lands the road's dry band on indices 2..4 - a vocabulary of two over a
+   three-step range. Ten entries here, every one a different mark, ink rising
+   monotonically, indices 0..9 to match the ground clamp. Used only by the
+   street half of the ground ramp; roofs keep FRAMP. */
+const SRAMP=[G.SP,C_('.'),C_(','),C_(':'),C_(';'),C_('-'),C_('~'),C_('='),C_('*'),C_('#')];
 /* Characters, not shade blocks: at a 12px cell a block is a flat square and
    a wall of them is a mosaic; ':' '=' '#' '%' carry detail INSIDE the cell. */
 /* Bottom half BLANK: a dim wall cell shows the material backing and nothing
@@ -2535,7 +2541,28 @@ function render(){
   const plX=-dy*PLANE,plY=dx*PLANE;
   /* rows of screen per world unit at distance 1 */
   const projRows=(cols*CW/(2*PLANE))/CH;
-  const horizon=rows*0.5+P.pitch+Math.sin(P.bob)*0.35;
+  /* HEAD BOB WAS A PITCH BOB. `horizon` is distance-independent, so
+     sin(bob)*0.35 swung the eye ray 0.70 rows peak-to-peak at EVERY depth.
+       - rd=EPR/(y-horizon) with EPR=P.z*projRows=39.68, so the ground sample
+         4 rows below the horizon (9.92u) swept 9.92*0.70/4 = 1.74 WORLD UNITS
+         at 1.6 Hz - 2.8 cells of the 0.625u world-anchored puddle lattice
+         whose multiplier spans 85:1 (see the wet mask below), on the very
+         rows that have to read as a plane going away from you.
+       - Math.floor(horizon) toggled 31<->32 every cycle, so the sky/floor
+         seam (skyTo / fStart) snapped a whole 28px row across the full width
+         - and P.bob keeps advancing at 1.2 rad/s while you STAND STILL, so it
+         did this with no input at all.
+     A head bob is a HEIGHT change, not a rotation: as height it costs dz*L1
+     rows - 0.34 at 3u (same felt motion), 0.10 at 10u, 0.03 at 30u - and the
+     ground sweep falls off as rd, not rd^2: 0.26u at 9.92u instead of 1.74u.
+     0.026u peak-to-peak is 8.8cm at this scale, a real walk bob. Below ~2.95u
+     a facade moves slightly MORE than before (1.67 vs 1.13 grain cells), both
+     already past full decorrelation, so nothing changes visibly there.
+     If the walk ever reads as dead, raise 0.013 - do NOT put the term back on
+     horizon; at 0.020 the p=4 ground sweep is still only 0.40u. */
+  const camZ0=P.z, bobZ=Math.sin(P.bob)*0.013;
+  P.z=camZ0+bobZ;
+  const horizon=rows*0.5+P.pitch;
 
   curKey=-1;curSY=0;curA=-1;
   ctx.globalAlpha=1;ctx.globalCompositeOperation='source-over';
@@ -3107,8 +3134,30 @@ function render(){
              overcast noon sky reads as a bug, not as a sign */
           const k=flick*chase*dead*(onLetter?1.7:(sEdge?0.07:sFill))*(1-dayF*0.62);
           r=sr*k+5;g=sgg*k+5;b=sb*k+5;
+          /* Coverage ramp -> VALUE ramp, but only where the band is big enough
+             for a tile to read as a tile. G.FULL is one fillRect over the
+             whole 20x28 device cell and S1/S2/S3 are flat 25/50/75% dithers at
+             2x2 device px, so a near band was a mosaic of structureless slabs
+             at 0.76 mean ink - exactly what the ramp comment above forbids
+             ("at a 12px cell a block is a flat square and a wall of them is a
+             mosaic"). Worse, the emit branch sets neither litPane nor bkK, so
+             a sign band's backing carries no material rung at all: it is the
+             flattest surface in the whole wall path.
+             Brightness order survives with NO sFill change - sFill already
+             carries sGrain through (0.74+sGrain*0.52), and the characters
+             track it: '%' ~0.40 ink > '#' ~0.35 > '=' ~0.14. Ink inside 14u
+             falls 0.76 -> 0.304, which is the wash going away, not a bug.
+             14u, not everywhere: at 14u the band is 1.2 world units tall, i.e.
+             ~6.8 rows x 7.9 cols at cols=160. Past there a solid tile is a
+             point of light the far skyline needs, so beyond 14u this is
+             byte-identical and the mid tower and far city are untouched.
+             If a near sign now reads as broken rather than lit, lift ONLY the
+             0.17 near constant in sFill toward 0.30 - scaling its fog term
+             instead blows out the skyline. */
           code=onLetter?T.ch[ti]
-              :(sEdge?G.S1:(sGrain>0.66?G.FULL:(sGrain>0.30?G.S3:G.S2)));
+              :(sEdge?(dist>14?G.S1:C_('-'))
+                     :(dist>14?(sGrain>0.66?G.FULL:(sGrain>0.30?G.S3:G.S2))
+                              :(sGrain>0.66?C_('%'):(sGrain>0.30?C_('#'):C_('=')))));
         }else if(y===y0&&top>=0&&!isTree){
           /* Parapet. Without a cap the top row takes whatever the ramp
              happened to land on, and two overlapping towers merge into
@@ -3226,28 +3275,78 @@ function render(){
                seen point-blank covers hundreds of cells, so a single glyph
                and a single colour turned it into a flat slab of teal. That
                is what those huge rectangles were. */
-            const wg=hash3((wallU*tf)|0,(v*tf)|0,cu*7+cv);
-            /* The GLOW is the backing; the character is a glazing bar on top,
-               one cell in three or so. Painting the building's window glyph
-               in every cell of a multi-cell pane is what produced solid
-               ############ runs across a whole storey. */
+            /* EVERY cell of a lit pane carries a mark. wg<0.34 left 66% of the
+               pane as bare backing, and put() returns early on G.SP, so those
+               cells really were nothing but flat colour: at 8u a pane is
+               2.22 x 3.07 cells and drew TWO specks. And past 8.18u the ceil
+               gate closes and wk is constant over the whole pane (its hash3 is
+               keyed on the tile+pane index, fog is constant down the column),
+               so those 6.8 cells were ONE colour - the soft teal blocks.
+               The old "solid ####" failure was WINCH, which is blocks and
+               shades. WCH is punctuation at 2-5% ink per cell, so going to
+               100% coverage raises the cell mean by 0.66*0.035*0.61 = 1.4% of
+               backing - an eighth of the step-12 backing quantum. It cannot
+               fill a run; it only adds specks.
+               The lattice comes off tf, NOT off a per-pane screen index. tf is
+               the octave-quantised cells-per-world-unit, so (wallU*tf)|0 and
+               (v*tf)|0 are WORLD cell indices that re-roll only when tf
+               crosses an octave. A lattice divided by cpp/rpp instead would
+               drift continuously with dist and the marks would churn as you
+               walk. Far out tf clamps to 8, the step falls under a cell, and
+               it degrades to a stable 50/50 two-mark pick - still no shimmer.
+               +3 not +2: WCH holds ':' and '=' twice, so a +2 partner maps
+               wm=6 and wm=7 onto their own glyph and the checker collapses to
+               one mark. +3 gives eight distinct pairs.
+               hash3 (3 Math.floor + imul + 3 shifts) is deleted for two mults
+               and an AND: a net saving per lit-pane cell. */
             litPane=1;
-            code=(wg<0.34)?WCH[T.wc[ti]&7]:G.SP;
+            const wm=T.wc[ti]&7;
+            code=((((wallU*tf)|0)+((v*tf)|0))&1)?WCH[wm]:WCH[(wm+3)&7];
             /* Up close a single pane covers a big patch of screen and reads
                as a quilt square. Subdivide with fine mullions so the glass
                keeps a window grid at any distance. */
-            /* Sash bars exactly ONE screen cell wide, placed off the cell's own
-               position across the glass - never a sub-cell world band. Only
-               the MIDDLE bar (su/sv in [1,1+one cell)); testing from 0 put a
-               second dark column against the mullion and a second dark row
-               against the spandrel. Only once the glass is >=6 cells that way. */
-            if(cpp-1>=6){
+            /* Sash bars exactly ONE screen cell wide. su=1 is the glass MIDLINE
+               IN WORLD U and the band width 2/(cpp-1) is exactly one screen
+               cell (one cell is 1/cpp in iu; mulU=1/cpp so 1-mulU is
+               (cpp-1)/cpp, giving 2/(cpp-1) in su). Same for sv: 2/gRows.
+               World-anchored edge, screen-sized width - DO NOT reformulate
+               this as a per-pane screen-cell index like cxg===(nu*0.5|0):
+               that divisor drifts with dist, so the bar would slide, and where
+               it crosses an integer it would jump clean across the midline on
+               every pane of the facade at once.
+               Gates 6 and 6 meant cpp>=7 and gRows>=6, i.e. only the closest
+               couple of units. Over the whole band where a pane is a 3-21 cell
+               rectangle with a flat or near-flat backing, a lit pane had NO
+               internal structure at all - that is the blur.
+               3.6 and 5: at cpp=4 the bar is 1 of 3 glass columns; at gRows=5
+               it is 1 of 5 rows. Rows gate at 5, not 3, so a pane with only 3
+               glass rows keeps all three bright.
+               bfade ramps the vertical bar in over cpp 3.6 -> 4.15 instead of
+               popping it on; a hard step there pops a quarter of a face at
+               once, the same reason the lit coin above is a ramp. bfade>0
+               needs cpp>3.6, so mulU>0 and the su cell-width identity holds.
+               G.SP, not G.S2: G.S2 is a FILLED rectangle, and a shade block at
+               a 20x28 device cell is precisely the flat blur being removed.
+               The bar is pure dark backing; the cells either side are inked by
+               the edit above. Bright blocks, thin dark grid.
+               0.45, not 0.28: at a 21-cell pane the two bars cover ~47% and
+               drop its mean 26%, leaving glass q132 against bar q60 - 2.2:1,
+               five steps of the step-12 quantiser. The darkening is applied
+               BEFORE setBack, so backing and glyph fall together and the bar
+               cell stays 0.45x its neighbours.
+               THIS IS THE REVERTABLE ONE: it darkens near facades ~26% and
+               moves a gate boundary into common walking range. If the near
+               street reads too dark, revert this patch alone - the edit above
+               carries the 5-12u soft-block fix on its own. */
+            const bfade=clamp((cpp-3.6)*1.8,0,1);
+            if(bfade>0){
+              const bk2=1-0.55*bfade;
               const su=(iu-mulU)*2/(1-mulU);
-              if(su>=1&&su<1+2/(cpp-1)){ r*=0.28;g*=0.28;b*=0.28; code=G.S2; }
+              if(su>=1&&su<1+2/(cpp-1)){ r*=bk2;g*=bk2;b*=bk2; code=G.SP; }
             }
-            if(gRows>=6){
+            if(gRows>=5){
               const sv=(iv-spanV)*2/(1-spanV);
-              if(sv>=1&&sv<1+2/gRows){ r*=0.28;g*=0.28;b*=0.28; code=G.S2; }
+              if(sv>=1&&sv<1+2/gRows){ r*=0.45;g*=0.45;b*=0.45; code=G.SP; }
             }
           }else if(v<1.35&&T.wc[ti]!==0&&streetSide&&
                    hash3(hitX*7,hitY*13,hitSide)<0.72){
@@ -3679,11 +3778,61 @@ function render(){
       let tk=1.0,bump=0;
       if(g1>0.94){tk=1.22;bump=0.5;}
       else if(g1<0.05){tk=0.62;bump=-0.5;}
-      if(!onRoof&&rowDist<18){
-        const fxf=fx-tx,fyf=fy-ty;
-        if(fxf<0.08||fyf<0.08){
-          if(T.flag[ti]&WALK){tk=1.35;bump=0.4;}
-          else if(T.flag[ti]&(ROAD|ALLEY)){tk=0.55;bump=-0.5;}
+      if(!onRoof&&rowDist<26){
+        /* A REAL KERB. The old test was fxf<0.08||fyf<0.08 with no neighbour
+           lookup, so an interior paving seam and the kerb itself got the
+           identical treatment. carveBlock lays a 1-tile WALK ring flush
+           against the road, so the boundary WAS being marked - as just
+           another joint, 1.35 on one side of the street and 0.55 on the
+           other, and at 1.35 the pavement lip landed on the same backing as
+           ordinary pavement, i.e. invisible. Read the tile across the edge
+           and give the boundary its own rung.
+           All four edges are tested. Short-circuiting on x, as an earlier
+           draft did, drops the kerb on every east-west street, where the
+           boundary is a y edge: the x band wins first, reads another pavement
+           tile, and the kerb comes out dashed.
+           The widened band applies ONLY to the class change. Ordinary joints
+           keep the fixed 0.08 low-edge rule - 2*ew is 0.66 at 26u, 91% of a
+           tile, and a wide band on the joints paints a thick frame round
+           every tile instead of a seam.
+           ew: one screen column subtends rowDist/111.1 world units, so 0.027u
+           at 3u and 0.18u at 20u. 0.045+0.011d holds the lip at ~2.9 columns
+           at 3u and ~1.6 at 20u, so it stays about one cell wide instead of
+           dropping under a column and flickering.
+           Backing, with ROADG 0.88 / cap 62 / step 12, on the lamp-lit street
+           the file itself measures (le 0.071):
+             lit road tk 1.00  mr 12.5 -> 17.0 -> rgb(12,12,24)
+             pavement tk 1.00  mr 17.9 -> 21.8 -> rgb(24,24,24)
+             kerb     tk 2.10  mr 37.6 -> 39.1 -> rgb(36,36,36)
+             gutter   tk 0.62  mb  8.8 -> 14.7 -> rgb(12,12,12)
+           Three rungs, each a full quantiser step apart, and the gutter
+           separated from the road in blue.
+           Nothing goes below 0.62: setBack's +6 floor makes 12 the hard
+           minimum for any street cell, so the only darkening left is blue,
+           and 0.62 already takes road blue 24 -> 12. Below ~0.4 the glyph
+           colour drops under put()'s mx>=7 cut and the mark is DELETED,
+           thinning the street for no tonal gain.
+           g1 is deliberately left alone. One screen row steps rd^2/39.68
+           world units, so a 0.333u grid is already under-sampled past 3.63u;
+           gating it at some larger radius fixes nothing and only empties the
+           far street.
+           Out-of-range ti+-1 / ti+-W read undefined from a Uint8Array and
+           undefined&4 is 0, so no bounds guard is needed. */
+        const me=T.flag[ti],fxf=fx-tx,fyf=fy-ty,ew=0.045+rowDist*0.011;
+        let kerb=0;
+        if(me&WALK){
+          if((fxf<ew&&(T.flag[ti-1]&(ROAD|ALLEY)))||(fxf>1-ew&&(T.flag[ti+1]&(ROAD|ALLEY)))||
+             (fyf<ew&&(T.flag[ti-W]&(ROAD|ALLEY)))||(fyf>1-ew&&(T.flag[ti+W]&(ROAD|ALLEY)))) kerb=1;
+        }else if(me&(ROAD|ALLEY)){
+          if((fxf<ew&&(T.flag[ti-1]&WALK))||(fxf>1-ew&&(T.flag[ti+1]&WALK))||
+             (fyf<ew&&(T.flag[ti-W]&WALK))||(fyf>1-ew&&(T.flag[ti+W]&WALK))) kerb=1;
+        }
+        if(kerb){
+          if(me&WALK){tk=2.10;bump=1.6;}   /* kerb lip */
+          else {tk=0.62;bump=-0.5;}        /* gutter   */
+        }else if(rowDist<18&&(fxf<0.08||fyf<0.08)){
+          if(me&WALK){tk=0.62;bump=-0.4;}              /* paving score line */
+          else if(me&(ROAD|ALLEY)){tk=0.55;bump=-0.5;} /* tar joint         */
         }
       }else if(onRoof){
         /* concrete panel joints, and a bright parapet lip wherever the roof
@@ -3739,7 +3888,46 @@ function render(){
          stays dim, it just stops being empty. Matches the FAR tiers at
          2595/2635, which already use knee 0.10. Roof half unchanged: it
          runs gain 1.0 and already lands on index ~5. */
-      let gch=FRAMP[clamp(((le/(le+(onRoof?0.30:0.10)))*10+bump+tex*2.4-1.5+(onRoof?0.8:0.05))|0,0,9)];
+      /* Split. The ROOF half is byte-identical to the old expression (knee
+         0.30, bump, tex*2.4-1.5, bias +0.8, FRAMP, clamp 0..9), so nothing
+         above ground level moves. The STREET half fixes two things.
+         (1) tex*2.4-1.5 is +/-1.2 RAMP STEPS of white noise, and tex is hashed
+         at fq=fqT[y]=fqBase/rd - about one hash cell per SCREEN cell - so it
+         re-rolls as the camera moves. Measured under the old line: a lamp-lit
+         cell (le=0.065) drew a random pick from indices 2..5 = '.' ':' ':'
+         '-', and a puddle cell (le=0.202) from 4.7..8.1 = '-' '=' '+' '#'.
+         The dice, not the light, chose the mark. That is the scatter of bright
+         '+' and '=' on near-black, and it is why the street shows no
+         recession: the +/-1.2 noise swamps the ~1.1 index of gradient between
+         4u and 20u.
+         (2) FRAMP spends slots 1,2 on '.' and 3,4 on ':', so the dry band's
+         three steps carried two glyphs - the wide dither bought noise and no
+         vocabulary. SRAMP has ten distinct marks.
+         The dither drops to +/-0.35 at the SAME MEAN (old offset
+         1.2-1.5+0.05 = -0.25; new 0-0.25 = -0.25), so mean ink is preserved
+         and only the variance goes. Street indices, knee 0.10, with the kerb
+         classifier's tk above:
+           unlit       le 0.0075 -> 0.45  blank (blank regardless: glyph colour
+                                          is r*0.72, mx~1.4 < 7, put() returns)
+           tar joint   tk 0.55 bump -0.5  -> 1.89  '.'
+           gutter      tk 0.62 bump -0.5  -> 2.12  ','
+           dry road    tk 1.00            -> 3.69  ':'
+           paving score tk 0.62 bump -0.4 -> 3.02  ':'
+           pavement    tk 1.00            -> 4.58  ';'
+           puddle      le 0.202           -> 6.44  '~'
+           kerb lip    tk 2.10 bump +1.6  -> 7.97  '='
+         Six marks, monotone in luminance, and the near-to-far run
+         ';' ':' ',' '.' blank is the recession the scatter was hiding.
+         '+' no longer occurs on the carriageway. bump stays: it is hashed on
+         world coords (fx*3, 0.333u cells) and on real tile seams, so it
+         perturbs the band boundary without shimmering. The wet mask and every
+         colour are untouched - this changes which mark is drawn, not how
+         bright the street is.
+         If lamp pools show visible contour ARCS where the old noise dissolved
+         them, widen (tex-0.5)*0.7 to *1.1 - still under half the old 2.4 -
+         before reverting. */
+      let gch=onRoof?FRAMP[clamp(((le/(le+0.30))*10+bump+tex*2.4-1.5+0.8)|0,0,9)]
+                    :SRAMP[clamp(((le/(le+0.10))*10+bump+(tex-0.5)*0.7-0.25)|0,0,9)];
       /* ~1.5% of road tiles carry a grate mark in the tile centre */
       if(!onRoof&&rowDist<14&&(T.flag[ti]&ROAD)&&hash2(tx*131,ty*57)>0.985){
         const fxg=fx-tx,fyg=fy-ty;
@@ -3770,13 +3958,66 @@ function render(){
         const mk=T.sign[ti];
         if(mk>0){
           const fxf=fx-tx, fyf=fy-ty, vert=mk<10, m=vert?mk:mk-10;
-          let paint=0;
+          /* CONVERGENCE. rowDist=EPR/p with EPR=P.z*projRows=39.68, so one
+             screen row steps rowDist^2/39.68 world units along the ray: 0.23
+             tiles at 3u, 1.61 at 8u, 2.00 at 8.9u, 10.1 at 20u. Once a row
+             steps more than half a pattern period the pattern is below Nyquist
+             and (ty&3) / fyf turn into per-row noise - the paint stops being a
+             line and becomes isolated marks that re-roll as the camera moves.
+             That is the "does not converge to a vanishing point" half of the
+             floor complaint.
+             rowDist alone is the WRONG gate. How fast a pattern is swept
+             depends on which world axis it varies in and where that axis
+             points: a dashed centre line on a CROSS street varies in ty while
+             the ray barely advances in y, so it is swept by columns (0.13
+             tiles/col at 20u - a 4-tile period spans 31 columns) and is
+             perfectly resolved. Gating on distance would flatten every cross
+             street into a solid stripe, and the zebra - which for a vert road
+             varies in fxf, the ACROSS axis - would go solid from 9u out on the
+             very street you are looking down. alng/acr are the row step
+             measured along the pattern's OWN axis: rowDist^2/EPR when you look
+             down the street (dash breaks at >2 tiles = 8.9u, exactly as
+             derived) and near zero across it. */
+          const ra=ry<0?-ry:ry, rb=rx<0?-rx:rx, rs=rowDist*rowDist/EPR;
+          const alng=(vert?ra:rb)*rs;          /* dash + stop-line axis */
+          let paint=0,pw=1;
           if(m===1) paint=(vert?Math.abs(fxf-0.5)<0.13:Math.abs(fyf-0.5)<0.13)&&
-                          (((vert?ty:tx)&3)<2);                    /* dashed centre  */
-          else if(m===2) paint=(vert?(fyf>0.70):(fxf>0.70));       /* stop line      */
-          else if(m===3) paint=((((vert?fxf:fyf)*3)|0)&1)===0;     /* zebra bars     */
+                          (alng>2||((vert?ty:tx)&3)<2);            /* dashed centre  */
+          else if(m===2){ /* a 0.30-tile strip vanishes between rows past 3.45u.
+                             Widen it to whatever one row actually covers and
+                             pay the width straight back in pw, so it is
+                             bit-identical inside 3.45u, one solid row far away,
+                             and pops at no threshold. */
+                          const hw=alng<0.30?0.30:(alng>1?1:alng);
+                          paint=(vert?fyf:fxf)>1-hw; pw=0.30/hw; }
+          else if(m===3){ const acr=(vert?rb:ra)*rs;               /* zebra bars     */
+                          if(acr<0.333) paint=((((vert?fxf:fyf)*3)|0)&1)===0;
+                          /* 0.66, not 0.5: ((x*3)|0)&1)===0 picks 0 and 2 of
+                             three, a 2/3 duty cycle. 0.66 conserves the ink. */
+                          else { paint=1; pw=0.66; } }
           if(paint){
-            const pk=0.55+0.45*fog;
+            /* was 0.55+0.45*fog. ROADG=0.88 / ROADCAP=62 made that ramp
+               perfectly flat: sb0=mr*0.88+6 is 136 at 3u and still 81 at 45u,
+               both far above the 62 cap, so after setBack's step-12 rounding
+               the paint's backing - ~97% of the cell - was EXACTLY 60 at every
+               distance from 3u to the view limit, over asphalt at 12-24. A
+               constant-60 ribbon cannot recede.
+               0.18+0.82*fog*fog is 0.897/0.740/0.442/0.227 at 3/8/20/35u. It
+               clears the cap only below pk=0.424, i.e. past ~21u, so the near
+               ground is untouched (backing still 60; put() alpha 43/64 vs
+               44/64, one step, invisible) and the far half finally steps down:
+               backing 60 to ~25u, 48 to ~31.5u, 36 beyond, with glyph alpha
+               0.672/0.500/0.344/0.281 at 3/20/35/45u against the old
+               0.688/0.641/0.594/0.547.
+               pw stays 1 for the centre line on purpose. Halving it to match
+               the duty cycle it just gave up puts mr at 33 and the backing at
+               36 by 20u, one step from lamp-lit asphalt at 24 - the line would
+               dissolve into the road, the opposite of the fix. The 0.18 floor
+               keeps it alive at the vanishing point instead of dropping out
+               around 30u.
+               Stronger near-to-mid recession needs a lower ROADCAP or ROADG,
+               which touches every road cell - a separate change. */
+            const pk=(0.18+0.82*fog*fog)*pw;
             mr=r*0.35+150*pk; mg=g*0.35+146*pk; mb=b*0.35+132*pk;
             gch=m===3?C_('='):C_('-');
           }
@@ -3849,6 +4090,13 @@ function render(){
      flushes again, so put() here only ever wrote into a cell buffer that was
      already painted - the rain has never produced a single pixel. The wet
      road still reads rainPow; only the (invisible) drops are gone. */
+  /* Bob is a render-time camera offset only. Restored by ASSIGNMENT, not by
+     -=bobZ: (z+d)-d is not exactly z in IEEE754, and P.z is otherwise only
+     ever written on teleport, so a subtract would let the eye height random
+     walk for the life of the session. This sits after drawBeams/drawSprites
+     above, which must see the bobbed eye or sprite feet float off the ground,
+     and render() contains no `return`, so it always runs. */
+  P.z=camZ0;
   ctx.globalAlpha=1;
 
   /* BLOOM DELETED. It downscaled the frame 4.5x, squared it, and composited
