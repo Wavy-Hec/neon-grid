@@ -2396,7 +2396,7 @@ let EXPOSURE=1.15, TONE_KNEE=0.30;
    24, mullion 36, corner 72, lit pane 156 - five rungs, each at least one
    step of the 12-step backing quantiser apart, so every one of them is a
    visible edge rather than arithmetic nobody can see. */
-let ROADG=0.22, ROADCAP=104, WALLF=0.0, PANEG=0.62;
+let ROADG=0.88, ROADCAP=62, WALLF=0.0, PANEG=0.62;
 let GLASSK=1.05, SPANK=0.30, MULLK=0.22, CORNK=1.30;
 let curKey=-1,curSY=0,curA=-1;
 /* Hue comes from the normalised colour (which picks the atlas) and
@@ -3739,7 +3739,7 @@ function render(){
          stays dim, it just stops being empty. Matches the FAR tiers at
          2595/2635, which already use knee 0.10. Roof half unchanged: it
          runs gain 1.0 and already lands on index ~5. */
-      let gch=FRAMP[clamp(((le/(le+(onRoof?0.30:0.10)))*10+bump+tex*0.42-0.21+(onRoof?0.8:0.45))|0,0,7)];
+      let gch=FRAMP[clamp(((le/(le+(onRoof?0.30:0.10)))*10+bump+tex*2.4-1.5+(onRoof?0.8:0.05))|0,0,9)];
       /* ~1.5% of road tiles carry a grate mark in the tile centre */
       if(!onRoof&&rowDist<14&&(T.flag[ti]&ROAD)&&hash2(tx*131,ty*57)>0.985){
         const fxg=fx-tx,fyg=fy-ty;
@@ -3761,7 +3761,11 @@ function render(){
          asphalt without becoming a light source. Everything is keyed on the
          cell's own position inside the tile, so the paint is a stripe with
          real edges rather than a whole tile changing colour. */
-      let mr=r,mg=g,mb=b;
+      /* 0.72: the mark now sits BELOW its own backing, so the floor's
+         texture is dark grit and tar joints on a lit surface rather than
+         bright confetti on black. The paint block below overwrites mr/mg/mb
+         from r/g/b directly, so lane markings keep their full brightness. */
+      let mr=r*0.72,mg=g*0.72,mb=b*0.72;
       if(!onRoof){
         const mk=T.sign[ti];
         if(mk>0){
