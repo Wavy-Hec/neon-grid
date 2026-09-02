@@ -494,13 +494,23 @@ const LM=new Float32Array(W*H*3);     /* baked light, one bake per city */
 const dmap=new Uint8Array(W*H);
 let lights=[],ents=[],nearEnts=[],shardTotal=0,aeros=[];
 
+/* Each district reads as its own place: a dominant family plus two
+   contrasting accents, and a spread wide enough that neighbouring towers
+   differ. Six hues each, not four, and the picks are weighted so the first
+   two dominate and the last is rare - that is what makes an accent an
+   accent instead of a fifth equal colour. */
 const DISTRICTS=[
-  {name:'KOWLOON SPRAWL',hues:[300,326,192,268]},
-  {name:'GINZA-9',hues:[188,206,46,320]},
-  {name:'RUST CANAL',hues:[18,34,160,4]},
-  {name:'THE ARCOLOGY',hues:[204,262,178,286]},
-  {name:'FLATLINE ROW',hues:[348,286,54,196]}
+  {name:'KOWLOON SPRAWL',hues:[300,326,282,192,168,44]},   /* magenta sprawl, jade + amber accents */
+  {name:'GINZA-9',       hues:[188,206,168,46,320,270]},   /* cyan/teal, gold + hot pink */
+  {name:'RUST CANAL',    hues:[18,34,6,160,196,286]},      /* rust and sodium, cold accents */
+  {name:'THE ARCOLOGY',  hues:[204,262,224,178,286,320]},  /* cool corporate blue-violet */
+  {name:'FLATLINE ROW',  hues:[348,286,54,196,318,166]}    /* red-violet, sour yellow */
 ];
+/* first hue twice as likely as the last: a district has a colour, not a set */
+function districtHue(d){
+  const h=d.hues, r=rnd();
+  return h[r<0.30?0:(r<0.55?1:(r<0.72?2:(r<0.85?3:(r<0.95?4:5))))];
+}
 const WORDS=['SUSHI','RAMEN','NOODLE','CHROME','SYNTH','VOID','ORBITAL','PACHINKO','NEURO',
   'ZAIBATSU','BLACKICE','GRID','HEX','LOVE','HOTEL','CYBERWARE','CLINIC','ARMS','404','DATA',
   'DREAM','ANALOG','KIRIN','MOTEL','WIRE','PAWN','TOKEN','GHOST','STIM','FLUX','ONI','LOTUS',
@@ -684,6 +694,7 @@ function genCity(seed){
   }
 
   RV=vr;RH=hr;
+  paintRoads(vr,hr);
   populate(vr,hr);
   carveBar();
   bakeLight();
@@ -916,7 +927,11 @@ function building(x0,y0,x1,y1,D,force){
   const tall=style==='tower'||style==='mega';
   /* Real skyline scale. At the old 4-13 you only ever saw two low boxes
      up the street; the towers have to run off the top of the frame. */
-  const height=style==='mega'?rf(24,46):style==='tower'?rf(14,30):style==='shop'?rf(1.8,3.4):rf(7,17);
+  /* 'shop' was 1.8-3.4 units - 5-10 metres against a 1.5m eye - and it is
+     the most common style, so half the city stood barely above head height
+     and the player read as tall as the buildings. 4.5-9 units is 13-27m,
+     a proper 4-9 storey street wall. */
+  const height=style==='mega'?rf(24,46):style==='tower'?rf(14,30):style==='shop'?rf(4.5,9):rf(9,19);
 
   /* dark concrete. The facade is a backdrop — lit windows and neon are
      what the eye should land on, and they only read against something dim */
@@ -927,7 +942,7 @@ function building(x0,y0,x1,y1,D,force){
   /* Districts are the palette. Reaching past dist.hues to a global rainbow
      made every neighbour a different hue family, so no block ever read as
      one place. */
-  const wHue=pick(dist.hues)+ri(-10,10);
+  const wHue=districtHue(dist)+ri(-16,16);
   /* max(1,...): 0 is the "not a building" sentinel. Trees are SOLID with a
      height but never get a wc, so at 0 they were being given hue-0 windows
      and every tree lit up with a grid of red panes. */
@@ -1203,6 +1218,42 @@ function lampColor(){
   if(r<0.78) return [140,220,255];
   return [255,110,205];
 }
+/* Road paint, baked once. T.sign is free on a road tile (it only carries an
+   EMIT sign index, and roads never emit), so one byte per tile records what
+   the floor pass should draw: 1 centre dash, 2 stop line, 3 crossing - plus
+   10 for the horizontal set, so the floor knows which axis the paint runs
+   along without looking anything up. */
+function paintRoads(vr,hr){
+  const inH=y=>{ for(const r of hr){ if(y>=r.p&&y<r.p+r.w) return r; } return null; };
+  const inV=x=>{ for(const r of vr){ if(x>=r.p&&x<r.p+r.w) return r; } return null; };
+  const isRoad=(x,y)=>inb(x,y)&&(T.flag[y*W+x]&ROAD)!==0;
+  for(const r of vr){
+    const cx=Math.floor(r.p+r.w/2);
+    for(let y=1;y<H-1;y++){
+      if(!isRoad(cx,y)) continue;
+      const h=inH(y);
+      if(h){ continue; }                                   /* inside a junction: bare */
+      /* approach to a junction: crossing, then a stop line at the mouth */
+      const near=inH(y+1)||inH(y-1), near2=inH(y+2)||inH(y-2);
+      if(near){ for(let x=r.p;x<r.p+r.w;x++) if(isRoad(x,y)) T.sign[y*W+x]=2; continue; }
+      if(near2){ for(let x=r.p;x<r.p+r.w;x++) if(isRoad(x,y)) T.sign[y*W+x]=3; continue; }
+      if(r.w>=3) T.sign[y*W+cx]=1;
+    }
+  }
+  for(const r of hr){
+    if(r.water) continue;
+    const cy=Math.floor(r.p+r.w/2);
+    for(let x=1;x<W-1;x++){
+      if(!isRoad(x,cy)) continue;
+      if(inV(x)) continue;
+      const near=inV(x+1)||inV(x-1), near2=inV(x+2)||inV(x-2);
+      if(near){ for(let y=r.p;y<r.p+r.w;y++) if(isRoad(x,y)) T.sign[y*W+x]=12; continue; }
+      if(near2){ for(let y=r.p;y<r.p+r.w;y++) if(isRoad(x,y)) T.sign[y*W+x]=13; continue; }
+      if(r.w>=3) T.sign[cy*W+x]=11;
+    }
+  }
+}
+
 function populate(vr,hr){
   const lamp=(x,y)=>{
     if(!inb(x,y)||(T.flag[y*W+x]&(WALK|ROAD))===0)return;
@@ -2324,11 +2375,15 @@ let bkr=0,bkg=0,bkb=0,bkon=0,optBack=true;
 /* backing colour for the cells about to be put(); quantised to 16 levels so
    neighbouring columns at slightly different fog merge into one run */
 function setBack(r,g,b){
-  /* 8 levels, not 16: neighbouring columns at slightly different fog now
-     land on the SAME value, so a wall is one wide run that does not re-split
-     every frame as you walk. That re-splitting is a large part of what read
-     as shimmer in motion. */
-  bkr=(r>255?255:r)&0xE0; bkg=(g>255?255:g)&0xE0; bkb=(b>255?255:b)&0xE0; bkon=1;
+  /* ROUND to a step; never MASK. &0xE0 truncated everything under 32 to
+     zero, and asphalt backing is 11-26 - so the entire road was painted pure
+     black. Rounding to 12 keeps the same run-merging (adjacent columns at
+     slightly different fog still land on one value, which is what stops the
+     shimmer) while dark surfaces survive. */
+  const q=12;
+  bkr=Math.round((r>255?255:r)/q)*q;
+  bkg=Math.round((g>255?255:g)/q)*q;
+  bkb=Math.round((b>255?255:b)/q)*q; bkon=1;
 }
 function noBack(){ bkon=0; }
 function put(code,px,py,r,g,b){
@@ -2342,7 +2397,7 @@ function put(code,px,py,r,g,b){
   cellCode[i]=code; cellR[i]=r>1023?1023:r; cellG[i]=g>1023?1023:g; cellB[i]=b>1023?1023:b;
 }
 function flush(){
-  window.__cellBuf=cellCode; window.__cellDim=[cols,rows];   /* debug hook */
+  window.__cellBuf=cellCode; window.__cellDim=[cols,rows]; window.__bkOn=bkOn;   /* debug hook */
   if(optBack){
     ctx.globalAlpha=1; curA=1;
     for(let y=0;y<rows;y++){
@@ -3392,7 +3447,28 @@ function render(){
         if(fxg>0.28&&fxg<0.72&&fyg>0.3&&fyg<0.7) gch=G.DH;
       }
       if(onRoof) setBack(15*fog+4,16*fog+4,21*fog+6); else setBack(11*fog+4,12*fog+4,22*fog+6);
-      put(gch,xpx,ys[y],r,g,b);
+      /* Road paint. Worn white, so it lifts the cell well clear of the
+         asphalt without becoming a light source. Everything is keyed on the
+         cell's own position inside the tile, so the paint is a stripe with
+         real edges rather than a whole tile changing colour. */
+      let mr=r,mg=g,mb=b;
+      if(!onRoof){
+        const mk=T.sign[ti];
+        if(mk>0){
+          const fxf=fx-tx, fyf=fy-ty, vert=mk<10, m=vert?mk:mk-10;
+          let paint=0;
+          if(m===1) paint=(vert?Math.abs(fxf-0.5)<0.13:Math.abs(fyf-0.5)<0.13)&&
+                          (((vert?ty:tx)&3)<2);                    /* dashed centre  */
+          else if(m===2) paint=(vert?(fyf>0.70):(fxf>0.70));       /* stop line      */
+          else if(m===3) paint=((((vert?fxf:fyf)*3)|0)&1)===0;     /* zebra bars     */
+          if(paint){
+            const pk=0.55+0.45*fog;
+            mr=r*0.35+150*pk; mg=g*0.35+146*pk; mb=b*0.35+132*pk;
+            gch=m===3?C_('='):C_('-');
+          }
+        }
+      }
+      put(gch,xpx,ys[y],mr,mg,mb);
 
       /* Canal reflection: mirror this column's wall about the horizon. The
          cast for this ray already found the wall, so the reflection costs a
