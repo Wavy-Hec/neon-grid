@@ -3845,7 +3845,7 @@ function render(){
            far street.
            Out-of-range ti+-1 / ti+-W read undefined from a Uint8Array and
            undefined&4 is 0, so no bounds guard is needed. */
-        const me=T.flag[ti],fxf=fx-tx,fyf=fy-ty,ew=0.045+rowDist*0.011;
+        const me=T.flag[ti],fxf=fx-tx,fyf=fy-ty,ew=Math.min(0.16,0.045+rowDist*0.011);
         let kerb=0;
         if(me&WALK){
           if((fxf<ew&&(T.flag[ti-1]&(ROAD|ALLEY)))||(fxf>1-ew&&(T.flag[ti+1]&(ROAD|ALLEY)))||
@@ -3855,7 +3855,7 @@ function render(){
              (fyf<ew&&(T.flag[ti-W]&WALK))||(fyf>1-ew&&(T.flag[ti+W]&WALK))) kerb=1;
         }
         if(kerb){
-          if(me&WALK){tk=2.10;bump=1.6;}   /* kerb lip */
+          if(me&WALK){tk=1.45;bump=0.8;}   /* kerb lip */
           else {tk=0.62;bump=-0.5;}        /* gutter   */
         }else if(rowDist<18&&(fxf<0.08||fyf<0.08)){
           if(me&WALK){tk=0.62;bump=-0.4;}              /* paving score line */
