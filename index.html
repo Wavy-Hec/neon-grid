@@ -3397,7 +3397,7 @@ function render(){
                  continuous strip into a row of separate shops. Runs the full
                  band height, so it slices through the awnings too. */
               r=ar*lr*0.85+6;g=ag*lg*0.85+6;b=ab*lb*0.85+8;
-              code=G.V;
+              code=G.V; bkK=0.40;
             }else if(v>1.02){
               /* Awning PER BAY, not per facade. The same v band lit on
                  every column read as one unbroken tube across the block -
@@ -3416,12 +3416,14 @@ function render(){
                 const wt2=hash3((wallU*tf)|0,(v*tf)|0,5), k2=0.80+wt2*0.26;
                 r=ar*lr*k2*0.75;g=ag*lg*k2*0.75;b=ab*lb*k2*0.75;  /* bare wall bay */
                 code=wt2<0.34?C_(':'):(wt2<0.72?C_('-'):C_('='));
+                bkK=0.55+wt2*0.20;
               }
             }else if(bayU>0.34&&bayU<0.66&&shopH<0.42){
               const dg=hash3((bayU*tf)|0,(v*tf)|0,bay+9);
               const wg=(0.30+0.70*Math.max(0,1-v*0.8))*(0.66+dg*0.5);
               r=255*wg;g=196*wg;b=126*wg;                  /* open doorway */
-              code=v<0.22?C_('='):(dg<0.55?G.SP:(dg<0.82?C_('.'):C_(':')));
+              code=v<0.22?C_('='):(dg<0.45?C_('.'):(dg<0.82?C_(':'):C_('|')));
+              bkK=0.70+dg*0.25;               /* an open doorway glows, per cell */
             }else{
               /* Glazing with grain at SCREEN resolution, in glyph AND
                  level. Colour was constant per bay, so one bay up close
@@ -3434,7 +3436,8 @@ function render(){
               const wcol=winCol(T.wc[ti],shopH);
               r=wcol[0]*gk+8;g=wcol[1]*gk+8;b=wcol[2]*gk+10;
               /* glass is the backing; a mark only where it catches light */
-              code=sg2<0.62?G.SP:(sg2<0.86?C_('.'):C_('='));
+              code=sg2<0.30?C_(':'):(sg2<0.62?C_('.'):(sg2<0.86?C_('-'):C_('=')));
+              bkK=0.46+sg2*0.30;              /* glass: dark, grained, never flat */
               if(shNear>0){
                 /* ---- the room behind the glass ----
                    Back wall with two shelves of stock, a counter across the
@@ -4023,13 +4026,13 @@ function render(){
                              pay the width straight back in pw, so it is
                              bit-identical inside 3.45u, one solid row far away,
                              and pops at no threshold. */
-                          const hw=alng<0.30?0.30:(alng>1?1:alng);
-                          paint=(vert?fyf:fxf)>1-hw; pw=0.30/hw; }
+                          const hw=alng<0.18?0.18:(alng>1?1:alng);
+                          paint=(vert?fyf:fxf)>1-hw; pw=0.18/hw; }
           else if(m===3){ const acr=(vert?rb:ra)*rs;               /* zebra bars     */
-                          if(acr<0.333) paint=((((vert?fxf:fyf)*3)|0)&1)===0;
+                          if(acr<0.333) paint=((((vert?fxf:fyf)*6)|0)&1)===0;   /* 3 bars per tile, 50% duty */
                           /* 0.66, not 0.5: ((x*3)|0)&1)===0 picks 0 and 2 of
                              three, a 2/3 duty cycle. 0.66 conserves the ink. */
-                          else { paint=1; pw=0.66; } }
+                          else { paint=1; pw=0.50; } }
           if(paint){
             /* was 0.55+0.45*fog. ROADG=0.88 / ROADCAP=62 made that ramp
                perfectly flat: sb0=mr*0.88+6 is 136 at 3u and still 81 at 45u,
@@ -4053,7 +4056,9 @@ function render(){
                Stronger near-to-mid recession needs a lower ROADCAP or ROADG,
                which touches every road cell - a separate change. */
             const pk=(0.18+0.82*fog*fog)*pw;
-            mr=r*0.35+150*pk; mg=g*0.35+146*pk; mb=b*0.35+132*pk;
+            /* 92, not 150: at 3u that is ~85 on asphalt at ~20 - clearly paint,
+               no longer the brightest thing on screen. */
+            mr=r*0.35+92*pk; mg=g*0.35+90*pk; mb=b*0.35+82*pk;
             gch=m===3?C_('='):C_('-');
           }
         }
