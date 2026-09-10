@@ -1595,7 +1595,7 @@ addEventListener('blur',()=>{for(const k in keys)keys[k]=false;touchMove.x=touch
 let locked=false;
 cv.addEventListener('click',()=>{
   if(!started){boot();return;}
-  if(!locked&&cv.requestPointerLock) cv.requestPointerLock();
+  if(!locked&&cv.requestPointerLock){ const pl=cv.requestPointerLock(); if(pl&&pl.catch) pl.catch(()=>{}); }
 });
 document.addEventListener('pointerlockchange',()=>{locked=(document.pointerLockElement===cv);});
 addEventListener('mousemove',e=>{
@@ -1612,8 +1612,16 @@ addEventListener('mousemove',e=>{
 /* touch: left half walks, right half looks */
 const elTouch=$('touch'),elStick=$('stick'),elTBtn=$('tbtn');
 let moveId=null,lookId=null,mOrigin={x:0,y:0},lookLast=0,tapStart=0,tapMoved=0;
-if(('ontouchstart' in window)||navigator.maxTouchPoints>0){
-  elTouch.style.display='block';
+/* This used to switch on for ('ontouchstart' in window)||maxTouchPoints>0.
+   Every Windows laptop with a touchscreen reports maxTouchPoints=10 even
+   when driven by a mouse, so #touch - a full-screen div at z-index 7 with
+   no pointer-events:none - was laid OVER the canvas and swallowed every
+   click: no click-to-start, no pointer lock, mouse look dead, with the help
+   line still promising "mouse to look". The overlay now appears only once a
+   finger actually touches the page; the handlers below are wired
+   regardless, so a real phone loses nothing. */
+{
+  addEventListener('touchstart',()=>{elTouch.style.display='block';},{once:true,passive:true});
   elTouch.addEventListener('touchstart',e=>{
     if(!started){boot();return;}
     for(const t of e.changedTouches){
@@ -1799,7 +1807,7 @@ function initAudio(){
 function toggleSound(){
   initAudio();
   if(!AC)return;
-  if(AC.state==='suspended') AC.resume();
+  if(AC.state==='suspended') AC.resume().catch(()=>{});
   optSound=!optSound;
   masterGain.gain.setTargetAtTime(optSound?.5:0,AC.currentTime,.25);
   if(optSound){ barT=Math.max(barT,AC.currentTime+0.15); pump(); }
@@ -4673,7 +4681,7 @@ function boot(){
      jazz bed can start right here. M still mutes. */
   initAudio();
   if(AC){
-    if(AC.state==='suspended') AC.resume();
+    if(AC.state==='suspended') AC.resume().catch(()=>{});
     optSound=true;
     masterGain.gain.setTargetAtTime(.5,AC.currentTime,.6);
     barT=Math.max(barT,AC.currentTime+0.2);
