@@ -9,15 +9,20 @@
   html, body { margin: 0; height: 100%; background: #000; color: #ccc; font: 13px monospace; overflow: hidden; }
   canvas { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
   #pad { position: fixed; right: 12px; bottom: 44px; display: none; gap: 8px; }
-  #pad button {
+  #pad2 { position: fixed; right: 12px; top: 12px; display: none; gap: 8px; }
+  #pad button, #pad2 button {
     width: 56px; height: 56px; padding: 0; border: 1px solid #555; border-radius: 0; background: #000; color: #ccc;
     font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
+  #pad2 button { width: 48px; height: 36px; }
+  #notice { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); }
 </style>
 </head>
 <body>
 <canvas id="view"></canvas>
 <div id="pad"><button data-k="c">down</button><button data-k=" ">up</button><button data-k="f">f</button></div>
+<div id="pad2"><button data-k="m">sound</button><button data-k="n">new</button></div>
+<div id="notice" hidden>graphics reset, restoring</div>
 
 <script>
 'use strict';
@@ -213,14 +218,16 @@ for (let f = 0; f < 6; f++) {
 }
 const wet = new Uint8Array(S * S * 6);
 
+// the point (s, t), each -1..1, on cube face f; same face order and orientation as WebGL's cube maps
+const faceVec = (f, s, t) => f === 0 ? [1, -t, -s] : f === 1 ? [-1, -t, s] : f === 2 ? [s, 1, t]
+                           : f === 3 ? [s, -1, -t] : f === 4 ? [s, -t, 1] : [-s, -t, -1];
+
 // unit direction of every texel centre, per cube face
 const dirs = [];
 for (let f = 0; f < 6; f++) {
   const D = new Float32Array(S * S * 3);
   for (let j = 0, k = 0; j < S; j++) for (let i = 0; i < S; i++, k += 3) {
-    const s = (2 * i + 1) / S - 1, t = (2 * j + 1) / S - 1, l = 1 / Math.hypot(1, s, t);
-    const d = f === 0 ? [1, -t, -s] : f === 1 ? [-1, -t, s] : f === 2 ? [s, 1, t]
-            : f === 3 ? [s, -1, -t] : f === 4 ? [s, -t, 1] : [-s, -t, -1];
+    const s = (2 * i + 1) / S - 1, t = (2 * j + 1) / S - 1, l = 1 / Math.hypot(1, s, t), d = faceVec(f, s, t);
     D[k] = d[0] * l; D[k + 1] = d[1] * l; D[k + 2] = d[2] * l;
   }
   dirs.push(D);
@@ -235,12 +242,21 @@ function cubeUV(d) {
   else { f = z > 0 ? 4 : 5; s = (z > 0 ? x : -x) / az; t = -y / az; }
   return [f, (s + 1) * .5 * S - .5, (t + 1) * .5 * S - .5];
 }
+// height of texel (i, j) of face f. One texel past the edge it reads the neighbouring face, the way
+// the GPU's seamless cube filtering does, so what you stand on matches what is drawn across the seams
+function texelH(f, i, j) {
+  if (i >= 0 && i < S && j >= 0 && j < S) return planet.height[f][j * S + i];
+  const [g, u, v] = cubeUV(faceVec(f, (2 * i + 1) / S - 1, (2 * j + 1) / S - 1));
+  return planet.height[g][clamp(Math.round(v), 0, S - 1) * S + clamp(Math.round(u), 0, S - 1)];
+}
 function heightAt(d) {
+  const [f, u, v] = cubeUV(d), x = Math.floor(u), y = Math.floor(v), fx = u - x, fy = v - y;
+  return lerp(lerp(texelH(f, x, y), texelH(f, x + 1, y), fx), lerp(texelH(f, x, y + 1), texelH(f, x + 1, y + 1), fx), fy);
+}
+// material under a direction, nearest texel
+function matAt(d) {
   const [f, u, v] = cubeUV(d);
-  const x = clamp(Math.floor(u), 0, S - 2), y = clamp(Math.floor(v), 0, S - 2);
-  const fx = clamp(u - x, 0, 1), fy = clamp(v - y, 0, 1);
-  const h = planet.height[f], i = y * S + x;
-  return lerp(lerp(h[i], h[i + 1], fx), lerp(h[i + S], h[i + S + 1], fx), fy);
+  return planet.mat[f][clamp(Math.round(v), 0, S - 1) * S + clamp(Math.round(u), 0, S - 1)];
 }
 // the surface the ship stops at: terrain, or the sea if there is one
 const groundAt = d => Math.max(heightAt(d), planet.sea ? 0 : -1e9);
@@ -329,12 +345,18 @@ function scatter() {
   for (const P of planet.K.props) {
     const c = hex(P.col);
     for (let n = 0; n < P.n; n++) {
-      const f = ri(0, 5), ci = ri(8, S - 9), cj = ri(8, S - 9), k = cj * S + ci;
-      const H = planet.height[f], A = planet.albedo[f], h0 = H[k], hn = h0 / top;
+      // centres are uniform over the sphere: cube texels shrink toward the edges, so picking
+      // texels uniformly would crowd the props there
+      const [f, cu, cv] = cubeUV(onSphere()), ci = Math.round(cu), cj = Math.round(cv);
+      const r = rf(P.r[0], P.r[1]), hh = rf(P.h[0], P.h[1]);
+      if (ci < 1 || cj < 1 || ci > S - 2 || cj > S - 2) continue;
+      const d0 = faceDir(f, ci, cj), texel = planet.R * len(sub(faceDir(f, ci + 1, cj), d0));   // texel size here, metres
+      const w = Math.ceil(r / texel) + 1;
+      if (ci - w < 0 || cj - w < 0 || ci + w > S - 1 || cj + w > S - 1) continue;   // the whole stamp stays on one face
+      const k = cj * S + ci, H = planet.height[f], A = planet.albedo[f], h0 = H[k], hn = h0 / top;
       if (hn < P.hn[0] || hn > P.hn[1] || h0 < .3 || wet[f * S * S + k] / 255 < P.wet) continue;
-      if (Math.abs(H[k + 1] - H[k - 1]) + Math.abs(H[k + S] - H[k - S]) > 2.2) continue;
-      const d0 = faceDir(f, ci, cj), r = rf(P.r[0], P.r[1]), hh = rf(P.h[0], P.h[1]);
-      for (let j = cj - 6; j <= cj + 6; j++) for (let i = ci - 6; i <= ci + 6; i++) {
+      if ((Math.abs(H[k + 1] - H[k - 1]) + Math.abs(H[k + S] - H[k - S])) / (2 * texel) > 1.4) continue;   // too steep
+      for (let j = cj - w; j <= cj + w; j++) for (let i = ci - w; i <= ci + w; i++) {
         const q = j * S + i, dist = len(sub(faceDir(f, i, j), d0)) * planet.R / r;
         if (dist >= 1) continue;
         const v = h0 + hh * (P.flat ? smooth(1, .55, dist) : Math.pow(1 - dist, .8));
@@ -353,12 +375,26 @@ function paintFace(f) {
   const H = planet.height[f], A = planet.albedo[f], Nm = planet.normal[f], M = planet.mat[f], D = dirs[f], W = wet.subarray(f * S * S);
   const { R, sea, lush, dry, K, peak } = planet;
   const rock = hex(K.rock), ice = hex(K.ice), bed = hex(K.bed), vein = K.veins && hex(K.veins);
-  const rad = q => R + (sea ? Math.max(H[q], 0) : H[q]);
+  const rad = h => R + (sea ? Math.max(h, 0) : h);
+  // position of texel (i, j); past the edge of the face it comes from the neighbouring face
+  const P = [0, 0, 0];
+  const at = (i, j) => {
+    const v = norm(faceVec(f, (2 * i + 1) / S - 1, (2 * j + 1) / S - 1)), r = rad(texelH(f, i, j));
+    P[0] = v[0] * r; P[1] = v[1] * r; P[2] = v[2] * r;
+    return P;
+  };
   for (let j = 0, k = 0; j < S; j++) for (let i = 0; i < S; i++, k++) {
-    const l = i ? k - 1 : k, r = i < S - 1 ? k + 1 : k, u = j ? k - S : k, d = j < S - 1 ? k + S : k;
-    const rl = rad(l), rr = rad(r), ru = rad(u), rd = rad(d);
-    const ax = D[r * 3] * rr - D[l * 3] * rl, ay = D[r * 3 + 1] * rr - D[l * 3 + 1] * rl, az = D[r * 3 + 2] * rr - D[l * 3 + 2] * rl;
-    const bx = D[d * 3] * rd - D[u * 3] * ru, by = D[d * 3 + 1] * rd - D[u * 3 + 1] * ru, bz = D[d * 3 + 2] * rd - D[u * 3 + 2] * ru;
+    let ax, ay, az, bx, by, bz;
+    if (i > 0 && j > 0 && i < S - 1 && j < S - 1) {
+      const l = k - 1, r = k + 1, u = k - S, d = k + S, rl = rad(H[l]), rr = rad(H[r]), ru = rad(H[u]), rd = rad(H[d]);
+      ax = D[r * 3] * rr - D[l * 3] * rl; ay = D[r * 3 + 1] * rr - D[l * 3 + 1] * rl; az = D[r * 3 + 2] * rr - D[l * 3 + 2] * rl;
+      bx = D[d * 3] * rd - D[u * 3] * ru; by = D[d * 3 + 1] * rd - D[u * 3 + 1] * ru; bz = D[d * 3 + 2] * rd - D[u * 3 + 2] * ru;
+    } else {
+      let q = at(i + 1, j); ax = q[0]; ay = q[1]; az = q[2];
+      q = at(i - 1, j); ax -= q[0]; ay -= q[1]; az -= q[2];
+      q = at(i, j + 1); bx = q[0]; by = q[1]; bz = q[2];
+      q = at(i, j - 1); bx -= q[0]; by -= q[1]; bz -= q[2];
+    }
     const nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx, nl = Math.hypot(nx, ny, nz);
     const up = (nx * D[k * 3] + ny * D[k * 3 + 1] + nz * D[k * 3 + 2]) / nl, sc = (up < 0 ? -127.5 : 127.5) / nl;
     Nm[k * 4] = nx * sc + 127.5; Nm[k * 4 + 1] = ny * sc + 127.5; Nm[k * 4 + 2] = nz * sc + 127.5;
@@ -449,6 +485,7 @@ void main() {
 // pass 1: ray march the planet into a small buffer, six pixels per character cell
 const SCENE = `#version 300 es
 precision highp float;
+precision highp int;
 precision highp sampler3D;
 
 uniform samplerCube uHeight, uNormal, uAlbedo, uMat;
@@ -582,6 +619,7 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
   light += vec3(1.5, 1.4, 1.15) * (1. - day) * max(dot(n, -rd), 0.) / (1. + t * t / 250.);
   for (int i = 0; i < 5; i++) {
     vec4 b = uBeacon[i];
+    if (b.w <= 0.) continue;
     vec3 q = p - b.xyz, v = normalize(b.xyz);
     float along = dot(q, v);
     light += uBeaconCol * b.w * 1.6 / (1. + (dot(q, q) - along * along) / 40.);
@@ -735,6 +773,7 @@ void main() {
 // pass 2: one pixel per character cell. picks the character and its two colours
 const CELLS = `#version 300 es
 precision highp float;
+precision highp int;
 uniform sampler2D uScene, uInfo, uShapes, uRamps, uAllow;
 uniform vec2 uGrid;
 uniform int uCount;
@@ -748,11 +787,13 @@ void main() {
   vec2 cell = floor(gl_FragCoord.xy);
   vec3 c[6], avg = vec3(0.), dark;
   float d[6], top = 0., lo = 9., low = 9., em = 0.;
+  // the info buffer holds ids, so read whole texels rather than sampling on the corners they share
+  ivec2 per = textureSize(uInfo, 0) / ivec2(uGrid), part = per / ivec2(2, 3);
   for (int k = 0; k < 6; k++) {
     vec2 uv = (cell + vec2((float(k & 1) + .5) * .5, 1. - (float(k >> 1) + .5) / 3.)) / uGrid;
     c[k] = textureLod(uScene, uv, 0.).rgb;
     avg += c[k] / 6.;
-    em += textureLod(uInfo, uv, 0.).g / 6.;
+    em += texelFetch(uInfo, ivec2(cell) * per + ivec2(k & 1, 2 - (k >> 1)) * part + part / 2, 0).g / 6.;
     float l = dot(c[k], vec3(.299, .587, .114));
     if (l < low) { low = l; dark = c[k]; }
     d[k] = min(1., pow(l, 1.5) * 1.15) * uInk;
@@ -771,7 +812,7 @@ void main() {
 
   // a flat cell takes the character its material uses at this brightness;
   // a cell with an edge in it takes whichever character has the closest shape
-  int m = int(textureLod(uInfo, (cell + .5) / uGrid, 0.).r * 255. + .5);
+  int m = int(texelFetch(uInfo, ivec2(cell) * per + per / 2, 0).r * 255. + .5);
   int level = int(clamp(mean / uInk + dither * .025, 0., 1.) * 15. + .5);
   int tone = int(texelFetch(uRamps, ivec2(level, m), 0).r * 255. + .5), glyph = tone;
   float best = 1e9;
@@ -805,6 +846,7 @@ void main() {
 // pass 3: stamp the characters at full resolution, add bloom, lay the interface text on top
 const FINAL = `#version 300 es
 precision highp float;
+precision highp int;
 uniform sampler2D uScene, uC0, uC1, uGlow, uAtlas, uText, uFont;
 uniform vec2 uRes, uCell, uGrid, uAtlasGrid, uTextCell;
 uniform float uRaw;
@@ -838,7 +880,9 @@ void main() {
   o = vec4(col, 1.);
 }`;
 
-const scene = program(QUAD, SCENE), cells = program(QUAD, CELLS), final = program(QUAD, FINAL);
+let scene, cells, final, sceneFbo, cellFbo;
+function initGL() {
+scene = program(QUAD, SCENE); cells = program(QUAD, CELLS); final = program(QUAD, FINAL);
 texture(0, gl.TEXTURE_CUBE_MAP, gl.LINEAR);                  // height
 texture(1, gl.TEXTURE_CUBE_MAP, gl.LINEAR_MIPMAP_LINEAR);    // normal
 texture(2, gl.TEXTURE_CUBE_MAP, gl.LINEAR_MIPMAP_LINEAR);    // albedo
@@ -859,7 +903,7 @@ gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
   gl.activeTexture(gl.TEXTURE3);
   gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, 32, 32, 32, 0, gl.RED, gl.UNSIGNED_BYTE, n);
 }
-const sceneFbo = gl.createFramebuffer(), cellFbo = gl.createFramebuffer();
+sceneFbo = gl.createFramebuffer(); cellFbo = gl.createFramebuffer();
 gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFbo);
 sceneTex.forEach((t, i) => gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, t, 0));
 gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
@@ -867,6 +911,8 @@ gl.bindFramebuffer(gl.FRAMEBUFFER, cellFbo);
 cellTex.forEach((t, i) => gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, t, 0));
 gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
 gl.bindVertexArray(gl.createVertexArray());
+}
+initGL();
 
 function uploadPlanet() {
   const cube = (unit, faces, internal, format, type, mips) => {
@@ -902,10 +948,15 @@ function drawFont(cw, ch) {
   g.fillStyle = '#000';
   g.fillRect(0, 0, c.width, c.height);
   g.font = `600 100px ${MONO}`;
-  g.font = `600 ${100 * cw / g.measureText('M').width}px ${MONO}`;
+  let px = 100 * cw / g.measureText('M').width;
+  g.font = `600 ${px}px ${MONO}`;
+  // centre the whole glyph box, descenders included, and shrink the font if it does not fit
+  const box = g.measureText('Hgq|_'), asc = box.actualBoundingBoxAscent, desc = box.actualBoundingBoxDescent;
+  const fit = Math.min(1, (ch - 1) / (asc + desc));
+  if (fit < 1) { px *= fit; g.font = `600 ${px}px ${MONO}`; }
   g.fillStyle = '#fff';
   g.textAlign = 'center';
-  const base = Math.round((ch + g.measureText('H').actualBoundingBoxAscent) / 2);
+  const base = Math.round((ch - (asc + desc) * fit) / 2 + asc * fit);
   for (let i = 0; i < FONT.length; i++) {
     const x = (i % 16) * cw, y = (i >> 4) * ch;
     g.save();
@@ -969,10 +1020,14 @@ function buildAtlas() {
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, drawFont(tgrid.cw, tgrid.ch));
 }
 
+// The canvas buffer matches the screen's pixels exactly, so the browser never resamples the glyphs.
+// Phones with fractional pixel ratios (2.625, 2.75) need the observer's exact device-pixel size for that.
+const screenPx = { w: 0, h: 0 };
 function resize() {
-  const dpr = Math.min(devicePixelRatio || 1, 2);
-  canvas.width = Math.floor(innerWidth * dpr);
-  canvas.height = Math.floor(innerHeight * dpr);
+  // the observer's size is used only to settle the rounding; anything further off is not trusted
+  const dpr = devicePixelRatio || 1, dw = innerWidth * dpr, dh = innerHeight * dpr;
+  canvas.width = Math.abs(screenPx.w - dw) <= dpr + 1 ? screenPx.w : Math.round(dw);
+  canvas.height = Math.abs(screenPx.h - dh) <= dpr + 1 ? screenPx.h : Math.round(dh);
   view.size = view.size || (dpr > 1.5 ? 5 : 6);
   view.cw = Math.round(view.size * dpr);
   view.ch = Math.round(view.cw * 1.6);
@@ -991,6 +1046,7 @@ function resize() {
   for (const unit of [6, 7, 8]) alloc(unit, view.cols, view.rows);
   gl.generateMipmap(gl.TEXTURE_2D);
   buildAtlas();
+  padRows();
 }
 
 // ---- game
@@ -1003,9 +1059,11 @@ const me = { dir: [0, 1, 0], h: 0, fwd: [1, 0, 0], pitch: 0, vr: 0 };
 const look = { x: 0, y: 0 }, stick = { x: 0, y: 0 };
 const keys = new Set();
 const held = k => (keys.has(k) ? 1 : 0);
-const ui = { note: '', msg: '', until: 0, help: false, stats: false };
+const ui = { note: '', msg: '', until: 0, help: false, stats: false, leave: -1, padRow: 1e9 };
 
-function say(msg, secs = 5) {
+// minor notes (ship recalled, sound on, sizes) never replace a message that is still up
+function say(msg, secs = 5, minor = false) {
+  if (minor && time < ui.until - .6) return;
   ui.msg = msg;
   ui.until = time + secs;
 }
@@ -1055,6 +1113,12 @@ function fly(dt) {
 }
 
 const floorAt = d => Math.max(heightAt(d), planet.sea ? -.9 : -1e9);
+// steepest rise per metre of the ground at d, measured over a metre
+function slopeAt(d) {
+  const e = norm(cross(d, Math.abs(d[1]) < .9 ? [0, 1, 0] : [1, 0, 0])), g = cross(d, e), k = .5 / planet.R;
+  const across = (a, b) => floorAt(norm(add(d, mul(a, k)))) - floorAt(norm(sub(d, mul(b, k))));
+  return Math.hypot(across(e, e), across(g, g));
+}
 
 function walk(dt) {
   const m = me;
@@ -1063,20 +1127,28 @@ function walk(dt) {
   m.pitch = clamp(m.pitch - look.y * SENS + (held('arrowup') - held('arrowdown')) * dt * 1.2, -1.5, 1.5);
   right = cross(m.fwd, m.dir);
 
-  const f = held('w') - held('s') - stick.y, r = held('d') - held('a') + stick.x;
-  if (f || r) {
-    const step = mul(norm(add(mul(m.fwd, f), mul(right, r))), (held('shift') ? 11 : 5) * dt);
-    const to = norm(add(mul(m.dir, planet.R + m.h), step));
-    // anything steeper than about 60 degrees is a wall, and water or lava deeper than a metre is too
-    const climb = floorAt(to) - Math.max(m.h, floorAt(m.dir));
-    if (climb < len(step) * 1.7 + .02 && !(planet.sea && heightAt(to) < -1)) m.dir = to;
+  // a stick tilted part way walks part speed; a resting thumb does nothing
+  const grounded = m.vr === 0 && m.h <= floorAt(m.dir) + .01;
+  const f = held('w') - held('s') - stick.y, r = held('d') - held('a') + stick.x, amount = Math.min(1, Math.hypot(f, r));
+  let stride = 0;
+  if (amount > .15) {
+    const way = norm(add(mul(m.fwd, f), mul(right, r)));
+    stride = (held('shift') ? 11 : 5) * amount * dt;
+    const here = mul(m.dir, planet.R + m.h), to = norm(add(here, mul(way, stride)));
+    // the slope is judged over a fixed 0.75 m so the limit is the same at any frame rate: anything
+    // steeper than about 60 degrees is a wall, and so is water or lava deeper than a metre
+    const rise = floorAt(norm(add(here, mul(way, .75)))) - Math.max(m.h, floorAt(m.dir));
+    if (rise < .75 * 1.7 && !(planet.sea && heightAt(to) < -1)) m.dir = to;
   }
   const floor = floorAt(m.dir);
+  // walking downhill keeps you on the ground; only a real drop makes you fall
+  if (grounded && m.h > floor && m.h - floor < stride * 1.7 + .02) m.h = floor;
   m.vr -= 7 * dt;
   m.h += m.vr * dt;
   if (m.h <= floor) {
     m.h = floor;
-    m.vr = held(' ') ? 4.6 : 0;
+    // you can only jump off ground you could walk on, so held space does not climb walls
+    m.vr = held(' ') && slopeAt(m.dir) < 1.7 ? 4.6 : 0;
   }
   m.fwd = norm(sub(m.fwd, mul(m.dir, dot(m.fwd, m.dir))));
   cam.pos = mul(m.dir, planet.R + m.h + EYE);
@@ -1089,7 +1161,7 @@ function walk(dt) {
     signals++;
     chime();
     say(signals < planet.beacons.length ? `signal ${signals} of ${planet.beacons.length}: ${facts()[signals - 1]}`
-                                        : `survey of ${planet.name} complete. n for another world`, 9);
+                                        : `survey of ${planet.name} complete. ${touched ? 'tap new' : 'n'} for another world`, 9);
   }
 }
 
@@ -1097,7 +1169,7 @@ function facts() {
   const p = planet, flat = Math.round(p.flat * 100);
   return [
     `radius ${p.R} m, ${Math.round(2 * Math.PI * p.R)} m around`,
-    `one day lasts ${Math.floor(p.dayLen / 60)} min ${Math.round(p.dayLen % 60)} s`,
+    `one day lasts ${Math.floor(Math.round(p.dayLen) / 60)} min ${Math.round(p.dayLen) % 60} s`,
     p.sea === 1 ? `${flat}% of the surface is water` : p.sea ? `${flat}% of the surface is molten` : 'no liquid on the surface',
     `highest ground ${Math.round(p.peak)} m above the datum`,
   ];
@@ -1113,15 +1185,30 @@ function land() {
   const flat = sub(ship.fwd, mul(d, dot(ship.fwd, d)));
   me.fwd = norm(len(flat) > .05 ? flat : cross(d, [.3, .9, .2]));
   me.pitch = Math.asin(clamp(dot(ship.fwd, d), -1, 1));
-  // the ship sets down a few steps behind you
-  const spot = norm(sub(mul(d, planet.R), mul(me.fwd, 6)));
-  ship.pos = mul(spot, planet.R + groundAt(spot) + 1.3);
+  // the ship sets down a few steps away: behind you if the ground is clear and level there,
+  // otherwise beside you or ahead, and never on a tree, crystal or spire
+  const side = cross(me.fwd, d);
+  let park = null;
+  for (const way of [mul(me.fwd, -1), side, mul(side, -1), me.fwd]) {
+    const spot = norm(add(mul(d, planet.R), mul(way, 6))), e = norm(cross(spot, way)), g = cross(spot, e);
+    if ([TREE, CRYSTAL, SPIRE].includes(matAt(spot))) continue;
+    const hs = [groundAt(spot)];
+    for (let a = 0; a < 8; a++) {
+      const v = add(mul(e, Math.cos(a * Math.PI / 4)), mul(g, Math.sin(a * Math.PI / 4)));
+      hs.push(groundAt(norm(add(mul(spot, planet.R), mul(v, 1.2)))));
+    }
+    const top = Math.max(...hs);
+    if (top - Math.min(...hs) > 1 && park) continue;
+    park = mul(spot, planet.R + top + 1.25);
+    if (top - Math.min(...hs) <= 1) break;
+  }
+  ship.pos = park || mul(norm(sub(mul(d, planet.R), mul(me.fwd, 6))), planet.R + groundAt(d) + 1.3);
   ship.parked = true;
   mode = 'walk';
 }
 
 function board() {
-  if (len(sub(cam.pos, ship.pos)) > 15) say('ship recalled', 2);
+  if (len(sub(cam.pos, ship.pos)) > 15) say('ship recalled', 2, true);
   ship.pos = mul(me.dir, planet.R + me.h + EYE + .2);
   ship.fwd = norm(cam.fwd); ship.up = me.dir; ship.vel = mul(me.dir, 8);
   ship.parked = false;
@@ -1134,7 +1221,15 @@ function press(k) {
   if (k === '?' || k === '/') ui.help = !ui.help;
   if (k === 'escape') ui.help = false;
   if (mode === 'title' && (k === 'enter' || k === ' ')) return start();
-  if (k === 'n' && mode !== 'loading') return newPlanet(randomSeed());
+  if (k === 'n' && mode !== 'loading') {
+    // in the middle of a survey, n asks first
+    const midway = (mode === 'fly' || mode === 'walk') && signals > 0 && signals < planet.beacons.length;
+    if (midway && !(time < ui.leave)) {
+      ui.leave = time + 3;
+      return say(`${touched ? 'tap new' : 'press n'} again to leave ${planet.name}`, 3);
+    }
+    return newPlanet(randomSeed());
+  }
   if (k === 'i') ui.stats = !ui.stats;
   if (k === 'v') view.raw = !view.raw;
   if (k === 'm') mute();
@@ -1142,21 +1237,40 @@ function press(k) {
     view.size = clamp(view.size + (k === '-' || k === '_' ? 1 : -1), 3, 16);
     view.picked = true;   // a size the player chose is never changed behind their back
     resize();
-    say(`${view.cols} x ${view.rows} characters`, 2);
+    say(`${view.cols} x ${view.rows} characters`, 2, true);
   }
   if (mode !== 'fly' && mode !== 'walk') return;
   if (k === 'f') mode === 'fly' ? land() : board();
   if (k === 'p') saveText();
 }
+// movement keys go by where they are on the keyboard, so they work on any layout; the rest go by
+// the letter printed on the key
+const CODES = { KeyW: 'w', KeyA: 'a', KeyS: 's', KeyD: 'd', KeyQ: 'q', KeyE: 'e', KeyC: 'c', KeyF: 'f', Space: ' ', ShiftLeft: 'shift', ShiftRight: 'shift' };
+const keyOf = e => CODES[e.code] || e.key.toLowerCase();
 addEventListener('keydown', e => {
-  const k = e.key.toLowerCase();
+  if (e.ctrlKey || e.metaKey || e.altKey) return;   // leave browser shortcuts alone
+  const k = keyOf(e);
   if (!e.repeat) press(k);
   keys.add(k);
   if (k === ' ' || k.startsWith('arrow')) e.preventDefault();
 });
-addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
-addEventListener('blur', () => keys.clear());
-addEventListener('resize', resize);
+addEventListener('keyup', e => keys.delete(keyOf(e)));
+addEventListener('blur', () => {
+  keys.clear();
+  if (ac) for (const g of [hum, wind]) g.gain.setTargetAtTime(0, ac.currentTime, .3);
+});
+if (window.ResizeObserver) {
+  try {
+    new ResizeObserver(([e]) => {
+      const box = e.devicePixelContentBoxSize && e.devicePixelContentBoxSize[0];
+      screenPx.w = box ? box.inlineSize : 0;
+      screenPx.h = box ? box.blockSize : 0;
+      resize();
+    }).observe(canvas, { box: 'device-pixel-content-box' });
+  } catch (e) {
+    addEventListener('resize', resize);   // the observer cannot watch device pixels here
+  }
+} else addEventListener('resize', resize);
 
 function grabMouse() {
   const p = canvas.requestPointerLock && canvas.requestPointerLock();
@@ -1172,11 +1286,19 @@ addEventListener('mousemove', e => {
 });
 
 // touch: left half of the screen is a stick, right half looks around
-const pad = document.getElementById('pad'), fingers = new Map();
-let touched = false;
+const pad = document.getElementById('pad'), pad2 = document.getElementById('pad2'), fingers = new Map();
+let touched = matchMedia('(pointer: coarse)').matches;
+function showPads() {
+  pad.style.display = pad2.style.display = 'flex';
+  padRows();
+}
+// messages end above the touch buttons
+function padRows() {
+  ui.padRow = pad.style.display === 'flex' ? Math.floor(pad.getBoundingClientRect().top * canvas.width / innerWidth / tgrid.ch) : 1e9;
+}
+if (touched) showPads();
 canvas.addEventListener('touchstart', e => {
-  touched = true;
-  pad.style.display = 'flex';
+  if (!touched) { touched = true; showPads(); }
   for (const t of e.changedTouches) fingers.set(t.identifier, { x: t.clientX, y: t.clientY, ox: t.clientX, oy: t.clientY, move: t.clientX < innerWidth / 2 });
   if (mode === 'title') start();
   e.preventDefault();
@@ -1203,10 +1325,11 @@ const lift = e => {
 };
 canvas.addEventListener('touchend', lift);
 canvas.addEventListener('touchcancel', lift);
-for (const b of pad.children) {
+for (const b of [...pad.children, ...pad2.children]) {
   const k = b.dataset.k;
   b.addEventListener('touchstart', e => { press(k); keys.add(k); e.preventDefault(); }, { passive: false });
   b.addEventListener('touchend', () => keys.delete(k));
+  b.addEventListener('touchcancel', () => keys.delete(k));
 }
 
 // ---- sound
@@ -1245,8 +1368,14 @@ function startAudio() {
   drone();
 }
 
+document.addEventListener('visibilitychange', () => {
+  if (ac) document.hidden ? ac.suspend() : ac.resume();
+});
+
 // a slow chord that keeps re-voicing itself in the planet's key
 function drone() {
+  setTimeout(drone, 9000);
+  if (document.hidden) return;
   const t = ac.currentTime, root = 55 * 2 ** (planet.key / 12);
   const upper = [12, 14, 15, 19, 22, 24, 26, 27, 31];
   for (const semi of [0, 7, upper[Math.floor(Math.random() * 4)], upper[4 + Math.floor(Math.random() * 5)]]) {
@@ -1258,7 +1387,6 @@ function drone() {
     o.connect(g).connect(master);
     o.start(t); o.stop(t + 16.5);
   }
-  setTimeout(drone, 9000);
 }
 
 function chime() {
@@ -1277,7 +1405,7 @@ function chime() {
 function mute() {
   muted = !muted;
   if (ac) master.gain.setTargetAtTime(muted ? 0 : .6, ac.currentTime, .2);
-  say(muted ? 'sound off' : 'sound on', 2);
+  say(muted ? 'sound off' : 'sound on', 2, true);
 }
 
 function soundTick() {
@@ -1291,13 +1419,16 @@ function soundTick() {
 
 // ---- screen
 
-const stats = { frames: 0, t: 0, fps: 0, slow: 0 };
+const stats = { frames: 0, t: 0, fps: 0, slow: 0, good: 0, tick: 1, drops: [], undone: 0 };
 
 function drawScene() {
   const { cols, rows, cw, ch, ss } = view, p = planet;
   cam.right = norm(cross(cam.fwd, cam.up));
   const up = cross(cam.right, cam.fwd), alt = len(cam.pos) - p.R, hs = p.atmo * .25 || 1;
-  cam.fx = cam.fy * (cols * cw) / (rows * ch);
+  // keep at least ~48 degrees across, so a portrait phone is not a slit
+  const aspect = (cols * cw) / (rows * ch);
+  cam.fy = Math.max(.6, .45 / aspect);
+  cam.fx = cam.fy * aspect;
 
   gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFbo);
   gl.viewport(0, 0, cols * 2 * ss, rows * 3 * ss);
@@ -1449,8 +1580,8 @@ function drawText() {
   put(cols - side(1).length - 1, bar, side(1), playing ? 3 : 6);
 
   if (time < ui.until) {
-    const lines = wrap(ui.msg, cols - 4);
-    lines.forEach((l, i) => put((cols - l.length) / 2 - 1, bar - 1 - lines.length + i, ` ${l} `, ui.until - time < .6 ? 2 : 1));
+    const lines = wrap(ui.msg, cols - 4), low = Math.min(bar - 2, ui.padRow - 1);
+    lines.forEach((l, i) => put((cols - l.length) / 2 - 1, low - lines.length + 1 + i, ` ${l} `, ui.until - time < .6 ? 2 : 1));
   }
   const wide = Math.max(...HELP.map(h => h[1].length)) + 1;
   if (ui.help) HELP.forEach(([k, what], i) => {
@@ -1485,6 +1616,8 @@ const nextFrame = () => new Promise(r => requestAnimationFrame(() => setTimeout(
 
 async function newPlanet(seed) {
   mode = 'loading';
+  ui.until = 0;
+  ui.leave = -1;
   if (document.pointerLockElement) document.exitPointerLock();
   design(seed);
   for (let f = 0; f < 6; f++) {
@@ -1510,7 +1643,8 @@ function start() {
   mode = 'fly';
   startAudio();
   if (!fingers.size) grabMouse();
-  say(`${planet.beacons.length} signals on the surface. fly down, f to land, walk to them`, 9);
+  say(touched ? `left side moves, right side looks. ${planet.beacons.length} signals on the surface: fly down, f to land, walk to them`
+              : `${planet.beacons.length} signals on the surface. fly down, f to land, walk to them`, 9);
 }
 
 let last = 0;
@@ -1518,6 +1652,7 @@ function frame(now) {
   requestAnimationFrame(frame);
   const real = (now - last) / 1000 || 0, dt = Math.min(.05, real);
   last = now;
+  if (lost) return;
   if (mode !== 'loading') {
     time += dt;
     if (mode === 'title') orbit();
@@ -1529,22 +1664,58 @@ function frame(now) {
   look.x = look.y = 0;
   drawText();
   drawScreen();
+  govern(real);
+}
 
+// Keeps the frame rate up. It compares against what the display can show (capped at 60), so a 30 Hz
+// screen or a battery saver holding the page at 30 fps does not count as a slow machine.
+function govern(real) {
   stats.frames++;
   stats.t += real;
-  if (stats.t >= .5) {
-    stats.fps = Math.round(stats.frames / stats.t);
-    // two bad seconds in a row: stop supersampling, then start using bigger characters
-    // (unless the player picked a size themselves)
-    stats.slow = stats.fps < 40 && mode !== 'loading' ? stats.slow + 1 : 0;
-    if (stats.slow >= 4 && (view.ss > 1 || (view.size < 12 && !view.picked))) {
-      if (view.ss > 1) view.ss = 1; else view.size += 2;
-      stats.slow = 0;
-      resize();
-    }
-    stats.frames = 0; stats.t = 0;
+  if (real > .004) stats.tick = Math.min(stats.tick, real);   // shortest frame seen: about the refresh interval
+  if (stats.t < .5) return;
+  stats.fps = Math.round(stats.frames / stats.t);
+  stats.frames = 0; stats.t = 0;
+  if (mode === 'loading') return;
+  const target = Math.min(60, 1 / stats.tick);
+  stats.slow = stats.fps < target * .75 ? stats.slow + 1 : 0;
+  stats.good = stats.fps >= target * .95 ? stats.good + 1 : 0;
+  // two slow seconds: drop the supersampling, then use bigger characters (unless the player picked a size)
+  if (stats.slow >= 4) {
+    stats.slow = 0;
+    const step = view.ss > 1 ? 'ss' : view.size < 12 && !view.picked ? 'size' : null;
+    if (!step) return;
+    if (step === 'ss') view.ss = 1; else view.size += 2;
+    stats.drops.push(step);
+    resize();
+    say('lowering detail to keep up', 3, true);
+  }
+  // ten smooth seconds: take the last step back, but only twice, so a borderline machine does not flip-flop
+  if (stats.good >= 20 && stats.drops.length && stats.undone < 2) {
+    stats.good = 0;
+    const step = stats.drops.pop();
+    if (step === 'ss') view.ss = 2; else view.size -= 2;
+    stats.undone++;
+    resize();
   }
 }
+
+// A graphics reset (a driver update, a GPU crash, a phone reclaiming memory) loses everything on the GPU.
+// The planet is still in memory, so it only needs uploading again.
+let lost = false;
+const notice = document.getElementById('notice');
+canvas.addEventListener('webglcontextlost', e => {
+  e.preventDefault();
+  lost = true;
+  notice.hidden = false;
+});
+canvas.addEventListener('webglcontextrestored', () => {
+  initGL();
+  if (planet.beacons) uploadPlanet();
+  resize();
+  lost = false;
+  notice.hidden = true;
+});
 
 resize();
 newPlanet(new URLSearchParams(location.search).get('seed') || randomSeed());

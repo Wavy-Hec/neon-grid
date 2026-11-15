@@ -11,9 +11,10 @@ or play it at <https://wavy-hec.github.io/neon-grid/>.
 
 ## Playing
 
-You start in orbit. Every planet has five signals on the ground, visible as beams of light.
-Fly down to one, land, and walk into it. The status line at the bottom says how far the next
-one is and which way to turn. That is the whole game; the rest is looking around.
+You start in orbit. Every planet has five signals on the ground, visible as beams of light
+(a world that is almost all ocean may have fewer). Fly down to one, land, and walk into it.
+The status line at the bottom says how far the next one is and which way to turn. That is
+the whole game; the rest is looking around.
 
 | | |
 |---|---|
@@ -23,12 +24,16 @@ one is and which way to turn. That is the whole game; the rest is looking around
 | `Q` `E` | roll |
 | `shift` | boost, run |
 | `F` | land and step out, board and lift off |
-| `N` | next planet |
+| `N` | next planet (press twice if you are partway through a survey) |
 | `P` | save the view as a text file |
 | `V` | show the render under the text |
 | `-` `=` | bigger or smaller characters |
 | `M` | sound |
 | `?` | keys |
+
+`W` `A` `S` `D` and the other movement keys go by position, so they work on any keyboard layout.
+On a phone, the left half of the screen moves and the right half looks; there are buttons for up,
+down, `F`, sound and a new planet.
 
 The planet comes from the seed in the address bar, so `?seed=dust` is the same place for everyone.
 A few worth visiting: `home`, `dust`, `amber`, `glacier`, `kelp`, `reef`.
