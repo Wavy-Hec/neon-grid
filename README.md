@@ -2,12 +2,10 @@
 
 A small planet you can fly down to and walk around on. Everything on screen is text.
 
-![a ringed, cratered planet seen from orbit, drawn in characters](shots/orbit.png)
+![a ringed ocean planet seen from orbit, drawn in characters, with signal beams rising from it](shots/orbit.jpg)
 
 One HTML file, no dependencies, no build step. Open `index.html` in a browser that has WebGL 2,
 or play it at <https://wavy-hec.github.io/neon-grid/>.
-
-![sunset over the sea, seen from the ground](shots/surface.png)
 
 ## Playing
 
@@ -36,45 +34,55 @@ On a phone, the left half of the screen moves and the right half looks; there ar
 down, `F`, sound and a new planet.
 
 The planet comes from the seed in the address bar, so `?seed=dust` is the same place for everyone.
-A few worth visiting: `home`, `dust`, `amber`, `glacier`, `kelp`, `reef`.
+
+## Examples
+
+| | |
+|---|---|
+| ![sunset over the sea, with the planet's ring arching across the sky](shots/sunset.jpg) | ![the parked lander in a valley of fir trees](shots/lander.jpg) |
+| `?seed=amber`: sunset over the sea under a ring | `?seed=coral`: the lander parked among firs |
+| ![a desert at dawn with layered rock spires and a signal beam](shots/desert.jpg) | ![glowing crystals and a signal beam on a frozen plain](shots/crystals.jpg) |
+| `?seed=dust`: a desert at dawn | `?seed=glacier`: a crystal field on a frozen world |
+| ![a lava sea glowing at sunset, the ring standing up from the horizon](shots/lava.jpg) | |
+| `?seed=kelp`: a lava sea at sunset | |
+
+Also worth a visit: `home` (a cratered moon with a ring) and `reef` (pink and violet, with glowing trees).
 
 `P` writes the frame out as plain text. This is `?seed=home` at 80 columns:
 
 ````
-       `                                    `
-       `                                                   `
-
-               `            `                                               ````
-             `             `*.```                               ``...::::;;;;;;;
-                           `.+,``     ````               `..:::;;;;;;;;;;;;;;;;;
-               `          ```.`'`.::::^^^^=|:.`    `..::;;;;;;;;:^''''''.':;;;'`
- `                          ``.::::^==^+++==^^^;::;;;;;;:^''',:::;;;;;;;;.:''`
-                           `.:^;^^^^^^++=+========;:'',::;;;;;;;;;;;;;;','
-    `  `                   .^:::^^^=================;;;:^^'``` ` .;;:'.
-                          `::,:^;===;===+==;;;====;+;:         .|^'`         `
-`                        .:;;;;;===+^====;;==++==^^++;:     ..'``       ``
-  `   .              `.:;;;=;;;;==;;;;===^+=+++==^=++^;`` ```
-                 .::;;;;;;=;;;;;==;++++=+++++++==^^+++^`
-             .::;;;;:''::;;;;;^++++++++=++++^++==++^++^|
-         `.:;;;;:''|:;;;;;^^^;;+;++;+^^^+++++++=+;;::^+=`
-      .:;;;;;'',:;;;;:',,:||^;^^;^^^^^^^++++++++++;;^+^=`
-  `.:;;;;''':;;;;^'''"""'^^=^;;+^:::^+::^=+=++=+++;^+++;``````
-.:;;;;:'':;;;;^`    `````:,^^^:^=^^;;:^::=======^++;+++^!|,,.`
-;;;;'.:;;;;;;.   ``.  -``.:^^^:^==^^^;::^^^=====;;;+^^'```'""^.`
-;;;: ';;;;:;;:'''``       .,;^^^=++;^;::+^^=====+;;+^. ` ````             `
-;;;::--.`.``               .,^^:++^;;:^;^^===^^=+^=^'
-                            ';;::;;++;;;++^^^^^===^`
-              `               .';;;:^^+^++^^=^^=''                     `
-             `                  `.':':^^^^^++:'`         `              `
-                                      ``````
-
-
-                      `                              `
-                               `                                  `
-                                         `
+   .   .    .        .        .      . .    . .        .        .        .
+.      . .        .      . .      .        .        .      . .        .        .
+      .      .        .        .        .        .      . .    .   .        .
+ .        .    .   .        .      . .      . .        .        .           . .
+       .        .    .   .      . .      . .      . .      .    ..``'',::;;;;;;;
+    .        .        .      . .      ....     .        ...``,:;;;;;;;;;;;=;;;;;
+ .        .    . . .... . .      `,:::=^====,`     ..',:;;;;;;;;::,,,''''':;=;,.
+ .            .      '''. . . ..:::======+======,:;;;;;;::,''',::;;;;;;;;`::'.
+  .        .        .  '+*```:^;^^====++++=========::'',:;;;;;;;;==;;;;:.'   .
+    .  ..        .    ..`^\_;;::^^==================;;;::|'''. . ';;:,'       .
+     .        .      . .. .='::^=========++=========^'   .     .,:..       .
+. .        .      .    . .^==========================;'    ....`        ..
+  . . `        .    ..':;======;=========^+++=====+++^; ..``.        .        .
+   .        .    `':;;;;;==^==============++=++====+==;` .      .        .
+.        .  ..':;;;;::'::====;===++++===++===+==+==;===;     .        .        .
+      .  .`:;;;;:,',:;;;;;^^;;;=;==;==^=+++==+===^;::===. .        .        .
+   .  `,;;;;;:',:;;;;,' .::;;:;=;^^===^=++===++===;^^+==      . .        .
+   `:;;;;|,',;;;;:'. . ..::=;:^==:::^=::^++++=+++=;====:   . .      . .  .   .
+`:;;;;:,',;;;=:'    ..`'_:,=^;:==^^;^:;::===+++====;===.. .      .        .
+;;;;:`:;;;;==`   ..``:|^'.::=^:^==^=^;::^^======;;;===`     . .        .
+;=;: :=;;;:;;:,''' . . .. .,^=^^===;;;::=========;;==' . . .        .     .  .
+;;;::....'`.        .    . .:^^:===;;:^;============*+'`.        .        .
+      . .        .      . . .;;::^;==;;;===========`.'*|'.. . .      . .      .
+     .        .      . .      ',;;;:^=========^=^'   ..`'|,       .    .   .
+  .        .      . .      . .  .'::^:^^^====::`  . . .  ...   .        .
+        .      .        .        .    .'`...     . .        .        .        .
+   .        .        .    .   .        .      . .      . .        .
+.        .        .  .     .      . .      . .    . . .      .        .        .
+      .        .      . .      . .      . .      .        .        .        .
+   .        .        .      .  .     .        .        .        .        .
+     .          .        .        .      . .        .        .        .        .
 ````
-
-![a desert world at sunrise, its ring edge-on above the horizon](shots/desert.png)
 
 ## How it works
 
@@ -97,6 +105,10 @@ Drawing is three passes on the GPU.
    compared with the cell's six samples. There are no letters or digits in the picture.
 3. Stamp the glyphs from an atlas at full resolution over a background colour that is blended
    between cells, add bloom, and write the status line into the same grid.
+
+The height map holds about one point per metre, too coarse for anything small. So the parked
+lander and the dozen trees nearest you are drawn as real shapes, signed distance functions marched
+in the same shader. Each tree blends back into the terrain's plain cone as you walk away from it.
 
 Matching glyphs by shape rather than brightness comes from Alex Harri's article
 [ASCII characters are not pixels](https://alexharri.com/blog/ascii-rendering).
