@@ -26,7 +26,7 @@ one is and which way to turn. That is the whole game; the rest is looking around
 | `N` | next planet |
 | `P` | save the view as a text file |
 | `V` | show the render under the text |
-| `-` `=` | text size |
+| `-` `=` | bigger or smaller characters |
 | `M` | sound |
 | `?` | keys |
 

@@ -802,12 +802,12 @@ void main() {
 // pass 3: stamp the characters at full resolution, add bloom, lay the interface text on top
 const FINAL = `#version 300 es
 precision highp float;
-uniform sampler2D uScene, uC0, uC1, uGlow, uAtlas, uText;
-uniform vec2 uRes, uCell, uGrid, uAtlasGrid;
+uniform sampler2D uScene, uC0, uC1, uGlow, uAtlas, uText, uFont;
+uniform vec2 uRes, uCell, uGrid, uAtlasGrid, uTextCell;
 uniform float uRaw;
 out vec4 o;
 
-float ink(int g, vec2 f) { return texture(uAtlas, (vec2(float(g % 16), float(g / 16)) + f) / uAtlasGrid).r; }
+float ink(sampler2D atlas, int g, vec2 f) { return texture(atlas, (vec2(float(g % 16), float(g / 16)) + f) / uAtlasGrid).r; }
 
 void main() {
   vec2 px = vec2(gl_FragCoord.x, uRes.y - gl_FragCoord.y);
@@ -815,19 +815,20 @@ void main() {
   ivec2 ci = ivec2(cf.x, uGrid.y - 1. - floor(cf.y));
   vec2 uv = vec2(cf.x, uGrid.y - cf.y) / uGrid;
 
-  // text styles: 1 plain, 2 dim, 3 status bar, 4 highlighted block, 5 accent, 6 dim on the bar
-  ivec2 tx = ivec2(texelFetch(uText, ivec2(cf), 0).rg * 255. + .5);
+  // interface text, on its own grid. styles: 1 plain, 2 dim, 3 status bar, 4 highlighted block, 5 accent, 6 dim on the bar
+  vec2 tf = px / uTextCell;
+  ivec2 tx = ivec2(texelFetch(uText, ivec2(tf), 0).rg * 255. + .5);
   if (tx.y > 0) {
     const vec3 accent = vec3(.36, 1., .84);
     vec3 fg = tx.y == 2 || tx.y == 6 ? vec3(.46) : tx.y == 4 ? vec3(0.) : tx.y == 5 ? accent : vec3(.9);
     vec3 bg = tx.y == 4 ? accent : tx.y == 3 || tx.y == 6 ? vec3(.085) : vec3(0.);
-    o = vec4(mix(bg, fg, ink(tx.x, f)), 1.);
+    o = vec4(mix(bg, fg, ink(uFont, tx.x, fract(tf))), 1.);
     return;
   }
   if (uRaw > .5) { o = vec4(texture(uScene, uv).rgb, 1.); return; }
   vec4 a = texelFetch(uC0, ci, 0);
   // the colour behind the characters is blended between cell centres, so it has no steps
-  vec3 col = mix(texture(uC1, uv).rgb, a.rgb, ink(int(a.a * 255. + .5), f));
+  vec3 col = mix(texture(uC1, uv).rgb, a.rgb, ink(uAtlas, int(a.a * 255. + .5), f));
   col += textureLod(uGlow, uv, 1.).rgb * .45 + textureLod(uGlow, uv, 2.5).rgb * .35 + textureLod(uGlow, uv, 4.).rgb * .25;
   o = vec4(col, 1.);
 }`;
@@ -845,6 +846,7 @@ texture(11, gl.TEXTURE_CUBE_MAP, gl.NEAREST);                // material
 texture(12, gl.TEXTURE_2D, gl.NEAREST);                      // character per material and brightness
 texture(13, gl.TEXTURE_2D, gl.NEAREST);                      // interface text
 texture(14, gl.TEXTURE_2D, gl.NEAREST);                      // characters each material may use
+texture(15, gl.TEXTURE_2D, gl.NEAREST);                      // interface font
 gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
 {
   const n = new Uint8Array(32 * 32 * 32), r = mulberry(7);
@@ -882,12 +884,13 @@ const EDGES = '_/\\|()\'",.^-~';
 const GLYPHS = [...new Set(RAMPS.join('') + EDGES)].join('');
 const FONT = GLYPHS + Array.from({ length: 95 }, (_, i) => String.fromCharCode(32 + i)).filter(c => !GLYPHS.includes(c)).join('');
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace';
-const view = { size: 0, cw: 8, ch: 13, cols: 0, rows: 0, ss: 2, raw: false, ink: 1 };
-let text = new Uint8Array(0);   // glyph and style for every cell of interface text
+const view = { size: 0, picked: false, cw: 6, ch: 10, cols: 0, rows: 0, ss: 2, raw: false, ink: 1 };
+// interface text sits on its own, coarser grid so it stays readable however small the picture's characters are
+const tgrid = { cw: 8, ch: 13, cols: 0, rows: 0 };
+let text = new Uint8Array(0);   // glyph and style for every cell of the interface grid
 
-// draws the font into an atlas and measures how much ink each glyph puts in the six regions of its cell
-function buildAtlas() {
-  const { cw, ch } = view, n = GLYPHS.length;
+// draws FONT into a 16 x 6 atlas of cw x ch cells
+function drawFont(cw, ch) {
   const c = document.createElement('canvas');
   c.width = cw * 16; c.height = ch * 6;
   const g = c.getContext('2d', { willReadFrequently: true });
@@ -905,7 +908,13 @@ function buildAtlas() {
     g.fillText(FONT[i], x + cw / 2, y + base);
     g.restore();
   }
-  const img = g.getImageData(0, 0, c.width, c.height).data;
+  return c;
+}
+
+// builds the picture's atlas and measures how much ink each glyph puts in the six regions of its cell
+function buildAtlas() {
+  const { cw, ch } = view, n = GLYPHS.length, c = drawFont(cw, ch);
+  const img = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
   const shapes = new Float32Array(n * 6), mean = new Float32Array(n);
   let max = 0;
   for (let i = 0; i < n; i++) for (let k = 0; k < 6; k++) {
@@ -951,18 +960,24 @@ function buildAtlas() {
   upload(14, gl.RED, n, RAMPS.length, allow);
   gl.activeTexture(gl.TEXTURE9);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, c);
+  gl.activeTexture(gl.TEXTURE15);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, drawFont(tgrid.cw, tgrid.ch));
 }
 
 function resize() {
   const dpr = Math.min(devicePixelRatio || 1, 2);
   canvas.width = Math.floor(innerWidth * dpr);
   canvas.height = Math.floor(innerHeight * dpr);
-  view.size = view.size || (dpr > 1.5 ? 7 : 8);
+  view.size = view.size || (dpr > 1.5 ? 5 : 6);
   view.cw = Math.round(view.size * dpr);
   view.ch = Math.round(view.cw * 1.6);
   view.cols = Math.ceil(canvas.width / view.cw);
   view.rows = Math.ceil(canvas.height / view.ch);
-  text = new Uint8Array(view.cols * view.rows * 2);
+  tgrid.cw = Math.round(8 * dpr);
+  tgrid.ch = Math.round(tgrid.cw * 1.6);
+  tgrid.cols = Math.ceil(canvas.width / tgrid.cw);
+  tgrid.rows = Math.ceil(canvas.height / tgrid.ch);
+  text = new Uint8Array(tgrid.cols * tgrid.rows * 2);
   const alloc = (unit, w, h) => {
     gl.activeTexture(gl.TEXTURE0 + unit);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
@@ -1119,8 +1134,10 @@ function press(k) {
   if (k === 'v') view.raw = !view.raw;
   if (k === 'm') mute();
   if (k === '-' || k === '_' || k === '=' || k === '+') {
-    view.size = clamp(view.size + (k === '-' || k === '_' ? 1 : -1), 4, 16);
+    view.size = clamp(view.size + (k === '-' || k === '_' ? 1 : -1), 3, 16);
+    view.picked = true;   // a size the player chose is never changed behind their back
     resize();
+    say(`${view.cols} x ${view.rows} characters`, 2);
   }
   if (mode !== 'fly' && mode !== 'walk') return;
   if (k === 'f') mode === 'fly' ? land() : board();
@@ -1328,12 +1345,13 @@ function drawScene() {
 function drawScreen() {
   const { cols, rows, cw, ch } = view, u = final.u;
   gl.activeTexture(gl.TEXTURE13);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG8, cols, rows, 0, gl.RG, gl.UNSIGNED_BYTE, text);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG8, tgrid.cols, tgrid.rows, 0, gl.RG, gl.UNSIGNED_BYTE, text);
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   gl.viewport(0, 0, canvas.width, canvas.height);
   gl.useProgram(final.p);
-  gl.uniform1i(u.uScene, 4); gl.uniform1i(u.uC0, 6); gl.uniform1i(u.uC1, 7); gl.uniform1i(u.uGlow, 8); gl.uniform1i(u.uAtlas, 9); gl.uniform1i(u.uText, 13);
+  gl.uniform1i(u.uScene, 4); gl.uniform1i(u.uC0, 6); gl.uniform1i(u.uC1, 7); gl.uniform1i(u.uGlow, 8); gl.uniform1i(u.uAtlas, 9); gl.uniform1i(u.uText, 13); gl.uniform1i(u.uFont, 15);
   gl.uniform2f(u.uRes, canvas.width, canvas.height);
+  gl.uniform2f(u.uTextCell, tgrid.cw, tgrid.ch);
   gl.uniform2f(u.uCell, cw, ch);
   gl.uniform2f(u.uGrid, cols, rows);
   gl.uniform2f(u.uAtlasGrid, 16, 6);
@@ -1341,12 +1359,12 @@ function drawScreen() {
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
 
-// interface text is written straight into the character grid
+// writes interface text into its grid
 function put(x, y, str, style = 1) {
-  if (y < 0 || y >= view.rows) return;
+  if (y < 0 || y >= tgrid.rows) return;
   for (let i = 0; i < str.length; i++) {
-    const cx = Math.round(x) + i, k = (y * view.cols + cx) * 2;
-    if (cx < 0 || cx >= view.cols) continue;
+    const cx = Math.round(x) + i, k = (y * tgrid.cols + cx) * 2;
+    if (cx < 0 || cx >= tgrid.cols) continue;
     text[k] = Math.max(FONT.indexOf(str[i]), 0);
     text[k + 1] = style;
   }
@@ -1358,11 +1376,11 @@ const HELP = [
   ['space c', 'up and down, jump'],
   ['q e', 'roll'],
   ['shift', 'boost, run'],
-  ['f', 'land and step out, board and lift off'],
+  ['f', 'land, or board the ship'],
   ['n', 'next planet'],
   ['p', 'save the view as a text file'],
   ['v', 'show the render under the text'],
-  ['- =', 'text size'],
+  ['- =', 'bigger or smaller characters'],
   ['m', 'sound'],
   ['i', 'frame rate'],
 ];
@@ -1377,34 +1395,61 @@ function nextSignal() {
   if (!near) return '';
   const r = sub(near.base, cam.pos), a = Math.atan2(dot(r, cam.right), dot(r, cam.fwd)) * 180 / Math.PI;
   const way = Math.abs(a) < 25 ? 'ahead' : Math.abs(a) > 140 ? 'behind' : a > 0 ? 'right' : 'left';
-  return `   next signal ${Math.round(best)}m ${way}`;
+  return `next signal ${Math.round(best)}m ${way}`;
+}
+
+// splits a message into lines no wider than width, at spaces
+function wrap(str, width) {
+  const lines = [];
+  let line = '';
+  for (const word of str.split(' ')) {
+    if (line && line.length + 1 + word.length > width) { lines.push(line); line = word; }
+    else line = line ? `${line} ${word}` : word;
+  }
+  if (line) lines.push(line);
+  return lines;
 }
 
 function drawText() {
-  const p = planet, cols = Math.floor(canvas.width / view.cw), bar = Math.floor(canvas.height / view.ch) - 1;
+  const p = planet, cols = Math.floor(canvas.width / tgrid.cw), bar = Math.floor(canvas.height / tgrid.ch) - 1;
   const playing = mode === 'fly' || mode === 'walk';
   text.fill(0);
 
   // one status line along the bottom, the way an editor does it
-  put(0, bar, ' '.repeat(view.cols), 3);
-  put(0, bar + 1, ' '.repeat(view.cols), 3);
+  put(0, bar, ' '.repeat(tgrid.cols), 3);
+  put(0, bar + 1, ' '.repeat(tgrid.cols), 3);
   const tag = mode === 'fly' ? ' FLY ' : mode === 'walk' ? ' WALK ' : ' planet.txt ';
   put(0, bar, tag, 4);
-  let left = ui.note, right = '';
+  // [text, side, importance]: on a narrow screen the least important parts are left out
+  let parts = [[ui.note, 0, 9]];
   if (mode !== 'loading') {
     const alt = len(cam.pos) - p.R - groundAt(norm(cam.pos)), speed = mode === 'fly' ? len(ship.vel) : 0;
-    left = `${p.name}  ${p.K.label}`;
-    right = !playing ? (touched ? 'tap to descend' : 'click to descend   n next planet   ? keys')
-          : `alt ${Math.round(alt)}m` + (mode === 'fly' ? `   ${Math.round(speed)}m/s` : '') + nextSignal() + `   found ${signals}/${p.beacons.length}`;
-    if (ui.stats) right += `   ${stats.fps}fps ${view.cols}x${view.rows}`;
+    parts = [[p.name, 0, 5], [p.K.label, 0, 1]];
+    if (!playing) parts.push(...(touched ? [['tap to descend', 1, 9]] : [['click to descend', 1, 9], ['n next planet', 1, 3], ['? keys', 1, 2]]));
+    else {
+      parts.push([`alt ${Math.round(alt)}m`, 1, 4]);
+      if (mode === 'fly') parts.push([`${Math.round(speed)}m/s`, 1, 3]);
+      const next = nextSignal();
+      if (next) parts.push([next, 1, 8]);
+      parts.push([`found ${signals}/${p.beacons.length}`, 1, 7]);
+    }
+    if (ui.stats) parts.push([`${stats.fps}fps ${view.cols}x${view.rows}`, 1, 6]);
   }
-  put(tag.length + 1, bar, left, 3);
-  put(cols - right.length - 1, bar, right, playing ? 3 : 6);
+  const side = n => parts.filter(q => q[1] === n).map(q => q[0]).join('   ');
+  while (parts.length && tag.length + side(0).length + side(1).length + 4 > cols) {
+    parts.splice(parts.indexOf(parts.reduce((a, b) => (b[2] < a[2] ? b : a))), 1);
+  }
+  put(tag.length + 1, bar, side(0), 3);
+  put(cols - side(1).length - 1, bar, side(1), playing ? 3 : 6);
 
-  if (time < ui.until) put((cols - ui.msg.length) / 2, bar - 2, ` ${ui.msg} `, ui.until - time < .6 ? 2 : 1);
+  if (time < ui.until) {
+    const lines = wrap(ui.msg, cols - 4);
+    lines.forEach((l, i) => put((cols - l.length) / 2 - 1, bar - 1 - lines.length + i, ` ${l} `, ui.until - time < .6 ? 2 : 1));
+  }
+  const wide = Math.max(...HELP.map(h => h[1].length)) + 1;
   if (ui.help) HELP.forEach(([k, what], i) => {
     put(2, 2 + i, ` ${k.padEnd(9)}`, 1);
-    put(12, 2 + i, ` ${what.padEnd(40)}`, 2);
+    put(12, 2 + i, ` ${what.padEnd(wide)}`, 2);
   });
 }
 
@@ -1484,8 +1529,9 @@ function frame(now) {
   if (stats.t >= .5) {
     stats.fps = Math.round(stats.frames / stats.t);
     // two bad seconds in a row: stop supersampling, then start using bigger characters
+    // (unless the player picked a size themselves)
     stats.slow = stats.fps < 40 && mode !== 'loading' ? stats.slow + 1 : 0;
-    if (stats.slow >= 4 && (view.ss > 1 || view.size < 12)) {
+    if (stats.slow >= 4 && (view.ss > 1 || (view.size < 12 && !view.picked))) {
       if (view.ss > 1) view.ss = 1; else view.size += 2;
       stats.slow = 0;
       resize();
