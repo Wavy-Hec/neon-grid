@@ -5,7 +5,7 @@ A small planet you can fly down to and walk around on. Everything on screen is t
 ![a ringed ocean planet seen from orbit, drawn in characters, with signal beams rising from it](shots/orbit.jpg)
 
 One HTML file, no dependencies, no build step. Open `index.html` in a browser that has WebGL 2,
-or play it at <https://wavy-hec.github.io/neon-grid/>.
+or play it at <https://wavy-hec.github.io/planet.txt/>.
 
 ## Playing
 
