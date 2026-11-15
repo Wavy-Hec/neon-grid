@@ -117,19 +117,19 @@ const RAMPS = [
   ' .:~',         // cloud
   ' .-~=',        // water
   ' .,:;=',       // sand
-  ' .,;"v*w',     // grass
-  ' .,:;=+x',     // dry ground
-  ' .:^x%#',      // rock
+  ' .,;"*%',      // grass
+  ' .,:;=+%',     // dry ground
+  ' .:^=%#',      // rock
   ' .:+*#',       // snow
-  ' .:*YT#&',     // tree
+  ' .:+*%&#',     // tree
   ' .:~=*%#@',    // lava
   ' .:-=+',       // ice
   ' .:+<>*#',     // crystal
-  ' .:|IH#',      // spire
+  ' .:|!#',       // spire
 ];
 // how much of the surface colour fills the cell behind the character. high values read as
 // solid shapes with a light texture, low values as loose characters on black
-const BACKING = [.5, .9, .9, .75, .7, .7, .7, .65, .75, .6, .5, .75, .5, .6];
+const BACKING = [0, .9, .9, .75, .7, .7, .7, .65, .75, .6, .5, .75, .5, .6];
 
 // heights are metres, colour stops run from the shore (0) to the highest peak (1),
 // tau is how much red/green/blue light the air scatters straight overhead,
@@ -721,6 +721,7 @@ void main() {
     float pulse = .75 + .25 * sin(uTime * 3. - sb * .08 + float(i));
     col += mix(vec3(.6), uBeaconCol, step(.5, b.w)) * b.w * g * pulse * 2.6 * smoothstep(170., 60., sb);
     glow = max(glow, g * b.w);
+    if (g * b.w > .45) mat = ${SPIRE}.;
   }
 
   col = 1. - exp(-col * 1.3);
@@ -731,7 +732,7 @@ void main() {
 // pass 2: one pixel per character cell. picks the character and its two colours
 const CELLS = `#version 300 es
 precision highp float;
-uniform sampler2D uScene, uInfo, uShapes, uRamps;
+uniform sampler2D uScene, uInfo, uShapes, uRamps, uAllow;
 uniform vec2 uGrid;
 uniform int uCount;
 uniform float uInk;
@@ -756,12 +757,14 @@ void main() {
     lo = min(lo, d[k]);
   }
   // push the samples apart so an edge inside the cell survives the match
-  if (top > 0.) for (int k = 0; k < 6; k++) d[k] = top * pow(d[k] / top, 1.8);
+  if (top > 0.) for (int k = 0; k < 6; k++) d[k] = top * pow(d[k] / top, 1.4);
 
   vec3 a = vec3(d[0], d[1], d[2]), b = vec3(d[3], d[4], d[5]);
-  float edge = smoothstep(.06, .22, (top - lo) / uInk);
+  float edge = smoothstep(.1, .3, (top - lo) / uInk);
   float dither = fract(52.9829189 * fract(dot(cell, vec2(.06711056, .00583715)))) - .5;
   float mean = (a.x + a.y + a.z + b.x + b.y + b.z) / 6.;
+  vec3 ca = a - mean, cb = b - mean;
+  float spread = dot(ca, ca) + dot(cb, cb);   // how far the cell is from flat
 
   // a flat cell takes the character its material uses at this brightness;
   // a cell with an edge in it takes whichever character has the closest shape
@@ -770,7 +773,13 @@ void main() {
   int tone = int(texelFetch(uRamps, ivec2(level, m), 0).r * 255. + .5), glyph = tone;
   float best = 1e9;
   for (int i = 0; i < uCount; i++) {
-    vec3 da = texelFetch(uShapes, ivec2(i, 0), 0).rgb - a, db = texelFetch(uShapes, ivec2(i, 1), 0).rgb - b;
+    if (i != tone && texelFetch(uAllow, ivec2(i, m), 0).r < .5) continue;
+    vec3 ga = texelFetch(uShapes, ivec2(i, 0), 0).rgb, gb = texelFetch(uShapes, ivec2(i, 1), 0).rgb;
+    float gm = (ga.x + ga.y + ga.z + gb.x + gb.y + gb.z) / 6.;
+    vec3 sa = ga - gm - ca, sb = gb - gm - cb;
+    // another character only replaces the tone when it really has the shape of this edge
+    if (i != tone && dot(sa, sa) + dot(sb, sb) > .6 * spread) continue;
+    vec3 da = ga - a, db = gb - b;
     float e = dot(da, da) + dot(db, db);
     e = i == tone ? e * edge : e + 1. - edge;
     if (e < best) { best = e; glyph = i; }
@@ -786,7 +795,7 @@ void main() {
   fg /= max(1., max(fg.r, max(fg.g, fg.b)));
 
   o0 = vec4(fg, float(glyph) / 255.);
-  o1 = vec4(dark * uBack[m], 1.);
+  o1 = vec4(avg * uBack[m], 1.);
   o2 = vec4(avg * em, 1.);
 }`;
 
@@ -817,7 +826,8 @@ void main() {
   }
   if (uRaw > .5) { o = vec4(texture(uScene, uv).rgb, 1.); return; }
   vec4 a = texelFetch(uC0, ci, 0);
-  vec3 col = mix(texelFetch(uC1, ci, 0).rgb, a.rgb, ink(int(a.a * 255. + .5), f));
+  // the colour behind the characters is blended between cell centres, so it has no steps
+  vec3 col = mix(texture(uC1, uv).rgb, a.rgb, ink(int(a.a * 255. + .5), f));
   col += textureLod(uGlow, uv, 1.).rgb * .45 + textureLod(uGlow, uv, 2.5).rgb * .35 + textureLod(uGlow, uv, 4.).rgb * .25;
   o = vec4(col, 1.);
 }`;
@@ -829,11 +839,12 @@ texture(2, gl.TEXTURE_CUBE_MAP, gl.LINEAR_MIPMAP_LINEAR);    // albedo
 texture(3, gl.TEXTURE_3D, gl.LINEAR, gl.REPEAT);             // noise
 const sceneTex = [texture(4, gl.TEXTURE_2D, gl.LINEAR), texture(10, gl.TEXTURE_2D, gl.NEAREST)];
 texture(5, gl.TEXTURE_2D, gl.NEAREST);                       // glyph shapes
-const cellTex = [texture(6, gl.TEXTURE_2D, gl.NEAREST), texture(7, gl.TEXTURE_2D, gl.NEAREST), texture(8, gl.TEXTURE_2D, gl.LINEAR_MIPMAP_LINEAR)];
+const cellTex = [texture(6, gl.TEXTURE_2D, gl.NEAREST), texture(7, gl.TEXTURE_2D, gl.LINEAR), texture(8, gl.TEXTURE_2D, gl.LINEAR_MIPMAP_LINEAR)];
 texture(9, gl.TEXTURE_2D, gl.NEAREST);                       // glyph atlas
 texture(11, gl.TEXTURE_CUBE_MAP, gl.NEAREST);                // material
 texture(12, gl.TEXTURE_2D, gl.NEAREST);                      // character per material and brightness
 texture(13, gl.TEXTURE_2D, gl.NEAREST);                      // interface text
+texture(14, gl.TEXTURE_2D, gl.NEAREST);                      // characters each material may use
 gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
 {
   const n = new Uint8Array(32 * 32 * 32), r = mulberry(7);
@@ -864,9 +875,11 @@ function uploadPlanet() {
 
 // ---- characters
 
-// GLYPHS is what the renderer may draw with: every ramp, plus shapes that are good at edges.
-// FONT adds the rest of ASCII so the interface can write anything.
-const GLYPHS = [...new Set(RAMPS.join('') + '_/\\|()[]{}<>!?17JLTVY')].join('');
+// GLYPHS is what the picture may be drawn with: every ramp, plus a few line shapes for edges.
+// No letters or digits, so nothing in the view reads as words. FONT adds the rest of ASCII
+// so the interface can write anything.
+const EDGES = '_/\\|()\'",.^-~';
+const GLYPHS = [...new Set(RAMPS.join('') + EDGES)].join('');
 const FONT = GLYPHS + Array.from({ length: 95 }, (_, i) => String.fromCharCode(32 + i)).filter(c => !GLYPHS.includes(c)).join('');
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace';
 const view = { size: 0, cw: 8, ch: 13, cols: 0, rows: 0, ss: 2, raw: false, ink: 1 };
@@ -928,8 +941,14 @@ function buildAtlas() {
     gl.activeTexture(gl.TEXTURE0 + unit);
     gl.texImage2D(gl.TEXTURE_2D, 0, format === gl.RED ? gl.R8 : gl.RGBA8, w, h, 0, format, gl.UNSIGNED_BYTE, pixels);
   };
+  // which characters each material may use: its own set, plus the line shapes for edges
+  const allow = new Uint8Array(n * RAMPS.length);
+  RAMPS.forEach((chars, m) => {
+    for (let i = 0; i < n; i++) allow[m * n + i] = chars.includes(GLYPHS[i]) || EDGES.includes(GLYPHS[i]) ? 255 : 0;
+  });
   upload(5, gl.RGBA, n, 2, data);
   upload(12, gl.RED, 16, RAMPS.length, ramps);
+  upload(14, gl.RED, n, RAMPS.length, allow);
   gl.activeTexture(gl.TEXTURE9);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, c);
 }
@@ -1296,7 +1315,7 @@ function drawScene() {
   gl.viewport(0, 0, cols, rows);
   gl.useProgram(cells.p);
   u = cells.u;
-  gl.uniform1i(u.uScene, 4); gl.uniform1i(u.uInfo, 10); gl.uniform1i(u.uShapes, 5); gl.uniform1i(u.uRamps, 12);
+  gl.uniform1i(u.uScene, 4); gl.uniform1i(u.uInfo, 10); gl.uniform1i(u.uShapes, 5); gl.uniform1i(u.uRamps, 12); gl.uniform1i(u.uAllow, 14);
   gl.uniform2f(u.uGrid, cols, rows);
   gl.uniform1i(u.uCount, GLYPHS.length);
   gl.uniform1f(u.uInk, view.ink);
@@ -1348,6 +1367,19 @@ const HELP = [
   ['i', 'frame rate'],
 ];
 
+// how far the nearest signal still out there is, and which way to turn
+function nextSignal() {
+  let near = null, best = 1e9;
+  for (const b of planet.beacons) {
+    const d = len(sub(b.base, cam.pos));
+    if (!b.got && d < best) { best = d; near = b; }
+  }
+  if (!near) return '';
+  const r = sub(near.base, cam.pos), a = Math.atan2(dot(r, cam.right), dot(r, cam.fwd)) * 180 / Math.PI;
+  const way = Math.abs(a) < 25 ? 'ahead' : Math.abs(a) > 140 ? 'behind' : a > 0 ? 'right' : 'left';
+  return `   next signal ${Math.round(best)}m ${way}`;
+}
+
 function drawText() {
   const p = planet, cols = Math.floor(canvas.width / view.cw), bar = Math.floor(canvas.height / view.ch) - 1;
   const playing = mode === 'fly' || mode === 'walk';
@@ -1363,7 +1395,7 @@ function drawText() {
     const alt = len(cam.pos) - p.R - groundAt(norm(cam.pos)), speed = mode === 'fly' ? len(ship.vel) : 0;
     left = `${p.name}  ${p.K.label}`;
     right = !playing ? (touched ? 'tap to descend' : 'click to descend   n next planet   ? keys')
-          : `alt ${Math.round(alt)}m` + (mode === 'fly' ? `   ${Math.round(speed)}m/s` : '') + `   signals ${signals}/${p.beacons.length}`;
+          : `alt ${Math.round(alt)}m` + (mode === 'fly' ? `   ${Math.round(speed)}m/s` : '') + nextSignal() + `   found ${signals}/${p.beacons.length}`;
     if (ui.stats) right += `   ${stats.fps}fps ${view.cols}x${view.rows}`;
   }
   put(tag.length + 1, bar, left, 3);
@@ -1374,23 +1406,6 @@ function drawText() {
     put(2, 2 + i, ` ${k.padEnd(9)}`, 1);
     put(12, 2 + i, ` ${what.padEnd(40)}`, 2);
   });
-
-  // point at the nearest signal still out there
-  let near = null, best = 1e9;
-  for (const b of playing ? p.beacons : []) {
-    const d = len(sub(b.base, cam.pos));
-    if (!b.got && d < best) { best = d; near = b; }
-  }
-  if (!near) return;
-  const r = sub(add(near.base, mul(near.dir, 4)), cam.pos), z = dot(r, cam.fwd);
-  let x = dot(r, cam.right) / cam.fx, y = dot(r, cross(cam.right, cam.fwd)) / cam.fy;
-  const on = z > 0 && Math.abs(x) < z * .9 && Math.abs(y) < z * .8;
-  const k = on ? 1 / z : Math.min(.9 / Math.max(Math.abs(x), 1e-6), .8 / Math.max(Math.abs(y), 1e-6));
-  x *= k; y *= k;
-  const arrow = on ? '+' : Math.abs(x) > Math.abs(y) * 1.4 ? (x > 0 ? '>' : '<') : (y > 0 ? '^' : 'v');
-  const cx = (x + 1) / 2 * view.cols, cy = Math.round((1 - y) / 2 * view.rows);
-  put(cx, cy, arrow, 5);
-  put(cx + 2, cy, `${Math.round(best)}m`, 1);
 }
 
 function saveText() {

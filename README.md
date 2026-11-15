@@ -12,7 +12,8 @@ or play it at <https://wavy-hec.github.io/neon-grid/>.
 ## Playing
 
 You start in orbit. Every planet has five signals on the ground, visible as beams of light.
-Fly down to one, land, and walk into it. That is the whole game; the rest is looking around.
+Fly down to one, land, and walk into it. The status line at the bottom says how far the next
+one is and which way to turn. That is the whole game; the rest is looking around.
 
 | | |
 |---|---|
@@ -36,35 +37,35 @@ A few worth visiting: `home`, `dust`, `amber`, `glacier`, `kelp`, `reef`.
 
 ````
        `                                    `
-                                                           .
+       `                                                   `
 
-               `                                                            ````
-                           `!.` `                               ` ...::::;;;;;;;
-                           `.],``     ```                `...::;;;;;;;;;;;;;;;;;
-                           ``'",`.:::.^^^^^|:.      ..::;;;;;;;;^^^''````'!;;;'`
-                            ``.`:::^^^^+++^^|||;::;;;;;;^^''`.::::;:;;::: |^'`
-                           ` :^:^^^^^^++^+========;!'`,::::;;;;;;;;;;::'-'
-    `                      .^:,:^^^^^=========^=====;;;!'''``     :;:''
-                           ::,::;========^=;;;===;;;;.         .:''`
-`                        .:;;;;;===+^=;;;;;;;|+^^^^++;'     . ''        `
-      -              ..:;;;=;;;';;;;;;==^^+++++x^|^++^;    ``
-                 .::;;;;;;^:;;;;=;;++++^+++++++xx^^+++^
-             .::;;;;^'`::;;;;;^++++++++^++++^++x^++^"+^:
-         ..:;;;;^'`::;;;;;^^^;;;;;+;+^^^++++!++^;;;::^+^`
-      .:;;;;;"`.:;;;:'.,,;|[^:^^;^^^^""^+++;|+++++;::+^^`
-   .:;;;;^'`::;;;^'''"""'^"^^:;+^:::^+::!^+^++^+++;^+++|`` ```
-.:;;;;!''::;:;'`      ```:'^^^:^^^^::::::^^^^^^^^++;+++^*;,,.`
-;;;;^`::;;;;;`   ` ._ -``':!^^:^^^^^^:::^^^^^x^^;;;+^^`'``'""--`
-;;;| ':;;:':''''''        ''!^^'^++;:;:,;^^^x^^^;;;+^' ` ` ``
-;;;^^--'````               ',^^:++^;;:::^^^^^^^^;^^^`
-                            '!:::;;++;;;++^^^^^^^^"`
-              `               '';;;:^^+^++^^^^^!''                     `
-                                 '''':^^^^^+;:'`         `
-                                      '`' ``
+               `            `                                               ````
+                           `*.```                               ``...::::;;;;;;;
+                           `.+,``     ````               `..:::;;;;;;;;;;;;;;;;;
+               `          ```.`'`.::::^^^^=|:.`    `..::;;;;;;;;:^''''''.':;;;'`
+ `                          ``.::::^==^+++==^^^;::;;;;;;:^''',:::;;;;;;;;.:''`
+                           `.:^;^^^^^^++=+========;:'',::;;;;;;;;;;;;;;','
+    `  `                   .^:::^^^=^===============;;;:^^'``` ` .;;:'.
+                          `::,:^;===;===+==;;;====;+;:         .|^'`         `
+`                        .:;;;;;===+^====;;==++==^^++;:     ..'``
+  `   `              `.:;;;=;;;;;;;;;;===^+=+++==^=++^;`` ```
+                 .::;;;;;;=;;;;;==;++++=+++++++==^^+++^`
+             .::;;;;:''::;;;;;^++++++++=++++^++==++^++^|
+         `.:;;;;:''|:;;;;;^^^;;+;++;+^^^+++++++=+;;::^+=`
+      .:;;;;;'',:;;;;:',,:||^;^^;^^^^^:^++++++++++;;^+^=`
+  `.:;;;;''':;;;;^'''"""'^^^^:;+^:::^+::^=+=++=+++;^+++;``````
+.:;;;;:'':;;;;^`    `````:,^^^:^=^^;;:^::=======^++;+++^!|,,.`
+;;;;'.:;;;;;;.   ``.  -``.::^^:^==^^^;::^^^=====;;;+^^'```'""^.`
+;;;: ';;;;:;;:'''``       .,;^^:=++;^;:,+^^=====+;;+^: ` ````             `
+;;;::--.`.``               .,^^:++^;;:^;^^===^^=+^=^'
+                            `;:::;;++;;;++^^^^^===^`
+              `               .';;;:^^+^++^^=^^=''                     `
+             `                  ``':':^^^^^++:'`         `              `
+              `                       ``````                    `
 
 
-
-                                                                  `
+                      `                              `
+                               `                                  `
                                          `
 ````
 
@@ -85,12 +86,12 @@ Drawing is three passes on the GPU.
    (4x6 while the machine keeps up). Sunlight, shadows, sea, clouds, rings and the atmosphere are
    all in this one shader.
 2. One pixel per cell: choose the character. A flat cell takes one from its material's own set
-   by brightness, so water is `-~=`, rock is `^x%#`, trees are `*YT&`. A cell with an edge in it
-   is matched by shape instead. Every glyph is measured once for how much ink falls in each of
-   six regions of its cell, and the glyph closest to the cell's six samples wins. That is what
-   keeps horizons and silhouettes sharp.
-3. Stamp the glyphs from an atlas at full resolution, add bloom, and write the status line into
-   the same grid.
+   by brightness, so water is `-~=`, rock is `^=%#`, trees are `+*%&#`. Where a cell has an edge
+   in it, a line character (`_ / \ ( ) ' "`) can stand in, but only if its shape fits: every
+   glyph is measured once for how much ink falls in each of six regions of its cell, and that is
+   compared with the cell's six samples. There are no letters or digits in the picture.
+3. Stamp the glyphs from an atlas at full resolution over a background colour that is blended
+   between cells, add bloom, and write the status line into the same grid.
 
 Matching glyphs by shape rather than brightness comes from Alex Harri's article
 [ASCII characters are not pixels](https://alexharri.com/blog/ascii-rendering).
