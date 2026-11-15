@@ -117,10 +117,10 @@ const RAMPS = [
   ' .:~',         // cloud
   ' .-~=',        // water
   ' .,:;=',       // sand
-  ' .,;"*%',      // grass
-  ' .,:;=+%',     // dry ground
-  ' .:^=%#',      // rock
-  ' .:+*#',       // snow
+  ' .,;"*',       // grass
+  ' .,:;=+',      // dry ground
+  ' .:^=',        // rock
+  ' .:+*',        // snow
   ' .:+*%&#',     // tree
   ' .:~=*%#@',    // lava
   ' .:-=+',       // ice
@@ -129,7 +129,10 @@ const RAMPS = [
 ];
 // how much of the surface colour fills the cell behind the character. high values read as
 // solid shapes with a light texture, low values as loose characters on black
-const BACKING = [0, .9, .9, .75, .7, .7, .7, .65, .75, .6, .5, .75, .5, .6];
+const BACKING = [.9, .92, .9, .75, .7, .8, .8, .75, .85, .6, .5, .75, .5, .6];
+// how much brighter than the scene the characters are drawn on a flat surface. low on sky and
+// cloud, so their dots read as a fine grain over the colour rather than a pattern of their own
+const GAIN = [1.45, 1.12, 1.15, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45];
 
 // heights are metres, colour stops run from the shore (0) to the highest peak (1),
 // tau is how much red/green/blue light the air scatters straight overhead,
@@ -594,7 +597,7 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
   if (uSea.a > 1.5) {
     float crust = smoothstep(.38, .6, n3(p * .22 + vec3(0., uTime * .02, 0.)) * .6 + n3(p * .9) * .4);
     glow = 1. - crust;
-    return mix(vec3(4., .7, .06), vec3(.03, .015, .012) * light, crust);
+    return mix(vec3(2.2, .38, .035), vec3(.03, .015, .012) * light, crust);
   }
   vec3 wc = mix(uShallow, uSea.rgb, 1. - exp(h * .3));
   wc = mix(alb, wc, 1. - exp(h * 1.4));
@@ -736,7 +739,7 @@ uniform sampler2D uScene, uInfo, uShapes, uRamps, uAllow;
 uniform vec2 uGrid;
 uniform int uCount;
 uniform float uInk;
-uniform float uBack[${RAMPS.length}];
+uniform float uBack[${RAMPS.length}], uGain[${RAMPS.length}];
 layout(location = 0) out vec4 o0;
 layout(location = 1) out vec4 o1;
 layout(location = 2) out vec4 o2;
@@ -791,11 +794,11 @@ void main() {
   fg /= w;
   // ink covers a fraction of the cell, so it is drawn brighter than the scene: a little inside
   // a surface, where it is only texture, and a lot along an edge, where it is the outline
-  fg = max(mix(vec3(dot(fg, vec3(.299, .587, .114))), fg, 1.2), 0.) * mix(1.45, 2., edge);
+  fg = max(mix(vec3(dot(fg, vec3(.299, .587, .114))), fg, 1.2), 0.) * mix(uGain[m], 2., edge);
   fg /= max(1., max(fg.r, max(fg.g, fg.b)));
 
   o0 = vec4(fg, float(glyph) / 255.);
-  o1 = vec4(avg * uBack[m], 1.);
+  o1 = vec4((m == ${VOID} ? dark : avg) * uBack[m], 1.);
   o2 = vec4(avg * em, 1.);
 }`;
 
@@ -830,6 +833,8 @@ void main() {
   // the colour behind the characters is blended between cell centres, so it has no steps
   vec3 col = mix(texture(uC1, uv).rgb, a.rgb, ink(uAtlas, int(a.a * 255. + .5), f));
   col += textureLod(uGlow, uv, 1.).rgb * .45 + textureLod(uGlow, uv, 2.5).rgb * .35 + textureLod(uGlow, uv, 4.).rgb * .25;
+  // half a step of noise breaks up the banding a smooth 8-bit gradient would show
+  col += (fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(.06711056, .00583715)))) - .5) / 255.;
   o = vec4(col, 1.);
 }`;
 
@@ -1337,6 +1342,7 @@ function drawScene() {
   gl.uniform1i(u.uCount, GLYPHS.length);
   gl.uniform1f(u.uInk, view.ink);
   gl.uniform1fv(u.uBack, BACKING);
+  gl.uniform1fv(u.uGain, GAIN);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
   gl.activeTexture(gl.TEXTURE8);
   gl.generateMipmap(gl.TEXTURE_2D);
