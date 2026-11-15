@@ -1,107 +1,117 @@
-# NEON GRID
+# planet.txt
 
-> **⚠️ Work in progress.** Playable and fun to wander, but the renderer is
-> still being tuned — expect rough edges, especially in how facades read up
-> close. Actively being worked on.
+A small planet you can fly down to and walk around on. Everything on screen is text.
 
-A walkable ASCII cyberpunk city that fits in one HTML file.
+![a ringed ocean planet seen from orbit, drawn in characters, with signal beams rising from it](shots/orbit.jpg)
 
-No engine, no libraries, no assets, no build step. Open the file and you're
-standing on a street. Everything on screen — every tower, sign, pedestrian and
-puddle — is a text character drawn to a `<canvas>`.
+One HTML file, no dependencies, no build step. Open `index.html` in a browser that has WebGL 2,
+or play it at <https://wavy-hec.github.io/planet.txt/>.
 
-**[Play it →](https://wavy-hec.github.io/neon-grid/)**
+## Playing
 
-![A first-person view down a rain-slicked street of neon-lit ASCII towers](docs/screenshot.png)
-
-## Controls
+You start in orbit. Every planet has five signals on the ground, visible as beams of light
+(a world that is almost all ocean may have fewer). Fly down to one, land, and walk into it.
+The status line at the bottom says how far the next one is and which way to turn. That is
+the whole game; the rest is looking around.
 
 | | |
 |---|---|
-| `W` `S` | walk |
-| `A` `D` | strafe |
-| `←` `→` | turn — or click the view for mouse-look |
-| `↑` `↓` | look up / down |
-| `Shift` | run |
-| `E` | interact with anything that glows |
-| `G` | solid material backing on/off — off gives the sparse, original ASCII look |
-| `T` | auto tour — the camera walks the city by itself; any input hands control back |
-| `P` | empty city — hide the people and traffic, keep the props |
-| `N` | generate a new city |
-| `B` `R` `M` `F` | bloom · rain · music · fps |
-| `-` `=` | resolution |
-| `?` | help |
+| mouse | steer, look |
+| `W` `A` `S` `D` | thrust and strafe, walk |
+| `space` `C` | up and down, jump |
+| `Q` `E` | roll |
+| `shift` | boost, run |
+| `F` | land and step out, board and lift off |
+| `N` | next planet (press twice if you are partway through a survey) |
+| `P` | save the view as a text file |
+| `V` | show the render under the text |
+| `-` `=` | bigger or smaller characters |
+| `M` | sound |
+| `?` | keys |
 
-Find a **service lift** (`I`) beside a tall building, ride it, and look down.
+`W` `A` `S` `D` and the other movement keys go by position, so they work on any keyboard layout.
+On a phone, the left half of the screen moves and the right half looks; there are buttons for up,
+down, `F`, sound and a new planet.
 
-Every city comes from the seed shown on the title card. Add `?seed=yourname`
-to the URL for one that's only yours.
+The planet comes from the seed in the address bar, so `?seed=dust` is the same place for everyone.
+
+## Examples
+
+| | |
+|---|---|
+| ![sunset over the sea, with the planet's ring arching across the sky](shots/sunset.jpg) | ![the parked lander in a valley of fir trees](shots/lander.jpg) |
+| `?seed=amber`: sunset over the sea under a ring | `?seed=coral`: the lander parked among firs |
+| ![a desert at dawn with layered rock spires and a signal beam](shots/desert.jpg) | ![glowing crystals and a signal beam on a frozen plain](shots/crystals.jpg) |
+| `?seed=dust`: a desert at dawn | `?seed=glacier`: a crystal field on a frozen world |
+| ![a lava sea glowing at sunset, the ring standing up from the horizon](shots/lava.jpg) | |
+| `?seed=kelp`: a lava sea at sunset | |
+
+Also worth a visit: `home` (a cratered moon with a ring) and `reef` (pink and violet, with glowing trees).
+
+`P` writes the frame out as plain text. This is `?seed=home` at 80 columns:
+
+````
+   .   .    .        .        .      . .    . .        .        .        .
+.      . .        .      . .      .        .        .      . .        .        .
+      .      .        .        .        .        .      . .    .   .        .
+ .        .    .   .        .      . .      . .        .        .           . .
+       .        .    .   .      . .      . .      . .      .    ..``'',::;;;;;;;
+    .        .        .      . .      ....     .        ...``,:;;;;;;;;;;;=;;;;;
+ .        .    . . .... . .      `,:::=^====,`     ..',:;;;;;;;;::,,,''''':;=;,.
+ .            .      '''. . . ..:::======+======,:;;;;;;::,''',::;;;;;;;;`::'.
+  .        .        .  '+*```:^;^^====++++=========::'',:;;;;;;;;==;;;;:.'   .
+    .  ..        .    ..`^\_;;::^^==================;;;::|'''. . ';;:,'       .
+     .        .      . .. .='::^=========++=========^'   .     .,:..       .
+. .        .      .    . .^==========================;'    ....`        ..
+  . . `        .    ..':;======;=========^+++=====+++^; ..``.        .        .
+   .        .    `':;;;;;==^==============++=++====+==;` .      .        .
+.        .  ..':;;;;::'::====;===++++===++===+==+==;===;     .        .        .
+      .  .`:;;;;:,',:;;;;;^^;;;=;==;==^=+++==+===^;::===. .        .        .
+   .  `,;;;;;:',:;;;;,' .::;;:;=;^^===^=++===++===;^^+==      . .        .
+   `:;;;;|,',;;;;:'. . ..::=;:^==:::^=::^++++=+++=;====:   . .      . .  .   .
+`:;;;;:,',;;;=:'    ..`'_:,=^;:==^^;^:;::===+++====;===.. .      .        .
+;;;;:`:;;;;==`   ..``:|^'.::=^:^==^=^;::^^======;;;===`     . .        .
+;=;: :=;;;:;;:,''' . . .. .,^=^^===;;;::=========;;==' . . .        .     .  .
+;;;::....'`.        .    . .:^^:===;;:^;============*+'`.        .        .
+      . .        .      . . .;;::^;==;;;===========`.'*|'.. . .      . .      .
+     .        .      . .      ',;;;:^=========^=^'   ..`'|,       .    .   .
+  .        .      . .      . .  .'::^:^^^====::`  . . .  ...   .        .
+        .      .        .        .    .'`...     . .        .        .        .
+   .        .        .    .   .        .      . .      . .        .
+.        .        .  .     .      . .      . .    . . .      .        .        .
+      .        .      . .      . .      . .      .        .        .        .
+   .        .        .      .  .     .        .        .        .        .
+     .          .        .        .      . .        .        .        .        .
+````
 
 ## How it works
 
-A raycaster, the way *Wolfenstein 3D* did it, with the pixels swapped for
-characters.
+The planet is a height map on the six faces of a cube, 512x512 each, built from the seed with
+layered Perlin noise: one layer for continents, a ridged one for mountains, a fine one for
+roughness. Some kinds of planet add craters or terraces. Trees, crystals and rock spires are
+stamped in as bumps. Normals, colours and a material for every texel are baked in the same pass.
+All of that runs once on the CPU, in about a second, and the same heights are what the ship and
+your feet collide with.
 
-Each frame casts one ray per screen column and **marches every tile along it**,
-painting front to back while pulling an occlusion ceiling down the screen. That
-matters: stop at the first wall you hit and a thirty-storey tower standing
-behind a four-storey block is simply never drawn, and the skyline has no layers.
-Tiles shorter than the eye render their **roof** instead of their face, which is
-what makes a rooftop somewhere you can stand rather than a hole in the world.
+Drawing is three passes on the GPU.
 
-Some things that turned out to matter more than expected:
+1. Ray march the height map into a small buffer, a 2x3 block of pixels for every character cell
+   (4x6 while the machine keeps up). Sunlight, shadows, sea, clouds, rings and the atmosphere are
+   all in this one shader.
+2. One pixel per cell: choose the character. A flat cell takes one from its material's own set
+   by brightness, so water is `-~=`, rock is `^=`, trees are `+*%&#`. Where a cell has an edge
+   in it, a line character (`_ / \ ( ) ' "`) can stand in, but only if its shape fits: every
+   glyph is measured once for how much ink falls in each of six regions of its cell, and that is
+   compared with the cell's six samples. There are no letters or digits in the picture.
+3. Stamp the glyphs from an atlas at full resolution over a background colour that is blended
+   between cells, add bloom, and write the status line into the same grid.
 
-- **Never pick a glyph from brightness alone.** A floor row sits at one distance,
-  so a brightness ramp paints the whole row as one repeated character. The floor
-  reads its glyph from a world-space hash whose frequency scales with distance;
-  the sky is stippled rather than ramped.
-- **Light is baked once per city**, not splatted per frame. Roughly 1,400 lights
-  fold into a single map at generation time.
-- **Glyphs are pre-rendered per colour** into one sheet and blitted, with
-  brightness carried on `globalAlpha` — one texture, so the GPU can batch.
-- **Tone mapping is not optional.** Without a highlight rolloff, standing next
-  to a sign clipped ~40% of the screen to flat white.
-- The block and box-drawing characters are **drawn geometrically**, not typed,
-  so building fills tile seamlessly whatever font the browser happens to have.
+The height map holds about one point per metre, too coarse for anything small. So the parked
+lander and the dozen trees nearest you are drawn as real shapes, signed distance functions marched
+in the same shader. Each tree blends back into the terrain's plain cone as you walk away from it.
 
-The soundtrack is generated live — walking bass, brushed ride, and a
-muted-trumpet line over D dorian. Original, in that idiom; no samples.
-
-## Running it
-
-Clone and open `index.html`. That's the whole procedure — it's a `file://` page
-with no dependencies.
-
-```bash
-git clone https://github.com/Wavy-Hec/neon-grid.git
-cd neon-grid
-start index.html      # macOS: open index.html
-```
-
-`window.__city` is exposed for poking at: `stats()`, `tp(x, y)`, `newCity()`,
-and live `ents` / `lights`.
-
-## Status
-
-Work in progress. What's in and working:
-
-- [x] First-person raycaster with multi-hit marching (layered skylines)
-- [x] Procedural city — roads, blocks, towers, parks, a canal, districts
-- [x] Rooftops you can ride a lift to and walk on
-- [x] Collision, traffic that stops at junctions, crowds that gather
-- [x] Baked lighting, canal reflections, animated neon
-- [x] Live-generated modal-jazz soundtrack, spatial — it plays from THE BLUE ROOM, a jazz bar you can walk into in every city
-- [x] Two-tier renderer: detailed raycast to 46 units, cheap far skyline out to 120
-- [x] Smoothed mouse/key look (camera eases toward a target orientation)
-- [x] Matrix-style boot sequence that constructs the view column by column
-- [x] Traffic: lanes, per-junction signals, cars that brake for the car ahead and for you, turns at junctions
-- [x] Pseudo-volumetric cars with headlights, taillights and headlight pools on the wet road
-- [x] Cyclists on the kerb lane and flying craft in sky lanes over the rooftops
-- [x] Shop interiors visible through the glass, with parallax
-- [x] Auto Tour (T), Empty City (P), and the solid material backing behind the glyphs (G)
-- [ ] Facade readability at close range — still tuning
-- [ ] More interiors beyond the bar (shops, lobbies)
-- [ ] Day/night cycle — built, currently held at night on purpose
+Matching glyphs by shape rather than brightness comes from Alex Harri's article
+[ASCII characters are not pixels](https://alexharri.com/blog/ascii-rendering).
 
 ## License
 
