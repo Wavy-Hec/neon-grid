@@ -376,10 +376,18 @@ function paintFace(f) {
   const { R, sea, lush, dry, K, peak } = planet;
   const rock = hex(K.rock), ice = hex(K.ice), bed = hex(K.bed), vein = K.veins && hex(K.veins);
   const rad = h => R + (sea ? Math.max(h, 0) : h);
-  // position of texel (i, j); past the edge of the face it comes from the neighbouring face
+  // position of texel (i, j); past the edge of the face it is the neighbouring face's texel there,
+  // with that texel's own direction, so the height and the direction belong to the same point
   const P = [0, 0, 0];
   const at = (i, j) => {
-    const v = norm(faceVec(f, (2 * i + 1) / S - 1, (2 * j + 1) / S - 1)), r = rad(texelH(f, i, j));
+    let v, h;
+    if (i >= 0 && i < S && j >= 0 && j < S) { v = faceDir(f, i, j); h = H[j * S + i]; }
+    else {
+      const [g, u, w] = cubeUV(faceVec(f, (2 * i + 1) / S - 1, (2 * j + 1) / S - 1));
+      const gi = clamp(Math.round(u), 0, S - 1), gj = clamp(Math.round(w), 0, S - 1);
+      v = faceDir(g, gi, gj); h = planet.height[g][gj * S + gi];
+    }
+    const r = rad(h);
     P[0] = v[0] * r; P[1] = v[1] * r; P[2] = v[2] * r;
     return P;
   };
@@ -1185,24 +1193,26 @@ function land() {
   const flat = sub(ship.fwd, mul(d, dot(ship.fwd, d)));
   me.fwd = norm(len(flat) > .05 ? flat : cross(d, [.3, .9, .2]));
   me.pitch = Math.asin(clamp(dot(ship.fwd, d), -1, 1));
-  // the ship sets down a few steps away: behind you if the ground is clear and level there,
-  // otherwise beside you or ahead, and never on a tree, crystal or spire
+  // The ship sets down a few steps away: behind you if the ground there is clear and level,
+  // otherwise beside you or ahead. The hull is a 1.5 m sphere, so it is raised until no ground
+  // under its whole footprint pokes into it (it may sink 10 cm).
   const side = cross(me.fwd, d);
-  let park = null;
+  let best = null;
   for (const way of [mul(me.fwd, -1), side, mul(side, -1), me.fwd]) {
     const spot = norm(add(mul(d, planet.R), mul(way, 6))), e = norm(cross(spot, way)), g = cross(spot, e);
-    if ([TREE, CRYSTAL, SPIRE].includes(matAt(spot))) continue;
-    const hs = [groundAt(spot)];
-    for (let a = 0; a < 8; a++) {
-      const v = add(mul(e, Math.cos(a * Math.PI / 4)), mul(g, Math.sin(a * Math.PI / 4)));
-      hs.push(groundAt(norm(add(mul(spot, planet.R), mul(v, 1.2)))));
+    let centre = groundAt(spot) + 1.4, lo = 1e9, hi = -1e9;
+    for (const rr of [.5, .9, 1.2, 1.4, 1.5]) for (let a = 0; a < 16; a++) {
+      const v = add(mul(e, Math.cos(a * Math.PI / 8)), mul(g, Math.sin(a * Math.PI / 8)));
+      const h = groundAt(norm(add(mul(spot, planet.R), mul(v, rr))));
+      centre = Math.max(centre, h + Math.sqrt(2.25 - rr * rr) - .1);
+      lo = Math.min(lo, h); hi = Math.max(hi, h);
     }
-    const top = Math.max(...hs);
-    if (top - Math.min(...hs) > 1 && park) continue;
-    park = mul(spot, planet.R + top + 1.25);
-    if (top - Math.min(...hs) <= 1) break;
+    // a tree, crystal or spire is worst, uneven ground next; on a tie the lower spot wins
+    const score = ([TREE, CRYSTAL, SPIRE].includes(matAt(spot)) ? 2 : 0) + (hi - lo > 1 ? 1 : 0);
+    if (!best || score < best.score || (score === best.score && centre < best.centre)) best = { score, centre, spot };
+    if (score === 0) break;
   }
-  ship.pos = park || mul(norm(sub(mul(d, planet.R), mul(me.fwd, 6))), planet.R + groundAt(d) + 1.3);
+  ship.pos = mul(best.spot, planet.R + best.centre);
   ship.parked = true;
   mode = 'walk';
 }
@@ -1259,18 +1269,22 @@ addEventListener('blur', () => {
   keys.clear();
   if (ac) for (const g of [hum, wind]) g.gain.setTargetAtTime(0, ac.currentTime, .3);
 });
+// Size changes are applied at the start of the next frame, which then draws at the new size;
+// resizing straight from these events would clear a frame already drawn and flash black.
+// The window event covers browser zoom (the canvas keeps its device size, so the observer misses
+// it); the observer adds the exact device-pixel size where the browser reports one.
+let pendingResize = false;
+addEventListener('resize', () => { pendingResize = true; });
 if (window.ResizeObserver) {
   try {
     new ResizeObserver(([e]) => {
       const box = e.devicePixelContentBoxSize && e.devicePixelContentBoxSize[0];
       screenPx.w = box ? box.inlineSize : 0;
       screenPx.h = box ? box.blockSize : 0;
-      resize();
+      pendingResize = true;
     }).observe(canvas, { box: 'device-pixel-content-box' });
-  } catch (e) {
-    addEventListener('resize', resize);   // the observer cannot watch device pixels here
-  }
-} else addEventListener('resize', resize);
+  } catch (e) { /* no device-pixel box in this browser; the window event is enough */ }
+}
 
 function grabMouse() {
   const p = canvas.requestPointerLock && canvas.requestPointerLock();
@@ -1652,7 +1666,8 @@ function frame(now) {
   requestAnimationFrame(frame);
   const real = (now - last) / 1000 || 0, dt = Math.min(.05, real);
   last = now;
-  if (lost) return;
+  if (lost) { look.x = look.y = 0; return; }   // input from a frozen screen would land all at once later
+  if (pendingResize) { pendingResize = false; resize(); }
   if (mode !== 'loading') {
     time += dt;
     if (mode === 'title') orbit();
@@ -1702,14 +1717,26 @@ function govern(real) {
 
 // A graphics reset (a driver update, a GPU crash, a phone reclaiming memory) loses everything on the GPU.
 // The planet is still in memory, so it only needs uploading again.
-let lost = false;
+let lost = false, lostTimer = 0;
 const notice = document.getElementById('notice');
+// if the browser does not hand the graphics back, say so instead of waiting forever
+const stuck = () => {
+  if (!lost) return;
+  notice.textContent = 'graphics stopped. ';
+  const a = notice.appendChild(document.createElement('a'));
+  a.href = location.href; a.textContent = 'reload'; a.style.color = 'inherit';
+};
 canvas.addEventListener('webglcontextlost', e => {
   e.preventDefault();
   lost = true;
+  notice.textContent = 'graphics reset, restoring';
   notice.hidden = false;
+  clearTimeout(lostTimer);
+  lostTimer = setTimeout(stuck, 8000);
 });
+canvas.addEventListener('webglcontextcreationerror', stuck);
 canvas.addEventListener('webglcontextrestored', () => {
+  clearTimeout(lostTimer);
   initGL();
   if (planet.beacons) uploadPlanet();
   resize();
