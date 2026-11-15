@@ -343,6 +343,8 @@ function scatter() {
   }
   planet.peak = top;
   planet.flat = low / (6 * S * S);
+  planet.trees = [];   // the nearest of these are drawn as real shapes
+  planet.treeCol = [0, 0, 0]; planet.treeGlow = 0;
   for (const P of planet.K.props) {
     const c = hex(P.col);
     for (let n = 0; n < P.n; n++) {
@@ -359,14 +361,25 @@ function scatter() {
       if ((Math.abs(H[k + 1] - H[k - 1]) + Math.abs(H[k + S] - H[k - S])) / (2 * texel) > 1.4) continue;   // too steep
       for (let j = cj - w; j <= cj + w; j++) for (let i = ci - w; i <= ci + w; i++) {
         const q = j * S + i, dist = len(sub(faceDir(f, i, j), d0)) * planet.R / r;
-        if (dist >= 1) continue;
+        if (dist >= 1.4) continue;
+        if (dist >= 1) {
+          // a ring of the prop's colour round its foot, so the sides of the cone the terrain makes
+          // do not fade into the ground's colour (trees and rock spires only)
+          if (!A[q * 4 + 3] && (P.mat === TREE || P.mat === SPIRE)) {
+            A[q * 4] = c[0] * 200; A[q * 4 + 1] = c[1] * 200; A[q * 4 + 2] = c[2] * 200; A[q * 4 + 3] = 1;
+            planet.mat[f][q] = P.mat;
+          }
+          continue;
+        }
         const v = h0 + hh * (P.flat ? smooth(1, .55, dist) : Math.pow(1 - dist, .8));
         if (v <= H[q]) continue;
         H[q] = v;
         A[q * 4] = c[0] * 255; A[q * 4 + 1] = c[1] * 255; A[q * 4 + 2] = c[2] * 255; A[q * 4 + 3] = 1 + (P.glow || 0) * 254;
         planet.mat[f][q] = P.mat;
       }
+      if (P.mat === TREE) planet.trees.push({ pos: mul(d0, planet.R + h0), h: hh, r, seed: (n * 7.31) % 97 });
     }
+    if (P.mat === TREE) { planet.treeCol = linear(c); planet.treeGlow = P.glow || 0; }
   }
   planet.top = top + 22;   // tallest prop on the highest ground
 }
@@ -505,6 +518,10 @@ uniform float uTime, uR, uTop, uPix, uTexel, uAtmo, uAdapt;
 uniform vec3 uBeta, uShallow, uCloudCol, uRingN, uRingCol, uBeaconCol;
 uniform vec4 uSea, uCloud, uRing, uMoon, uShip;
 uniform vec3 uShipFwd;
+uniform vec4 uTree[12], uTreeB[12];   // the nearest trees: base position and height; radius and a seed
+uniform int uTreeN;
+uniform vec3 uTreeCol;
+uniform float uTreeGlow;
 uniform vec4 uBeacon[5];
 in vec2 vUv;
 layout(location = 0) out vec4 o;
@@ -586,6 +603,29 @@ float lander(vec3 q, out float part) {
   if (legs < d) { d = legs; part = 3.; }
   if (lamp < d) { d = lamp; part = 4.; }
   return d;
+}
+
+// a capped cone from y = -h (radius r1) to y = +h (radius r2)
+float sdCappedCone(vec3 p, float h, float r1, float r2) {
+  vec2 q = vec2(length(p.xz), p.y), k1 = vec2(r2, h), k2 = vec2(r2 - r1, 2. * h);
+  vec2 ca = vec2(q.x - min(q.x, q.y < 0. ? r1 : r2), abs(q.y) - h);
+  vec2 cb = q - k1 + k2 * clamp(dot(k1 - q, k2) / dot(k2, k2), 0., 1.);
+  float s = cb.x < 0. && ca.y < 0. ? -1. : 1.;
+  return s * sqrt(min(dot(ca, ca), dot(cb, cb)));
+}
+// A fir in its own frame (y up, origin at the base): a trunk and three overlapping tiers of boughs with
+// bushy edges. fade 0 gives the plain cone the terrain already holds, so distant trees blend into it.
+float fir(vec3 q, float r, float h, float fade, float seed) {
+  // outside the widest tier the distance to it is a safe step, so the exact shape is only worked out close by
+  float wide = length(q.xz) - (r * 1.2 + .45);
+  if (wide > .6) return wide;
+  float d = sdCapsule(q, vec3(0.), vec3(0., h * .5, 0.), r * .09);
+  for (int k = 0; k < 3; k++) {
+    float fk = float(k), y0 = h * (.02 + .25 * fk), th = h * (.48 + .02 * fk), R = r * (1.2 - .3 * fk) + .45;
+    d = min(d, sdCappedCone(q - vec3(0., y0 + th * .5, 0.), th * .5, R, R * .06));
+  }
+  if (fade > .5) d += (n3(q * 2.6 + seed) - .5) * .11 * r;
+  return mix(sdCappedCone(q - vec3(0., h * .5, 0.), h * .5, r * .95, 0.), d, fade);
 }
 
 float shadow(vec3 p) {
@@ -757,13 +797,61 @@ vec3 atmosphere(vec3 ro, vec3 rd, float tMax, out vec3 trans) {
   return sum * uSunCol * uAdapt * (uBeta * .45 * (1. + mu * mu) + (.012 * pow(m, 6.) + .09 * pow(m, 90.)) / hs);
 }
 
+// The nearest trees, drawn as real shapes; past 25 m each blends back into the plain cone the terrain
+// already has. Checked before any shading, so the terrain behind a tree is never shaded for nothing.
+bool trees(vec3 ro, vec3 rd, inout float tEnd, out vec3 col) {
+  bool found = false;
+  col = vec3(0.);
+  for (int i = 0; i < 12; i++) {
+    if (i >= uTreeN) break;
+    vec4 tr = uTree[i];
+    float r = uTreeB[i].x, h = tr.w, seed = uTreeB[i].y;
+    vec3 up = normalize(tr.xyz), o = ro - tr.xyz;
+    float fade = smoothstep(38., 25., length(o));
+    if (fade <= 0.) continue;
+    vec2 b = sphere(o - up * (h * .5), rd, length(vec2(h * .56, r * 1.3 + .6)));
+    if (b.y <= 0. || b.x >= tEnd) continue;
+    vec3 ax = normalize(cross(up, abs(up.y) < .9 ? vec3(0., 1., 0.) : vec3(1., 0., 0.))), az = cross(ax, up);
+    vec3 lo = vec3(dot(o, ax), dot(o, up), dot(o, az)), ld = vec3(dot(rd, ax), dot(rd, up), dot(rd, az));
+    float ts = max(b.x, 0.);
+    bool hit = false;
+    for (int k = 0; k < 36; k++) {
+      float dd = fir(lo + ld * ts, r, h, fade, seed);
+      if (dd < .004 * (1. + ts)) { hit = true; break; }
+      ts += dd * .9;
+      if (ts > b.y || ts > tEnd) break;
+    }
+    if (!hit || ts >= tEnd) continue;
+    vec3 q = lo + ld * ts, p = ro + rd * ts;
+    const vec2 e = vec2(.006, -.006);
+    vec3 nl = normalize(e.xyy * fir(q + e.xyy, r, h, fade, seed) + e.yyx * fir(q + e.yyx, r, h, fade, seed)
+                      + e.yxy * fir(q + e.yxy, r, h, fade, seed) + e.xxx * fir(q + e.xxx, r, h, fade, seed));
+    vec3 n = nl.x * ax + nl.y * up + nl.z * az;
+    float mu = dot(up, uSun), day = smoothstep(-.25, .25, mu), ndl = max(dot(n, uSun), 0.);
+    float vis = ndl > 0. ? shadow(p + n * .3) : 1.;
+    // darker toward the trunk and under each tier, clumps of needles
+    float occ = .4 + .6 * clamp(length(q.xz) / (r * 1.1), 0., 1.);
+    vec3 alb = uTreeCol * occ * (.65 + .7 * n3(q * 4. + seed));
+    vec3 light = uSunCol * sunTint(mu, 1.5) * vis * ndl + skyCol() * day * .1 + vec3(.03, .035, .05)
+               + vec3(1.5, 1.4, 1.15) * (1. - day) * max(dot(n, -rd), 0.) / (1. + ts * ts / 250.);
+    col = alb * light + alb * uTreeGlow * 7.;
+    glow = uTreeGlow;
+    tEnd = ts;
+    mat = ${TREE}.;
+    found = true;
+  }
+
+  return found;
+}
+
 void main() {
   vec3 ro = uPos, rd = normalize(uFwd + uRight * vUv.x * uFov.x + uUp * vUv.y * uFov.y);
-  float t = march(ro, rd), tEnd = 1e5;
+  float t = march(ro, rd), tEnd = t > 0. ? t : 1e5;
   vec3 col, st = vec3(0.);
   glow = 0.;
   mat = ${VOID}.;
-  if (t > 0.) { col = surface(ro, rd, t); tEnd = t; }
+  if (trees(ro, rd, tEnd, col)) {}
+  else if (t > 0.) col = surface(ro, rd, t);
   else { col = lights(ro, rd); st = stars(rd); }
 
   if (uShip.w > 0.) {
@@ -1581,6 +1669,24 @@ function drawScene() {
   gl.uniform4f(u.uMoon, ...(p.moon ? moonPos() : [0, 0, 0]), p.moon ? p.moon.r : 0);
   gl.uniform4f(u.uShip, ...ship.pos, ship.parked ? 1 : 0);
   gl.uniform3fv(u.uShipFwd, ship.face || [0, 0, 1]);
+  // the twelve nearest trees within 40 m are drawn as real shapes
+  const close = [];
+  for (const t of p.trees) {
+    const dx = t.pos[0] - cam.pos[0], dy = t.pos[1] - cam.pos[1], dz = t.pos[2] - cam.pos[2], d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 < 1600) close.push([d2, t]);
+  }
+  close.sort((a, b) => a[0] - b[0]);
+  const trees = new Float32Array(48), treeB = new Float32Array(48), nt = Math.min(12, close.length);
+  for (let i = 0; i < nt; i++) {
+    const t = close[i][1];
+    trees.set([...t.pos, t.h], i * 4);
+    treeB.set([t.r, t.seed, 0, 0], i * 4);
+  }
+  gl.uniform4fv(u.uTree, trees);
+  gl.uniform4fv(u.uTreeB, treeB);
+  gl.uniform1i(u.uTreeN, nt);
+  gl.uniform3fv(u.uTreeCol, p.treeCol);
+  gl.uniform1f(u.uTreeGlow, p.treeGlow);
   gl.uniform3f(u.uBeaconCol, .2, 1, .9);
   const beams = new Float32Array(20);
   p.beacons.forEach((b, i) => beams.set([...b.base, b.got ? .25 : 1], i * 4));
