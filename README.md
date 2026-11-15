@@ -2,7 +2,7 @@
 
 A small planet you can fly down to and walk around on. Everything on screen is text.
 
-![a ringed ocean planet seen from orbit, drawn in characters, with signal beams rising from it](shots/orbit.jpg)
+![diving from orbit through the ring of a small ocean planet, down to its fir trees, everything drawn in text characters](shots/dive.gif)
 
 One HTML file, no dependencies, no build step. Open `index.html` in a browser that has WebGL 2,
 or play it at <https://wavy-hec.github.io/planet.txt/>.
@@ -13,6 +13,10 @@ You start in orbit. Every planet has five signals on the ground, visible as beam
 (a world that is almost all ocean may have fewer). Fly down to one, land, and walk into it.
 The status line at the bottom says how far the next one is and which way to turn. That is
 the whole game; the rest is looking around.
+
+![a whole run: down from orbit through the ring, in over fir trees, a walk up to a signal beam, then back out to orbit](shots/run.gif)
+
+`?seed=amber`, sped up: down through the ring, a walk to the first signal, and back out to orbit.
 
 | | |
 |---|---|
@@ -43,8 +47,8 @@ The planet comes from the seed in the address bar, so `?seed=dust` is the same p
 | `?seed=amber`: sunset over the sea under a ring | `?seed=coral`: the lander parked among firs |
 | ![a desert at dawn with layered rock spires and a signal beam](shots/desert.jpg) | ![glowing crystals and a signal beam on a frozen plain](shots/crystals.jpg) |
 | `?seed=dust`: a desert at dawn | `?seed=glacier`: a crystal field on a frozen world |
-| ![a lava sea glowing at sunset, the ring standing up from the horizon](shots/lava.jpg) | |
-| `?seed=kelp`: a lava sea at sunset | |
+| ![a lava sea glowing at sunset, the ring standing up from the horizon](shots/lava.jpg) | ![a ringed ocean planet seen from orbit, drawn in characters, with signal beams rising from it](shots/orbit.jpg) |
+| `?seed=kelp`: a lava sea at sunset | `?seed=amber` from orbit |
 
 Also worth a visit: `home` (a cratered moon with a ring) and `reef` (pink and violet, with glowing trees).
 
