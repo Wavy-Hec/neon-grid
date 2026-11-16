@@ -1009,7 +1009,7 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
   }
   if (uSea.a > 1.5) {
     float crust = smoothstep(.38, .6, mix(.5, n3(p * .22 + vec3(0., uTime * .02, 0.)), fine(F, 4.5)) * .6 + mix(.5, n3(p * .9), fine(F, 1.1)) * .4);
-    glow = 1. - crust;
+    glow = (1. - crust) * .3;
     return mix(vec3(2.2, .38, .035), vec3(.03, .015, .012) * light, crust);
   }
   vec3 wc = mix(uShallow, uSea.rgb, 1. - exp(h * .3));
@@ -1022,7 +1022,7 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
   float fres = pow(clamp(1. - dot(-rd, wn), 0., 1.), 5.);
   float sp = max(dot(reflect(rd, wn), uSun), 0.);
   float glint = pow(sp, mix(90., 34., calm)) * mix(4., 1.1, calm);
-  glow = min(glint * .12, 1.) * vis;
+  glow = min(glint * .06, 1.) * vis;
   return wc * light * (1. - fres) + (skyCol() * day * .3 + .008) * fres + sun * (glint + pow(sp, 10.) * .2);
 }
 
@@ -1138,7 +1138,7 @@ void main() {
   mat = ${VOID}.;
   if (trees(ro, rd, tEnd, col)) {}
   else if (t > 0.) col = surface(ro, rd, t);
-  else { col = lights(ro, rd); st = stars(rd); }
+  else { col = lights(ro, rd); st = mat == ${ROCK}. ? vec3(0.) : stars(rd); }   // no stars in front of the moon
 
   if (uShip.w > 0.) {
     // march the lander's shape inside a 2.1 m bounding sphere, in the ship's own frame
@@ -1228,7 +1228,7 @@ void main() {
       float tc = i == 0 ? s.y : s.x;
       if (tc <= 0. || tc >= tEnd) continue;
       vec3 d = normalize(ro + rd * tc);
-      float a = cloudAt(d) * uCloud.w * smoothstep(0., 14., tc);
+      float a = cloudAt(d) * uCloud.w * smoothstep(0., 3., tc);
       if (a < .002) continue;   // clear sky here: nothing to light
       col = mix(col, cloudLit(d), a);
       tAir = mix(tAir, tc, a);
@@ -1242,9 +1242,11 @@ void main() {
   }
 
   vec3 tr;
+  float halo = dot(col, vec3(1.));   // the sun's glow, where the ray is in open space
   vec3 sc = atmosphere(ro, rd, tAir, tr);
   col = (col + st * clamp(1. - dot(sc, vec3(4.)), 0., 1.)) * tr + sc;
-  if (t < 0. && tEnd > 9e4 && mat != ${CLOUD}. && dot(sc, vec3(1.)) > .03) mat = ${SKY}.;   // open sky, moon included
+  // open sky, moon included; and the glow round the sun in space, which is light and not a field of marks
+  if (t < 0. && tEnd > 9e4 && mat != ${CLOUD}. && mat != ${RING}. && (dot(sc, vec3(1.)) > .03 || (mat == ${VOID}. && halo > .05))) mat = ${SKY}.;
 
   // the ring, when it is this side of the air
   if (ringA > 0. && !ringFar) {
@@ -1336,7 +1338,7 @@ void main() {
   float tone01 = mean / uInk * (air ? 1. : mix(1., FAR_TONE, centre.b));
   // the noise spans a whole step between characters, so one character gives way to the next through a
   // stipple of the two, not along a line
-  int level = int(clamp(tone01 + dither * (air ? .08 : DITHER), 0., 1.) * 15. + .5);
+  int level = int(clamp(tone01 + dither * (air ? .08 : DITHER) * smoothstep(0., .05, tone01), 0., 1.) * 15. + .5);
   int tone = int(texelFetch(uTables, ivec2(level, 2 + m), 0).r * 255. + .5), glyph = tone;
   float best = 1e9;
   for (int i = 0; i < uCount; i++) {
@@ -1399,7 +1401,9 @@ void main() {
   vec4 a = texelFetch(uC0, ci, 0);
   // the colour behind the characters is blended between cell centres, so it has no steps
   vec3 col = mix(textureLod(uC1, uv, 0.).rgb, a.rgb, ink(uAtlas, int(a.a * 255. + .5), f));
-  col += textureLod(uGlow, uv, 1.).rgb * .45 + textureLod(uGlow, uv, 2.5).rgb * .35 + textureLod(uGlow, uv, 4.).rgb * .25;
+  // light spilling from what glows. It levels off, so it cannot push a cell to plain white and hide its character
+  vec3 bl = textureLod(uGlow, uv, 1.).rgb * .45 + textureLod(uGlow, uv, 2.5).rgb * .35 + textureLod(uGlow, uv, 4.).rgb * .25;
+  col += bl / (1. + 1.5 * bl);
   // half a step of noise breaks up the banding a smooth 8-bit gradient would show
   col += (fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(.06711056, .00583715)))) - .5) / 255.;
   o = vec4(col, 1.);
