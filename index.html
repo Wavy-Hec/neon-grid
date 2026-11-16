@@ -118,9 +118,9 @@ function ridge(x, y, z, oct) {
 
 const S = 1024;   // cube map face size
 
-// Every surface is drawn with its own set of characters, listed light to heavy. Dry land uses dots,
-// ticks and crosses; the dashes that join up into lines across the screen (- ~ =) are kept for what
-// really is smooth and level: water, ice and lava.
+// Every surface is drawn with its own set of characters, listed light to heavy. Land uses small marks
+// that stay apart (dots, commas, crosses, stars). The ones that join up into lines across the screen
+// (- ~ = and, at this size, ") are kept for what really is smooth and level: water, ice and lava.
 const VOID = 0, SKY = 1, CLOUD = 2, WATER = 3, SAND = 4, GRASS = 5, DRY = 6, ROCK = 7, SNOW = 8, TREE = 9, LAVA = 10, ICE = 11, CRYSTAL = 12, SPIRE = 13, SHIP = 14, RING = 15;
 const RAMPS = [
   " .'`+*",       // void
@@ -128,7 +128,7 @@ const RAMPS = [
   ' .:~',         // cloud
   ' .-~=',        // water
   ' .,:;',        // sand
-  ' .,;"*',       // grass
+  ' .,;*',        // grass
   ' .,:;+',       // dry ground
   ' .:^*#',       // rock
   ' .:+*',        // snow
@@ -482,40 +482,58 @@ function scatter() {
   planet.top = top + 22;   // tallest prop on the highest ground
 }
 
-// Two numbers for each block of TB x TB texels and the eight blocks round it: the highest ground there, and
-// the steepest slope (paintFace measures the slopes). The ray march reads them to know how far it can go
-// without looking: above everything within a block of it nothing can be in a ray's way, and where the
-// ground is gentle the height over it is a fair guide to how close it is.
-const TB = 16, SB = S / TB;
+// The ray march reads a small pyramid of maps to know how far it can go without looking. Each holds, for
+// a block of texels together with the eight blocks round it, the highest ground there and the steepest
+// slope (paintFace measures the slopes). Level 0 has blocks of TB x TB texels, about 2 to 4 m; each level
+// up doubles that, to about 130 m at level 6. Above everything in a block and its neighbours nothing can
+// be in a ray's way; and where the ground there is gentle, the height over it is a fair guide to how
+// close it is.
+const TB = 4, SB = S / TB, LEVELS = 7;
 const steep = Array.from({ length: 6 }, () => new Float32Array(SB * SB));
 function highGround() {
-  const own = [];
+  // highest and steepest of each block alone
+  let tops = [], slopes = steep, n = SB;
   for (let f = 0; f < 6; f++) {
-    const H = planet.height[f], C = new Float32Array(SB * SB).fill(-1e9);
-    for (let j = 0; j < S; j++) for (let i = 0, row = (j / TB | 0) * SB; i < S; i++) {
+    const H = planet.height[f], C = new Float32Array(n * n).fill(-1e9);
+    for (let j = 0; j < S; j++) for (let i = 0, row = (j / TB | 0) * n; i < S; i++) {
       const b = row + (i / TB | 0);
       if (H[j * S + i] > C[b]) C[b] = H[j * S + i];
     }
-    own.push(C);
+    tops.push(C);
   }
-  // each block also takes in its eight neighbours, across the edges of the cube where it has to
-  planet.tops = own.map((C, f) => {
-    const T = new Float32Array(SB * SB * 2);
-    for (let j = 0; j < SB; j++) for (let i = 0; i < SB; i++) {
-      let top = -1e9, slope = 0;
-      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
-        let g = f, b = (j + dj) * SB + i + di;
-        if (i + di < 0 || i + di >= SB || j + dj < 0 || j + dj >= SB) {
-          const [face, u, v] = cubeUV(faceVec(f, (2 * (i + di) + 1) / SB - 1, (2 * (j + dj) + 1) / SB - 1));
-          g = face; b = clamp(Math.floor((v + .5) / TB), 0, SB - 1) * SB + clamp(Math.floor((u + .5) / TB), 0, SB - 1);
+  planet.tops = [];
+  for (let level = 0; level < LEVELS; level++, n /= 2) {
+    const size = S / n, own = tops, sl = slopes;
+    // each block also takes in its eight neighbours
+    planet.tops.push(own.map((C, f) => {
+      const T = new Float32Array(n * n * 2);
+      for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+        let top = -1e9, slope = 0;
+        const take = (g, b) => { if (own[g][b] > top) top = own[g][b]; if (sl[g][b] > slope) slope = sl[g][b]; };
+        for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+          const x = i + di, y = j + dj;
+          if (x >= 0 && x < n && y >= 0 && y < n) { take(f, y * n + x); continue; }
+          // across an edge of the cube the blocks of the two faces do not line up exactly, so take the
+          // block that is there and the ones round it
+          const [g, u, v] = cubeUV(faceVec(f, (2 * x + 1) / n - 1, (2 * y + 1) / n - 1));
+          const bx = clamp(Math.floor((u + .5) / size), 0, n - 1), by = clamp(Math.floor((v + .5) / size), 0, n - 1);
+          for (let ey = Math.max(by - 1, 0); ey <= Math.min(by + 1, n - 1); ey++)
+            for (let ex = Math.max(bx - 1, 0); ex <= Math.min(bx + 1, n - 1); ex++) take(g, ey * n + ex);
         }
-        top = Math.max(top, own[g][b]); slope = Math.max(slope, steep[g][b]);
+        T[(j * n + i) * 2] = planet.sea ? Math.max(top, 0) : top;
+        T[(j * n + i) * 2 + 1] = slope;
       }
-      T[(j * SB + i) * 2] = planet.sea ? Math.max(top, 0) : top;
-      T[(j * SB + i) * 2 + 1] = slope;
-    }
-    return T;
-  });
+      return T;
+    }));
+    // the next level's blocks are four of this level's
+    const half = n / 2, pool = A => A.map(C => {
+      const P = new Float32Array(half * half);
+      for (let j = 0; j < half; j++) for (let i = 0; i < half; i++)
+        P[j * half + i] = Math.max(C[2 * j * n + 2 * i], C[2 * j * n + 2 * i + 1], C[(2 * j + 1) * n + 2 * i], C[(2 * j + 1) * n + 2 * i + 1]);
+      return P;
+    });
+    tops = pool(own); slopes = pool(sl);
+  }
 }
 
 // normals, colours and materials for one face
@@ -704,35 +722,62 @@ float ground(vec3 p) {
 }
 float above(vec3 p) { return length(p) - uR - ground(p); }
 
-// How far the ray may go from p before anything can be in its way. a is the height over the ground
-// straight below, which is not the distance to the ground: a tree or a rock spire is a near-vertical wall,
-// and a ray can be metres above the plain and a hand's width from one. The map of high ground settles it.
-// Above everything within a block of here, the ray is clear until it has come down to that height or left
-// the block. Below that, on gentle ground (nothing steeper than 60 degrees nearby), half the height is
-// always clear. Among steep things the step stays shorter than the narrowest of them, so none is
-// stepped over whole.
-float stride(vec3 p, vec3 rd, float a, float t, int i) {
-  // the shortest step grows the longer the ray has been going, so one that skims a crest still gets past it
-  float r = length(p), least = t * (.006 + .00012 * float(i));
-  vec2 hi = textureLod(uTops, p, 0.).rg;
-  float c = r - uR - hi.x;
-  if (c > 0.) return max(min(uBlock, c / max(-dot(rd, p) / r, 1e-3)), least);
-  if (hi.y < 1.7) return max(min(a * .5, uBlock), least);
-  return clamp(a * .5, least, max(.7, .012 * t));
-}
-
-// distance along the ray to the terrain, or -1
+// Distance along the ray to the terrain, or -1.
+// The height over the ground straight below is not the distance to the ground: a tree or a rock spire is
+// a near-vertical wall, and a ray can be metres above the plain and a hand's width from one. A step of
+// half that height is only safe where the ground is gentle, and the maps of high ground say where that is:
+// - above everything in a block and the blocks round it, the ray is clear until it has come down to that
+//   height or gone a block sideways, and the ground itself need not be looked at;
+// - where nothing nearby is steeper than 60 degrees, half the height is always clear;
+// - among steep things, below their tops, the step stays shorter than the narrowest of them, so none is
+//   stepped over whole.
+// A short step needs no map at all, and what a map said holds for a block's width, so most steps cost one
+// look at the ground as they always did.
 float march(vec3 ro, vec3 rd) {
   vec2 s = sphere(ro, rd, uR + uTop);
   if (s.y < 0.) return -1.;
-  float t = max(s.x, 0.), tp = t;
-  bool hit = false;
+  float t = max(s.x, 0.), tp = t, a = -1e9;
+  // air: the last map read said the ray is above everything near, so read the map first again.
+  // room: what the last map said about the ground, and for how many more metres sideways it holds;
+  //       positive for gentle ground, negative for steep things close by.
+  // lv: which level of the pyramid to read; it may rise as far as roof, which drops to just under a level
+  //     that found something steep and creeps back up, so the march does not keep asking the same thing.
+  bool hit = false, air = s.x > 0.;
+  float room = 0., lv = air ? 4. : 0., roof = 6.;
   for (int i = 0; i < 170 && t < s.y; i++) {
     vec3 p = ro + rd * t;
-    float a = above(p);
-    if (a < .0015 * t) { hit = true; break; }
-    tp = t;
-    t += stride(p, rd, a, t, i);
+    float r = length(p), alt = r - uR, down = -dot(rd, p) / r, across = max(sqrt(max(1. - down * down, 0.)), .05);
+    // the shortest step grows the longer the ray has been going, so one that skims a crest still gets past it
+    float least = t * (.006 + .00012 * float(i)), thin = max(.9, .012 * t);
+    if (!air) {
+      if (a < -1e8) {
+        a = alt - ground(p);
+        if (a < .0015 * t) { hit = true; break; }
+      }
+      if (a * .5 <= thin || room != 0.) {
+        float step = max(room > 0. ? min(a * .5, max(room / across, thin)) : min(a * .5, thin), least);
+        // a step cut short by the edge of the block asks for a bigger block next time
+        if (room > 0. && a * .5 > room / across) lv = min(lv + 1., floor(roof));
+        room = room > 0. ? max(room - step * across, 0.) : min(room + step * across, 0.);
+        roof = min(roof + .25, 6.);
+        tp = t; t += step; a = -1e9;
+        continue;
+      }
+    }
+    vec2 hi = textureLod(uTops, p, lv).rg;
+    float c = alt - hi.x, block = uBlock * exp2(lv);
+    if (c > 0.) {
+      air = true; room = 0.;
+      float far = block / across, drop = c / max(down, 1e-3);
+      tp = t; t += max(min(far, drop), least); a = -1e9;
+      if (far < drop) lv = min(lv + 1., floor(roof));
+      roof = min(roof + .25, 6.);
+      continue;
+    }
+    air = false;
+    // something steep in there, and the ray is below its top: look at a smaller block
+    if (hi.y >= 1.7 && lv > 0.) { roof = lv - 1.; lv = max(lv - 2., 0.); }
+    else room = hi.y < 1.7 ? block : -2. * block;
   }
   // A ray that runs out of steps has been skimming the ground for a long way; it takes the ground it
   // is over, which is closer to the truth than a hole or the far horizon.
@@ -789,17 +834,44 @@ float fir(vec3 q, float r, float h, float fade, float seed) {
   return mix(sdCappedCone(q - vec3(0., h * .5, 0.), h * .5, r * .95, 0.), d, fade);
 }
 
+// how much of the sun reaches p: the same rules as the march, along the ray to the sun
 float shadow(vec3 p) {
-  float res = 1., t = .6;
-  for (int i = 0; i < 28; i++) {
+  float res = 1., t = .6, a = -1e9, room = 0., lv = 0., roof = 6.;
+  bool air = false;
+  for (int i = 0; i < 30; i++) {
     vec3 q = p + uSun * t;
-    float a = above(q), r = length(q);
-    res = min(res, 9. * a / t);
-    if (res < .02 || r > uR + uTop) break;
-    // the same rule as the march: long steps only where the map of high ground says the way is clear
-    vec2 hi = textureLod(uTops, q, 0.).rg;
-    float c = r - uR - hi.x;
-    t += c > 0. ? max(min(uBlock, c / max(-dot(uSun, q) / r, 1e-3)), .6) : clamp(a, .6, hi.y < 1.7 ? uBlock : 2.5);
+    float r = length(q), alt = r - uR;
+    if (r > uR + uTop) break;
+    float rise = dot(uSun, q) / r, across = max(sqrt(max(1. - rise * rise, 0.)), .05);
+    if (!air) {
+      if (a < -1e8) {
+        a = alt - ground(q);
+        res = min(res, 9. * a / t);
+        if (res < .02) break;
+      }
+      if (a <= 1.2 || room != 0.) {
+        float step = clamp(a, .6, room > 0. ? max(room / across, 1.2) : 2.5);
+        if (room > 0. && a > room / across) lv = min(lv + 1., floor(roof));
+        room = room > 0. ? max(room - step * across, 0.) : min(room + step * across, 0.);
+        roof = min(roof + .25, 6.);
+        t += step; a = -1e9;
+        continue;
+      }
+    }
+    vec2 hi = textureLod(uTops, q, lv).rg;
+    float c = alt - hi.x, block = uBlock * exp2(lv);
+    if (c > 0. && 9. * c >= res * t) {
+      // above everything near, and too far above it for the shadow to deepen
+      air = true; room = 0.;
+      float far = block / across, drop = c / max(-rise, 1e-3);
+      t += max(min(far, drop), .6); a = -1e9;
+      if (far < drop) lv = min(lv + 1., floor(roof));
+      roof = min(roof + .25, 6.);
+      continue;
+    }
+    air = false;
+    if (hi.y >= 1.7 && lv > 0.) { roof = lv - 1.; lv = max(lv - 2., 0.); }
+    else room = hi.y < 1.7 ? block : -3. * block;
   }
   return clamp(res, 0., 1.);
 }
@@ -1091,14 +1163,16 @@ void main() {
       if (tc <= 0. || tc >= tEnd) continue;
       vec3 d = normalize(ro + rd * tc);
       float a = cloudAt(d) * uCloud.w * smoothstep(0., 14., tc);
+      if (a < .002) continue;   // clear sky here: nothing to light
       col = mix(col, cloudLit(d), a);
       tAir = mix(tAir, tc, a);
       glow *= 1. - a;
       st *= 1. - a;
       if (a > .5) mat = ${CLOUD}.;
     }
-    float inside = cloudAt(normalize(ro)) * uCloud.w * (1. - smoothstep(0., 8., abs(length(ro) - uR - uCloud.y)));
-    col = mix(col, cloudLit(normalize(ro)), inside * .9);
+    // flying through the layer itself, within 8 m of it
+    float band = 1. - smoothstep(0., 8., abs(length(ro) - uR - uCloud.y));
+    if (band > 0.) col = mix(col, cloudLit(normalize(ro)), cloudAt(normalize(ro)) * uCloud.w * band * .9);
   }
 
   vec3 tr;
@@ -1276,7 +1350,7 @@ texture(5, gl.TEXTURE_2D, gl.NEAREST);                       // glyph shapes, an
 const cellTex = [texture(6, gl.TEXTURE_2D, gl.NEAREST), texture(7, gl.TEXTURE_2D, gl.LINEAR), texture(8, gl.TEXTURE_2D, gl.LINEAR_MIPMAP_LINEAR)];
 texture(9, gl.TEXTURE_2D, gl.NEAREST);                       // glyph atlas
 texture(11, gl.TEXTURE_CUBE_MAP, gl.NEAREST);                // material
-texture(12, gl.TEXTURE_CUBE_MAP, gl.NEAREST);                // highest ground in each block of the height map
+texture(12, gl.TEXTURE_CUBE_MAP, gl.NEAREST_MIPMAP_NEAREST); // highest ground and steepest slope in blocks of the height map, in a pyramid
 texture(13, gl.TEXTURE_2D, gl.NEAREST);                      // interface text
 texture(15, gl.TEXTURE_2D, gl.NEAREST);                      // interface font
 gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
@@ -1307,7 +1381,11 @@ function uploadPlanet() {
   cube(1, planet.normal, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, true);
   cube(2, planet.albedo, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, true);
   cube(11, planet.mat, gl.R8, gl.RED, gl.UNSIGNED_BYTE, false);
-  cube(12, planet.tops, gl.RG16F, gl.RG, gl.FLOAT, false, SB);
+  gl.activeTexture(gl.TEXTURE12);
+  planet.tops.forEach((faces, level) => {
+    for (let f = 0; f < 6; f++) gl.texImage2D(gl.TEXTURE_CUBE_MAP_POSITIVE_X + f, level, gl.RG16F, SB >> level, SB >> level, 0, gl.RG, gl.FLOAT, faces[f]);
+  });
+  gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAX_LEVEL, LEVELS - 1);
 }
 
 // ---- characters
@@ -1832,7 +1910,7 @@ function drawScene() {
   gl.uniform1f(u.uTop, p.top);
   gl.uniform1f(u.uPix, 2 * cam.fy / (rows * 3));
   gl.uniform1f(u.uTexel, Math.PI / 2 * p.R / S);
-  // the narrowest a block of the high-ground map gets, at the corners of the cube: sqrt(2)/3 of its width at a face centre
+  // the narrowest a block of the finest high-ground map gets, at the corners of the cube: sqrt(2)/3 of its width at a face centre
   gl.uniform1f(u.uBlock, TB * 2 * p.R / S * .47);
   gl.uniform1f(u.uAtmo, p.atmo);
   gl.uniform3fv(u.uBeta, p.K.tau.map(t => t / hs));
