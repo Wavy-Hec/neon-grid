@@ -2442,8 +2442,7 @@ canvas.addEventListener('webglcontextlost', e => {
 canvas.addEventListener('webglcontextcreationerror', stuck);
 canvas.addEventListener('webglcontextrestored', () => {
   clearTimeout(lostTimer);
-  boot();
-  lost = false;
+  try { boot(); lost = false; } catch (e) { failed(e); }
 });
 
 // Builds everything that lives on the GPU: at the start, and again whenever the graphics come back.
@@ -2459,14 +2458,22 @@ function boot() {
   newPlanet(new URLSearchParams(location.search).get('seed') || randomSeed());
   requestAnimationFrame(frame);
 }
+// A build that fails with the graphics still there is the driver refusing the shaders: say so, with its
+// own first line, since nothing else will ever appear. One that fails because the graphics went away
+// is tried again when they come back.
+function failed(e) {
+  if (gl.isContextLost()) return;
+  notice.textContent = 'this graphics driver could not build the picture: ' + String(e.message).trim().split('\n')[0].slice(0, 160);
+  notice.hidden = false;
+  throw e;
+}
 // The shaders are built after one frame has reached the screen, so there is something to read while the
 // compiler holds the page (it can take seconds on Windows the first time, where Direct3D compiles them).
 // If the graphics are lost before or while they are built, the build is left to the restore above.
 notice.textContent = 'building shaders';
 notice.hidden = false;
 requestAnimationFrame(() => setTimeout(() => {
-  if (gl.isContextLost()) return;
-  try { boot(); } catch (e) { if (!gl.isContextLost()) throw e; }
+  if (!gl.isContextLost()) try { boot(); } catch (e) { failed(e); }
 }));
 </script>
 </body>
