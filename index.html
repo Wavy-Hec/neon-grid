@@ -599,13 +599,13 @@ function paintFace(f) {
       cg = lerp(lerp(lerp(dry[q + 1], lush[q + 1], w), rock[1], cl), ice[1], sn);
       cb = lerp(lerp(lerp(dry[q + 2], lush[q + 2], w), rock[2], cl), ice[2], sn);
       M[k] = sn > .5 ? SNOW : cl > .5 ? ROCK : K.ground[hn < .04 ? 0 : w > .5 ? 1 : 2];
-      // veins of lava follow one contour of the wetness map: a bright core that fades into the rock on
-      // either side, so a vein is a few texels wide and does not break up into dashes
-      const hot = vein && !ring && h < peak * .5 ? Math.max(0, 1 - Math.abs(m - .5) / .03) ** 2 : 0;
+      // veins of lava follow one contour of the wetness map: a core at full strength that fades into the
+      // rock on either side, so a vein is a few texels wide and does not break up into dashes
+      const hot = vein && !ring && h < peak * .5 ? smooth(.03, .012, Math.abs(m - .5)) : 0;
       if (hot > .02) {
         cr = lerp(cr, vein[0], hot); cg = lerp(cg, vein[1], hot); cb = lerp(cb, vein[2], hot);
         A[k * 4 + 3] = Math.max(3, hot * 220);
-        if (hot > .4) M[k] = LAVA;
+        if (hot > .5) M[k] = LAVA;
       }
     }
     if (!ring) { A[k * 4] = cr * 255; A[k * 4 + 1] = cg * 255; A[k * 4 + 2] = cb * 255; }
@@ -686,7 +686,7 @@ uniform samplerCube uHeight, uNormal, uAlbedo, uMat, uTops;
 uniform sampler3D uNoise;
 uniform vec3 uPos, uFwd, uRight, uUp, uSun, uSunCol;
 uniform vec2 uFov;
-uniform float uTime, uR, uTop, uPix, uTexel, uBlock, uAtmo, uAdapt;
+uniform float uTime, uR, uTop, uPix, uTexel, uBlock, uAtmo, uAdapt, uEmit;
 uniform vec3 uBeta, uShallow, uCloudCol, uRingN, uRingCol, uBeaconCol;
 uniform vec4 uSea, uCloud, uRing, uMoon, uShip;
 uniform vec3 uShipFwd;
@@ -942,13 +942,17 @@ float ringBand(float r) {
   return b * smoothstep(0., .05, x) * (1. - smoothstep(.92, 1., x)) * smoothstep(.02, .05, abs(x - .58)) * uRing.z;
 }
 
+// a material with an outline of its own, as opposed to a kind of ground
+bool solid(float m) { return m == ${TREE}. || m == ${CRYSTAL}. || m == ${SPIRE}. || m == ${LAVA}.; }
+
 vec3 surface(vec3 ro, vec3 rd, float t) {
   vec3 p = ro + rd * t, d = normalize(p);
   float lod = clamp(log2(t * uPix / uTexel), 0., 6.);
   float h = textureLod(uHeight, d, 0.).r;
   vec3 n = normalize(textureLod(uNormal, d, lod).xyz * 2. - 1.);
-  // seen edge-on a pixel covers a long strip of ground, so the colour comes from a coarser level, up to two
-  vec4 al = textureLod(uAlbedo, d, min(lod - log2(max(dot(n, -rd), .25)), 6.));
+  // seen edge-on a pixel covers a long strip of ground, so the colour comes from a coarser level, one at most:
+  // more than that and anything thin, a lava vein above all, is averaged away
+  vec4 al = textureLod(uAlbedo, d, min(lod - log2(max(dot(n, -rd), .5)), 6.));
   vec3 alb = pow(al.rgb, vec3(2.2));
   bool sea = uSea.a > .5 && h < 0.;
   if (sea) n = d;
@@ -959,11 +963,17 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
   // picture does not look like detail, it looks like static, and on flat ground like dashed stripes.
   float F = t * uPix * max(8., 6. / max(dot(n, -rd), .04));
 
-  // Which material: the map has one answer per texel, about a metre, so where two meet the border would
-  // be drawn as a staircase. Close up the lookup wobbles by about a texel, which makes the border ragged.
-  vec3 md = d;
-  if (!sea && F < 2.5) md = normalize(d + (vec3(n3(p * 1.7), n3(p * 1.7 + 13.), n3(p * 1.7 + 29.)) - .5) * (1.6 * uTexel / uR));
-  mat = sea ? (uSea.a > 1.5 ? ${LAVA}. : ${WATER}.) : floor(textureLod(uMat, md, 0.).r * 255. + .5);
+  // Which material: the map has one answer per texel, about a metre, so where two kinds of ground meet
+  // the border would be drawn as a staircase. Close up the lookup wobbles by about a texel, which makes
+  // the border ragged. Trees, crystals, rocks and lava keep their own outline: a wobble there puts their
+  // material on the ground beside them, or the ground's on them.
+  mat = floor(textureLod(uMat, d, 0.).r * 255. + .5);
+  if (!sea && F < 2.5 && !solid(mat)) {
+    vec3 md = normalize(d + (vec3(n3(p * 1.7), n3(p * 1.7 + 13.), n3(p * 1.7 + 29.)) - .5) * (1.6 * uTexel / uR));
+    float m1 = floor(textureLod(uMat, md, 0.).r * 255. + .5);
+    if (!solid(m1)) mat = m1;
+  }
+  if (sea) mat = uSea.a > 1.5 ? ${LAVA}. : ${WATER}.;
 
   // Props get the structure the height map is too coarse to hold (it has about a metre per point).
   // Only their sides get it: the top of a spire and the ground round a foot are flat and stay plain.
@@ -1021,7 +1031,7 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
     // each crystal facet glows at its own brightness
     if (mat == ${CRYSTAL}.) em *= mix(1., .35 + .9 * abs(dot(n, normalize(vec3(.4, .8, .45)))), fine(F, 1.5));
     glow = em;
-    return alb * light + alb * em * 3.2;
+    return alb * light + alb * em * uEmit;
   }
   if (uSea.a > 1.5) {
     float crust = smoothstep(.38, .6, mix(.5, n3(p * .22 + vec3(0., uTime * .02, 0.)), fine(F, 4.5)) * .6 + mix(.5, n3(p * .9), fine(F, 1.1)) * .4);
@@ -2073,6 +2083,8 @@ function drawScene() {
   // with sides .47 of its width at a face centre and a 60 degree angle, so .41 across; .4 to be sure.
   gl.uniform1f(u.uBlock, TB * 2 * p.R / S * .4);
   gl.uniform1f(u.uAtmo, p.atmo);
+  // how strongly glowing ground glows: crystals and trees gently, so their shape shows under the glow; lava hot
+  gl.uniform1f(u.uEmit, p.K.veins ? 6 : 3.2);
   gl.uniform3fv(u.uBeta, p.K.tau.map(t => t / hs));
   // the sky is brighter to an eye standing in it than it is from orbit
   gl.uniform1f(u.uAdapt, lerp(2.6, 1, smooth(0, p.atmo * 1.2, alt)));
