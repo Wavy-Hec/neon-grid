@@ -90,12 +90,13 @@ Also worth a visit: `home` (a cratered moon with a ring) and `reef` (pink and vi
 
 ## How it works
 
-The planet is a height map on the six faces of a cube, 512x512 each, built from the seed with
-layered Perlin noise: one layer for continents, a ridged one for mountains, a fine one for
-roughness. Some kinds of planet add craters or terraces. Trees, crystals and rock spires are
-stamped in as bumps. Normals, colours and a material for every texel are baked in the same pass.
-All of that runs once on the CPU, in about a second, and the same heights are what the ship and
-your feet collide with.
+A planet is 480 to 660 m in radius, three to four kilometres round. It is a height map on the six
+faces of a cube, 1024x1024 each, a point every metre or so, built from the seed with layered
+Perlin noise: one layer for continents, a ridged one for mountains, a fine one for roughness. Some
+kinds of planet add craters or terraces. Trees, crystals and rock spires are stamped in as bumps.
+Normals, colours and a material for every texel are baked in the same pass. All of that runs once
+on the CPU and takes two or three seconds; the heights are worked out on worker threads where the
+browser has them. The same heights are what the ship and your feet collide with.
 
 Drawing is three passes on the GPU.
 
@@ -103,16 +104,30 @@ Drawing is three passes on the GPU.
    (4x6 while the machine keeps up). Sunlight, shadows, sea, clouds, rings and the atmosphere are
    all in this one shader.
 2. One pixel per cell: choose the character. A flat cell takes one from its material's own set
-   by brightness, so water is `-~=`, rock is `^=`, trees are `+*%&#`. Where a cell has an edge
+   by brightness, so water is `-~=`, rock is `^*#`, trees are `+*%&#`. Where a cell has an edge
    in it, a line character (`_ / \ ( ) ' "`) can stand in, but only if its shape fits: every
    glyph is measured once for how much ink falls in each of six regions of its cell, and that is
    compared with the cell's six samples. There are no letters or digits in the picture.
 3. Stamp the glyphs from an atlas at full resolution over a background colour that is blended
    between cells, add bloom, and write the status line into the same grid.
 
-The height map holds about one point per metre, too coarse for anything small. So the parked
-lander and the dozen trees nearest you are drawn as real shapes, signed distance functions marched
-in the same shader. Each tree blends back into the terrain's plain cone as you walk away from it.
+Three things keep the picture steady.
+
+- A tree or a rock spire is a near-vertical wall, so the height of a ray above the ground says
+  little about how far it can safely go. The march reads a small pyramid of maps of the highest
+  and steepest ground in each block: long steps where the way is clear, short ones among steep
+  things, so nothing thin is stepped over.
+- Surface detail (the mottling of the ground, the tiers of a fir, the strata of a rock) is drawn
+  only where the picture can resolve it. Anything finer than about four characters fades out,
+  because detail finer than the picture does not look like detail, it looks like static.
+- Land is drawn with small marks that stay apart: dots, commas, crosses. The characters that join
+  up into lines across the screen (`-`, `~`, `=`) are kept for water and lava. Far ground gets
+  lighter characters than near ground, and one character gives way to the next through a stipple
+  of the two.
+
+The height map is too coarse for anything small. So the parked lander and the dozen trees nearest
+you are drawn as real shapes, signed distance functions marched in the same shader. Each tree
+grows out of the terrain's plain cone as you walk up to it.
 
 Matching glyphs by shape rather than brightness comes from Alex Harri's article
 [ASCII characters are not pixels](https://alexharri.com/blog/ascii-rendering).

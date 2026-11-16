@@ -120,7 +120,7 @@ const S = 1024;   // cube map face size
 
 // Every surface is drawn with its own set of characters, listed light to heavy. Land uses small marks
 // that stay apart (dots, commas, crosses, stars). The ones that join up into lines across the screen
-// (- ~ = and, at this size, ") are kept for what really is smooth and level: water, ice and lava.
+// (- ~ = and, at this size, ") are kept for what really is level and moves: water and lava.
 const VOID = 0, SKY = 1, CLOUD = 2, WATER = 3, SAND = 4, GRASS = 5, DRY = 6, ROCK = 7, SNOW = 8, TREE = 9, LAVA = 10, ICE = 11, CRYSTAL = 12, SPIRE = 13, SHIP = 14, RING = 15;
 const RAMPS = [
   " .'`+*",       // void
@@ -134,7 +134,7 @@ const RAMPS = [
   ' .:+*',        // snow
   ' .:+*%&#',     // tree
   ' .:~=*%#@',    // lava
-  ' .:-=+',       // ice
+  ' .,:;+',       // ice
   ' .:+<>*#',     // crystal
   ' .:|!#',       // spire
   ' .:-=+*#',     // ship
@@ -402,6 +402,7 @@ async function buildFaces(tick) {
   const id = ++job, { K, off, bias, craters, R, k, kc, perm } = planet, todo = [0, 1, 2, 3, 4, 5], got = new Set();
   const keep = (f, H, W) => { planet.height[f] = H; wet.set(W, f * S * S); got.add(f); tick(got.size); };
   const ws = workers();
+  let live = true;
   if (ws.length) await new Promise(finish => {
     let busy = 0;
     const next = w => {
@@ -411,13 +412,14 @@ async function buildFaces(tick) {
     };
     for (const w of ws) {
       w.onmessage = e => {
-        if (e.data.id !== id) return;   // an answer for a planet we have since left
+        if (!live || e.data.id !== id) return;   // an answer for a planet we have since left
         busy--;
         keep(e.data.f, e.data.H, e.data.W);
         next(w);
       };
-      // a browser that will not run the worker: stop using them and do the rest here
-      w.onerror = () => { pool = []; finish(); };
+      // a browser that will not run the worker: stop using them, for good, and do the rest here. A late
+      // answer must not land after the props have been stamped into the heights, so none is taken.
+      w.onerror = () => { live = false; ws.forEach(x => x.terminate()); pool = []; finish(); };
       next(w);
     }
   });
@@ -526,13 +528,13 @@ function highGround() {
       return T;
     }));
     // the next level's blocks are four of this level's
-    const half = n / 2, pool = A => A.map(C => {
+    const half = n / 2, halve = A => A.map(C => {
       const P = new Float32Array(half * half);
       for (let j = 0; j < half; j++) for (let i = 0; i < half; i++)
         P[j * half + i] = Math.max(C[2 * j * n + 2 * i], C[2 * j * n + 2 * i + 1], C[(2 * j + 1) * n + 2 * i], C[(2 * j + 1) * n + 2 * i + 1]);
       return P;
     });
-    tops = pool(own); slopes = pool(sl);
+    tops = halve(own); slopes = halve(sl);
   }
 }
 
@@ -627,21 +629,22 @@ function shader(type, src) {
   const s = gl.createShader(type);
   gl.shaderSource(s, src);
   gl.compileShader(s);
-  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
   return s;
 }
+// Starts a compile and link without asking how it went: asking makes the browser wait, and the three
+// programs can be compiled side by side if nobody asks until all three have been started.
 function program(vs, fs) {
-  const p = gl.createProgram();
-  gl.attachShader(p, shader(gl.VERTEX_SHADER, vs));
-  gl.attachShader(p, shader(gl.FRAGMENT_SHADER, fs));
+  const p = gl.createProgram(), v = shader(gl.VERTEX_SHADER, vs), f = shader(gl.FRAGMENT_SHADER, fs);
+  gl.attachShader(p, v); gl.attachShader(p, f);
   gl.linkProgram(p);
-  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
-  const u = {};
+  return { p, v, f, u: {} };
+}
+function linked({ p, v, f, u }) {
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error([gl.getProgramInfoLog(p), gl.getShaderInfoLog(v), gl.getShaderInfoLog(f)].join('\n'));
   for (let i = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS) - 1; i >= 0; i--) {
     const name = gl.getActiveUniform(p, i).name.replace('[0]', '');
     u[name] = gl.getUniformLocation(p, name);
   }
-  return { p, u };
 }
 function texture(unit, target, min, wrap = gl.CLAMP_TO_EDGE) {
   const t = gl.createTexture();
@@ -668,6 +671,7 @@ const SCENE = `#version 300 es
 precision highp float;
 precision highp int;
 precision highp sampler3D;
+precision highp samplerCube;   // the default is lowp, and the height map holds metres
 
 uniform samplerCube uHeight, uNormal, uAlbedo, uMat, uTops;
 uniform sampler3D uNoise;
@@ -755,12 +759,12 @@ float march(vec3 ro, vec3 rd) {
         if (a < .0015 * t) { hit = true; break; }
       }
       if (a * .5 <= thin || room != 0.) {
-        float step = max(room > 0. ? min(a * .5, max(room / across, thin)) : min(a * .5, thin), least);
+        float go = max(room > 0. ? min(a * .5, max(room / across, thin)) : min(a * .5, thin), least);
         // a step cut short by the edge of the block asks for a bigger block next time
         if (room > 0. && a * .5 > room / across) lv = min(lv + 1., floor(roof));
-        room = room > 0. ? max(room - step * across, 0.) : min(room + step * across, 0.);
+        room = room > 0. ? max(room - go * across, 0.) : min(room + go * across, 0.);
         roof = min(roof + .25, 6.);
-        tp = t; t += step; a = -1e9;
+        tp = t; t += go; a = -1e9;
         continue;
       }
     }
@@ -768,9 +772,9 @@ float march(vec3 ro, vec3 rd) {
     float c = alt - hi.x, block = uBlock * exp2(lv);
     if (c > 0.) {
       air = true; room = 0.;
-      float far = block / across, drop = c / max(down, 1e-3);
-      tp = t; t += max(min(far, drop), least); a = -1e9;
-      if (far < drop) lv = min(lv + 1., floor(roof));
+      float side = block / across, drop = c / max(down, 1e-3);
+      tp = t; t += max(min(side, drop), least); a = -1e9;
+      if (side < drop) lv = min(lv + 1., floor(roof));
       roof = min(roof + .25, 6.);
       continue;
     }
@@ -791,7 +795,7 @@ float march(vec3 ro, vec3 rd) {
 
 // The parked lander, in its own frame: y away from the planet, z forward, origin at ship.pos (about
 // 1.4 m above the ground). part says which piece is nearest: 0 hull, 1 canopy, 2 engine ring, 3 legs, 4 lamp.
-float sdEllipsoid(vec3 p, vec3 r) { float k0 = length(p / r), k1 = length(p / (r * r)); return k0 * (k0 - 1.) / k1; }
+float sdEllipsoid(vec3 p, vec3 r) { float k0 = length(p / r), k1 = length(p / (r * r)); return k0 * (k0 - 1.) / max(k1, 1e-6); }
 float sdCapsule(vec3 p, vec3 a, vec3 b, float r) {
   vec3 pa = p - a, ba = b - a;
   return length(pa - ba * clamp(dot(pa, ba) / dot(ba, ba), 0., 1.)) - r;
@@ -820,7 +824,8 @@ float sdCappedCone(vec3 p, float h, float r1, float r2) {
   return s * sqrt(min(dot(ca, ca), dot(cb, cb)));
 }
 // A fir in its own frame (y up, origin at the base): a trunk and three overlapping tiers of boughs with
-// bushy edges. fade 0 gives the plain cone the terrain already holds, so distant trees blend into it.
+// bushy edges. At fade 0 it is a small cone hidden inside the one the terrain already holds, so what
+// shows there is the terrain's own tree, and a tree grows out of that as the fade rises.
 float fir(vec3 q, float r, float h, float fade, float seed) {
   // outside the widest tier the distance to it is a safe step, so the exact shape is only worked out close by
   float wide = length(q.xz) - (r * 1.2 + .45);
@@ -831,7 +836,7 @@ float fir(vec3 q, float r, float h, float fade, float seed) {
     d = min(d, sdCappedCone(q - vec3(0., y0 + th * .5, 0.), th * .5, R, R * .06));
   }
   if (fade > .5) d += (n3(q * 2.6 + seed) - .5) * .11 * r;
-  return mix(sdCappedCone(q - vec3(0., h * .5, 0.), h * .5, r * .95, 0.), d, fade);
+  return mix(sdCappedCone(q - vec3(0., h * .3, 0.), h * .3, r * .7, 0.), d, fade);
 }
 
 // how much of the sun reaches p: the same rules as the march, along the ray to the sun
@@ -850,11 +855,11 @@ float shadow(vec3 p) {
         if (res < .02) break;
       }
       if (a <= 1.2 || room != 0.) {
-        float step = clamp(a, .6, room > 0. ? max(room / across, 1.2) : 2.5);
+        float go = clamp(a, .6, room > 0. ? max(room / across, 1.2) : 2.5);
         if (room > 0. && a > room / across) lv = min(lv + 1., floor(roof));
-        room = room > 0. ? max(room - step * across, 0.) : min(room + step * across, 0.);
+        room = room > 0. ? max(room - go * across, 0.) : min(room + go * across, 0.);
         roof = min(roof + .25, 6.);
-        t += step; a = -1e9;
+        t += go; a = -1e9;
         continue;
       }
     }
@@ -863,9 +868,9 @@ float shadow(vec3 p) {
     if (c > 0. && 9. * c >= res * t) {
       // above everything near, and too far above it for the shadow to deepen
       air = true; room = 0.;
-      float far = block / across, drop = c / max(-rise, 1e-3);
-      t += max(min(far, drop), .6); a = -1e9;
-      if (far < drop) lv = min(lv + 1., floor(roof));
+      float side = block / across, drop = c / max(-rise, 1e-3);
+      t += max(min(side, drop), .6); a = -1e9;
+      if (side < drop) lv = min(lv + 1., floor(roof));
       roof = min(roof + .25, 6.);
       continue;
     }
@@ -940,7 +945,7 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
   vec3 amb = skyCol() * day * .1 + vec3(.03, .035, .05);
   float ndl = max(dot(n, uSun), 0.), vis = 1.;
   if (ndl > 0.) vis = shadow(p + n * .3);
-  if (uCloud.w > 0. && length(p) < uR + uCloud.y) {
+  if ((ndl > 0. || sea) && uCloud.w > 0. && length(p) < uR + uCloud.y) {   // a face turned from the sun has no use for the cloud's shadow
     vec2 s = sphere(p, uSun, uR + uCloud.y);
     vis *= 1. - .75 * uCloud.w * cloudAt(normalize(p + uSun * s.y));
   }
@@ -962,7 +967,8 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
     if (b.w <= 0.) continue;
     vec3 q = p - b.xyz, v = normalize(b.xyz);
     float along = dot(q, v);
-    light += uBeaconCol * b.w * 1.6 / (1. + (dot(q, q) - along * along) / 40.);
+    // the far side of the planet lies on the same axis: without the smoothstep the ground opposite every beacon glows too
+    light += uBeaconCol * b.w * 1.6 * smoothstep(-2. * uR, -1.9 * uR, along) / (1. + (dot(q, q) - along * along) / 40.);
   }
 
   if (!sea) {
@@ -988,11 +994,11 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
   // the sun's glint instead, which is what a camera sees of far water: a smooth path of light, not sparks.
   float calm = 1. - fine(F, .9);
   vec3 rip = vec3(n3(p * 1.1 + uTime * .5), n3(p * 1.1 + 9. - uTime * .4), n3(p * 1.1 + 17. + uTime * .3)) - .5;
-  vec3 wn = normalize(d + rip * .14 * (1. - calm));
-  float fres = pow(1. - max(dot(-rd, wn), 0.), 5.);
+  vec3 wn = normalize(d + rip * .1 * (1. - calm));
+  float fres = pow(clamp(1. - dot(-rd, wn), 0., 1.), 5.);
   float sp = max(dot(reflect(rd, wn), uSun), 0.);
-  float glint = pow(sp, mix(90., 22., calm)) * mix(7., 2.2, calm);
-  glow = min(glint * .15, 1.) * vis;
+  float glint = pow(sp, mix(90., 34., calm)) * mix(4., 1.1, calm);
+  glow = min(glint * .12, 1.) * vis;
   return wc * light * (1. - fres) + (skyCol() * day * .3 + .008) * fres + sun * (glint + pow(sp, 10.) * .2);
 }
 
@@ -1033,10 +1039,14 @@ vec3 atmosphere(vec3 ro, vec3 rd, float tMax, out vec3 trans) {
     vec3 p = ro + rd * (t0 + (float(i) + .5) * ds);
     float dens = exp(-max(length(p) - uR, 0.) / hs) * ds;
     od += dens;
-    if (hits(sphere(p, uSun, uR * .99))) continue;   // in the planet's shadow
+    // the planet's shadow is a cylinder behind it. Its edge is spread over the width of one step, so a step
+    // fades in as it crosses the edge; switching whole steps on and off drew eight hard bands in the dusk sky
+    float pb = dot(p, uSun), wide = .5 * ds * length(rd - uSun * dot(rd, uSun)) + .01;
+    float lit = pb > 0. ? 1. : smoothstep(uR * .99 - wide, uR * .99 + wide, sqrt(max(dot(p, p) - pb * pb, 0.)));
+    if (lit <= 0.) continue;
     float dl = sphere(p, uSun, uR + uAtmo).y / 4., ods = 0.;
     for (int j = 0; j < 4; j++) ods += exp(-max(length(p + uSun * ((float(j) + .5) * dl)) - uR, 0.) / hs) * dl;
-    sum += dens * exp(-uBeta * (od + ods));
+    sum += lit * dens * exp(-uBeta * (od + ods));
   }
   trans = exp(-uBeta * od);
   float mu = dot(rd, uSun), m = max(mu, 0.);
@@ -1061,6 +1071,10 @@ bool trees(vec3 ro, vec3 rd, inout float tEnd, out vec3 col) {
     if (b.y <= 0. || b.x >= tEnd) continue;
     vec3 ax = normalize(cross(up, abs(up.y) < .9 ? vec3(0., 1., 0.) : vec3(1., 0., 0.))), az = cross(ax, up);
     vec3 lo = vec3(dot(o, ax), dot(o, up), dot(o, az)), ld = vec3(dot(rd, ax), dot(rd, up), dot(rd, az));
+    // with the eye in among the boughs the tree melts back into its cone: every ray would hit it at
+    // once and fill the screen with one colour
+    fade *= smoothstep(.1, .8, fir(lo, r, h, 1., seed));
+    if (fade <= 0.) continue;
     float ts = max(b.x, 0.);
     bool hit = false;
     for (int k = 0; k < 36; k++) {
@@ -1135,7 +1149,7 @@ void main() {
           glow = 0.;
         } else if (part < 1.5) {
           // canopy: dark glass that reflects the sky
-          col = vec3(.03, .05, .07) * (sunL * ndl + amb) + skyCol() * .3 * pow(1. - max(dot(n, -rd), 0.), 3.) + sunL * spec * 1.6;
+          col = vec3(.03, .05, .07) * (sunL * ndl + amb) + skyCol() * .3 * pow(clamp(1. - dot(n, -rd), 0., 1.), 3.) + sunL * spec * 1.6;
           glow = 0.;
         } else if (part < 2.5) {
           col = uBeaconCol * 2.2;
@@ -1207,7 +1221,7 @@ void main() {
   }
 
   col = 1. - exp(-col * 1.3);
-  o = vec4(pow(col, vec3(.4545)), 1.);
+  o = vec4(pow(max(col, 0.), vec3(.4545)), 1.);
   info = vec4(mat / 255., clamp(glow, 0., 1.), 1. - exp(-tEnd / 120.), 1.);
 }`;
 
@@ -1215,6 +1229,7 @@ void main() {
 const CELLS = `#version 300 es
 precision highp float;
 precision highp int;
+precision highp sampler2D;
 uniform sampler2D uScene, uInfo, uTables;   // uTables: rows 0-1 glyph shapes; row 2 + m, material m's characters
 uniform vec2 uGrid;
 uniform int uCount;
@@ -1305,12 +1320,13 @@ void main() {
 const FINAL = `#version 300 es
 precision highp float;
 precision highp int;
+precision highp sampler2D;
 uniform sampler2D uScene, uC0, uC1, uGlow, uAtlas, uText, uFont;
 uniform vec2 uRes, uCell, uGrid, uAtlasGrid, uTextCell;
 uniform float uRaw;
 out vec4 o;
 
-float ink(sampler2D atlas, int g, vec2 f) { return texture(atlas, (vec2(float(g % 16), float(g / 16)) + f) / uAtlasGrid).r; }
+float ink(sampler2D atlas, int g, vec2 f) { return textureLod(atlas, (vec2(float(g % 16), float(g / 16)) + f) / uAtlasGrid, 0.).r; }
 
 void main() {
   vec2 px = vec2(gl_FragCoord.x, uRes.y - gl_FragCoord.y);
@@ -1328,10 +1344,10 @@ void main() {
     o = vec4(mix(bg, fg, ink(uFont, tx.x, fract(tf))), 1.);
     return;
   }
-  if (uRaw > .5) { o = vec4(texture(uScene, uv).rgb, 1.); return; }
+  if (uRaw > .5) { o = vec4(textureLod(uScene, uv, 0.).rgb, 1.); return; }
   vec4 a = texelFetch(uC0, ci, 0);
   // the colour behind the characters is blended between cell centres, so it has no steps
-  vec3 col = mix(texture(uC1, uv).rgb, a.rgb, ink(uAtlas, int(a.a * 255. + .5), f));
+  vec3 col = mix(textureLod(uC1, uv, 0.).rgb, a.rgb, ink(uAtlas, int(a.a * 255. + .5), f));
   col += textureLod(uGlow, uv, 1.).rgb * .45 + textureLod(uGlow, uv, 2.5).rgb * .35 + textureLod(uGlow, uv, 4.).rgb * .25;
   // half a step of noise breaks up the banding a smooth 8-bit gradient would show
   col += (fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(.06711056, .00583715)))) - .5) / 255.;
@@ -1341,6 +1357,8 @@ void main() {
 let scene, cells, final, sceneFbo, cellFbo;
 function initGL() {
 scene = program(QUAD, SCENE); cells = program(QUAD, CELLS); final = program(QUAD, FINAL);
+[scene, cells, final].forEach(linked);
+gl.disable(gl.DITHER);   // material and glyph ids are stored in colour channels
 texture(0, gl.TEXTURE_CUBE_MAP, gl.LINEAR);                  // height
 texture(1, gl.TEXTURE_CUBE_MAP, gl.LINEAR_MIPMAP_LINEAR);    // normal
 texture(2, gl.TEXTURE_CUBE_MAP, gl.LINEAR_MIPMAP_LINEAR);    // albedo
@@ -1369,7 +1387,6 @@ cellTex.forEach((t, i) => gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTAC
 gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
 gl.bindVertexArray(gl.createVertexArray());
 }
-initGL();
 
 function uploadPlanet() {
   const cube = (unit, faces, internal, format, type, mips, size = S) => {
@@ -1478,19 +1495,21 @@ function buildAtlas() {
 // Phones with fractional pixel ratios (2.625, 2.75) need the observer's exact device-pixel size for that.
 const screenPx = { w: 0, h: 0 };
 function resize() {
+  if (!scene) return;   // the shaders are not built yet
   // the observer's size is used only to settle the rounding; anything further off is not trusted
   const dpr = devicePixelRatio || 1, dw = innerWidth * dpr, dh = innerHeight * dpr;
   canvas.width = Math.abs(screenPx.w - dw) <= dpr + 1 ? screenPx.w : Math.round(dw);
   canvas.height = Math.abs(screenPx.h - dh) <= dpr + 1 ? screenPx.h : Math.round(dh);
+  const W = gl.drawingBufferWidth, H = gl.drawingBufferHeight;   // what the browser really allocated: smaller than asked on a few devices
   view.size = view.size || (dpr > 1.5 ? 5 : 6);
   view.cw = Math.round(view.size * dpr);
   view.ch = Math.round(view.cw * 1.6);
-  view.cols = Math.ceil(canvas.width / view.cw);
-  view.rows = Math.ceil(canvas.height / view.ch);
+  view.cols = Math.ceil(W / view.cw);
+  view.rows = Math.ceil(H / view.ch);
   tgrid.cw = Math.round(8 * dpr);
   tgrid.ch = Math.round(tgrid.cw * 1.6);
-  tgrid.cols = Math.ceil(canvas.width / tgrid.cw);
-  tgrid.rows = Math.ceil(canvas.height / tgrid.ch);
+  tgrid.cols = Math.ceil(W / tgrid.cw);
+  tgrid.rows = Math.ceil(H / tgrid.ch);
   text = new Uint8Array(tgrid.cols * tgrid.rows * 2);
   const alloc = (unit, w, h) => {
     gl.activeTexture(gl.TEXTURE0 + unit);
@@ -1506,10 +1525,11 @@ function resize() {
 // ---- game
 
 const EYE = 1.7, SENS = .0023;
+let firs = [];   // the trees drawn in detail this frame
 let mode = 'loading', time = 0, signals = 0;
 const cam = { pos: [0, 0, 900], fwd: [0, 0, -1], up: [0, 1, 0], right: [1, 0, 0], fx: 1, fy: .6 };
 const ship = { pos: [0, 0, 0], fwd: [0, 0, -1], up: [0, 1, 0], vel: [0, 0, 0], parked: false };
-const me = { dir: [0, 1, 0], h: 0, fwd: [1, 0, 0], pitch: 0, vr: 0 };
+const me = { dir: [0, 1, 0], h: 0, fwd: [1, 0, 0], pitch: 0, vr: 0, lean: [0, 0, 0] };
 const look = { x: 0, y: 0 }, stick = { x: 0, y: 0 };
 const keys = new Set();
 const held = k => (keys.has(k) ? 1 : 0);
@@ -1594,7 +1614,16 @@ function walk(dt) {
     // the slope is judged over a fixed 0.75 m so the limit is the same at any frame rate: anything
     // steeper than about 60 degrees is a wall, and so is water or lava deeper than a metre
     const rise = floorAt(norm(add(here, mul(way, .75)))) - Math.max(m.h, floorAt(m.dir));
-    if (rise < .75 * 1.7 && !(planet.sea && heightAt(to) < -1)) m.dir = to;
+    // The firs drawn in detail spread wider than the cones the height map holds for them, so they are
+    // obstacles of their own: no step may take you further in under one.
+    const there = mul(to, planet.R + m.h);
+    const fir = firs.some(t => {
+      const up = norm(t.pos), out = q => { const v = sub(q, t.pos); return len(sub(v, mul(up, dot(v, up)))); }, d = out(there);
+      return d < t.r * 1.2 + 1.1 && d < out(here);
+    });
+    // nor up onto the flank of a tree or a rock, which a path that grazes one would otherwise climb
+    const flank = floorAt(to) > Math.max(m.h, floorAt(m.dir)) + .02 && slopeAt(to) > 1.7;
+    if (rise < .75 * 1.7 && !fir && !flank && !(planet.sea && heightAt(to) < -1)) m.dir = to;
   }
   const floor = floorAt(m.dir);
   // walking downhill keeps you on the ground; only a real drop makes you fall
@@ -1609,7 +1638,9 @@ function walk(dt) {
   m.fwd = norm(sub(m.fwd, mul(m.dir, dot(m.fwd, m.dir))));
   cam.pos = mul(m.dir, planet.R + m.h + EYE);
   cam.fwd = add(mul(m.fwd, Math.cos(m.pitch)), mul(m.dir, Math.sin(m.pitch)));
-  cam.up = m.dir;
+  // the ship's bank at the moment of landing, eased level over the next half second
+  cam.up = norm(add(m.dir, m.lean));
+  m.lean = mul(m.lean, Math.exp(-dt * 6));
 
   for (const b of planet.beacons) {
     if (b.got || len(sub(cam.pos, b.base)) > 5) continue;
@@ -1641,6 +1672,7 @@ function land() {
   const flat = sub(ship.fwd, mul(d, dot(ship.fwd, d)));
   me.fwd = norm(len(flat) > .05 ? flat : cross(d, [.3, .9, .2]));
   me.pitch = Math.asin(clamp(dot(ship.fwd, d), -1, 1));
+  me.lean = sub(norm(ship.up), d);
   // The ship sets down a few steps away: behind you if the ground there is clear and level,
   // otherwise beside you or ahead. The hull is a 1.5 m sphere, so it is raised until no ground
   // under its whole footprint pokes into it (it may sink 10 cm).
@@ -1759,7 +1791,7 @@ function showPads() {
 }
 // messages end above the touch buttons
 function padRows() {
-  ui.padRow = pad.style.display === 'flex' ? Math.floor(pad.getBoundingClientRect().top * canvas.width / innerWidth / tgrid.ch) : 1e9;
+  ui.padRow = pad.style.display === 'flex' ? Math.floor(pad.getBoundingClientRect().top * gl.drawingBufferWidth / innerWidth / tgrid.ch) : 1e9;
 }
 if (touched) showPads();
 canvas.addEventListener('touchstart', e => {
@@ -1885,7 +1917,7 @@ function soundTick() {
 
 // ---- screen
 
-const stats = { frames: 0, t: 0, fps: 0, slow: 0, good: 0, tick: 1, drops: [], undone: 0, check: 0, before: 0 };
+const stats = { frames: 0, t: 0, fps: 0, slow: 0, good: 0, tick: 1, drops: [], undone: 0, check: 0, before: 0, capped: false, undoneAt: -1e9 };
 
 function drawScene() {
   const { cols, rows, cw, ch, ss } = view, p = planet;
@@ -1898,6 +1930,7 @@ function drawScene() {
 
   gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFbo);
   gl.viewport(0, 0, cols * 2 * ss, rows * 3 * ss);
+  gl.invalidateFramebuffer(gl.FRAMEBUFFER, [gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);   // every pixel is about to be written
   gl.useProgram(scene.p);
   let u = scene.u;
   gl.uniform1i(u.uHeight, 0); gl.uniform1i(u.uNormal, 1); gl.uniform1i(u.uAlbedo, 2); gl.uniform1i(u.uNoise, 3); gl.uniform1i(u.uMat, 11); gl.uniform1i(u.uTops, 12);
@@ -1937,6 +1970,7 @@ function drawScene() {
   }
   close.sort((a, b) => a[0] - b[0]);
   const trees = new Float32Array(48), treeB = new Float32Array(48), nt = Math.min(12, close.length);
+  firs = close.slice(0, nt).map(c => c[1]);
   for (let i = 0; i < nt; i++) {
     const t = close[i][1];
     trees.set([...t.pos, t.h], i * 4);
@@ -1957,6 +1991,7 @@ function drawScene() {
 
   gl.bindFramebuffer(gl.FRAMEBUFFER, cellFbo);
   gl.viewport(0, 0, cols, rows);
+  gl.invalidateFramebuffer(gl.FRAMEBUFFER, [gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
   gl.useProgram(cells.p);
   u = cells.u;
   gl.uniform1i(u.uScene, 4); gl.uniform1i(u.uInfo, 10); gl.uniform1i(u.uTables, 5);
@@ -1975,10 +2010,10 @@ function drawScreen() {
   gl.activeTexture(gl.TEXTURE13);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG8, tgrid.cols, tgrid.rows, 0, gl.RG, gl.UNSIGNED_BYTE, text);
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
   gl.useProgram(final.p);
   gl.uniform1i(u.uScene, 4); gl.uniform1i(u.uC0, 6); gl.uniform1i(u.uC1, 7); gl.uniform1i(u.uGlow, 8); gl.uniform1i(u.uAtlas, 9); gl.uniform1i(u.uText, 13); gl.uniform1i(u.uFont, 15);
-  gl.uniform2f(u.uRes, canvas.width, canvas.height);
+  gl.uniform2f(u.uRes, gl.drawingBufferWidth, gl.drawingBufferHeight);
   gl.uniform2f(u.uTextCell, tgrid.cw, tgrid.ch);
   gl.uniform2f(u.uCell, cw, ch);
   gl.uniform2f(u.uGrid, cols, rows);
@@ -2039,7 +2074,7 @@ function wrap(str, width) {
 }
 
 function drawText() {
-  const p = planet, cols = Math.floor(canvas.width / tgrid.cw), bar = Math.floor(canvas.height / tgrid.ch) - 1;
+  const p = planet, cols = Math.floor(gl.drawingBufferWidth / tgrid.cw), bar = Math.floor(gl.drawingBufferHeight / tgrid.ch) - 1;
   const playing = mode === 'fly' || mode === 'walk';
   text.fill(0);
 
@@ -2176,10 +2211,12 @@ function govern(real) {
   if (stats.check && --stats.check === 0 && stats.fps < stats.before * 1.1) {
     undoStep(stats.drops.pop());
     stats.tick = 1 / Math.max(stats.fps, 1);
+    stats.capped = true;   // the limit is the display, not the GPU: stop using the absolute floor
     return;
   }
   const target = Math.min(60, 1 / stats.tick);
-  stats.slow = stats.fps < target * .75 ? stats.slow + 1 : 0;
+  // under 27 fps the machine is slow whatever the display does, unless a step was already shown not to help
+  stats.slow = stats.fps < Math.max(target * .75, stats.capped ? 0 : 27) ? stats.slow + 1 : 0;
   stats.good = stats.fps >= target * .95 ? stats.good + 1 : 0;
   // two slow seconds: drop the supersampling, then use bigger characters (unless the player picked a size)
   if (stats.slow >= 4) {
@@ -2189,6 +2226,7 @@ function govern(real) {
     if (step === 'ss') view.ss = 1; else view.size += 2;
     stats.drops.push(step);
     stats.before = stats.fps; stats.check = 4;
+    if (time - stats.undoneAt < 30) stats.undone = 2;   // the last step back did not last: stop trying
     resize();
     say('lowering detail to keep up', 3, true);
   }
@@ -2197,6 +2235,7 @@ function govern(real) {
     stats.good = 0;
     undoStep(stats.drops.pop());
     stats.undone++;
+    stats.undoneAt = time;
   }
 }
 function undoStep(step) {
@@ -2235,9 +2274,17 @@ canvas.addEventListener('webglcontextrestored', () => {
   notice.hidden = true;
 });
 
-resize();
-newPlanet(new URLSearchParams(location.search).get('seed') || randomSeed());
-requestAnimationFrame(frame);
+// The shaders are built after one frame has reached the screen, so there is something to read while the
+// compiler holds the page (it can take seconds on Windows the first time, where Direct3D compiles them).
+notice.textContent = 'building shaders';
+notice.hidden = false;
+requestAnimationFrame(() => setTimeout(() => {
+  initGL();
+  notice.hidden = true;
+  resize();
+  newPlanet(new URLSearchParams(location.search).get('seed') || randomSeed());
+  requestAnimationFrame(frame);
+}));
 </script>
 </body>
 </html>
