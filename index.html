@@ -404,9 +404,15 @@ async function buildFaces(tick) {
   const ws = workers();
   let live = true;
   if (ws.length) await new Promise(finish => {
-    let busy = 0;
+    let busy = 0, timer = 0;
+    const done = () => { clearTimeout(timer); finish(); };
+    // A browser that will not run the worker, or one that has gone quiet (killed for memory, say): stop
+    // using workers, for good, and do the rest here. A late answer must not land after the props have
+    // been stamped into the heights, so none is taken from then on.
+    const fail = () => { if (live) { live = false; ws.forEach(x => x.terminate()); pool = []; done(); } };
+    const watch = () => { clearTimeout(timer); timer = setTimeout(fail, 20000); };
     const next = w => {
-      if (!todo.length) { if (!busy) finish(); return; }
+      if (!todo.length) { if (!busy) done(); return; }
       busy++;
       w.postMessage({ f: todo.shift(), id, planet: { K, off, bias, craters, R, k, kc, perm } });
     };
@@ -414,14 +420,14 @@ async function buildFaces(tick) {
       w.onmessage = e => {
         if (!live || e.data.id !== id) return;   // an answer for a planet we have since left
         busy--;
+        watch();
         keep(e.data.f, e.data.H, e.data.W);
         next(w);
       };
-      // a browser that will not run the worker: stop using them, for good, and do the rest here. A late
-      // answer must not land after the props have been stamped into the heights, so none is taken.
-      w.onerror = () => { live = false; ws.forEach(x => x.terminate()); pool = []; finish(); };
+      w.onerror = fail;
       next(w);
     }
+    watch();
   });
   // whatever the workers did not do: all of it if there are none, the rest if one failed
   for (let f = 0; f < 6; f++) {
