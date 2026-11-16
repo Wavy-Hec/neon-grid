@@ -1004,9 +1004,13 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
   if (!sea) {
     // Mottling of the ground, at the finest scale the picture resolves here: specks at your feet,
     // patches a few metres across further off, and nothing past that, where the colour map takes over.
-    float l = max(log2(F / .27), 0.), i = floor(l), sc = 3.7 * exp2(-i);
+    // On a wall the scale goes by the short side of what a sample covers, or a cliff seen from close by
+    // and at an angle would be blotched with patches metres across; seen too edge-on for that scale,
+    // the mottling fades out.
+    float Fd = mix(F, t * uPix * 8., side);
+    float l = max(log2(Fd / .27), 0.), i = floor(l), sc = 3.7 * exp2(-i);
     float det = mix(n3(p * sc + i * 7.3), n3(p * sc * .5 + i * 7.3 + 7.3), l - i);
-    alb *= mix(1., .55 + .9 * det, 1. - smoothstep(3., 6., l));
+    alb *= mix(1., .55 + .9 * det, (1. - smoothstep(3., 6., l)) * fine(F, 1.5 * Fd));
     float em = step(.01, al.a) * (al.a - .004);
     // each crystal facet glows at its own brightness
     if (mat == ${CRYSTAL}.) em *= mix(1., .35 + .9 * abs(dot(n, normalize(vec3(.4, .8, .45)))), fine(F, 1.5));
