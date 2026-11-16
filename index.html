@@ -119,8 +119,8 @@ function ridge(x, y, z, oct) {
 const S = 1024;   // cube map face size
 
 // Every surface is drawn with its own set of characters, listed light to heavy. Land is dots, commas and
-// crosses. The ones that run together into long lines across the screen (- ~ =) are kept for what really
-// is level and moves: water and lava.
+// crosses. The ones that run together into long lines across the screen (- ~ =) are kept off the land:
+// they are for what really is level and moves, water and lava (dim cloud has ~ too, the lander - and =).
 const VOID = 0, SKY = 1, CLOUD = 2, WATER = 3, SAND = 4, GRASS = 5, DRY = 6, ROCK = 7, SNOW = 8, TREE = 9, LAVA = 10, ICE = 11, CRYSTAL = 12, SPIRE = 13, SHIP = 14, RING = 15;
 const RAMPS = [
   " .'`+*",       // void
@@ -743,9 +743,10 @@ float above(vec3 p) { return length(p) - uR - ground(p); }
 //   height or gone a block sideways, and the ground itself need not be looked at;
 // - where nothing nearby is steeper than 60 degrees, half the height is always clear;
 // - among steep things, below their tops, the step stays under a metre near the eye and under 1.2% of
-//   the distance further off, so close by none is stepped over whole. A tree's tip is narrower than the
-//   step and can still be missed, more of it the further off; shorter steps there would cost more than
-//   the tip is worth.
+//   the distance further off, so close by none is stepped over whole. A ray that has already taken more
+//   than 50 steps may go further, because the shortest step grows with the count (least, below): up to
+//   2.6% of the distance. A tree's tip is narrower than the step and can still be missed, more of it the
+//   further off; shorter steps there would cost more than the tip is worth.
 // A short step needs no map at all, and what a map said holds for a block's width, so most steps cost one
 // look at the ground as they always did.
 float march(vec3 ro, vec3 rd) {
@@ -1876,7 +1877,7 @@ function press(k) {
   if (k === 'i') ui.stats = !ui.stats;
   if (k === 'v') view.raw = !view.raw;
   if (k === 'm') mute();
-  if (booted && (k === '-' || k === '_' || k === '=' || k === '+')) {   // not before there is a picture to size
+  if (booted && !lost && (k === '-' || k === '_' || k === '=' || k === '+')) {   // not while there is no picture to size
     view.size = clamp(view.size + (k === '-' || k === '_' ? 1 : -1), 3, 16);
     view.picked = true;   // a size the player chose is never changed behind their back
     stats.drops = stats.drops.filter(step => step !== 'size');
@@ -2458,22 +2459,24 @@ function boot() {
   newPlanet(new URLSearchParams(location.search).get('seed') || randomSeed());
   requestAnimationFrame(frame);
 }
-// A build that fails with the graphics still there is the driver refusing the shaders: say so, with its
-// own first line, since nothing else will ever appear. One that fails because the graphics went away
-// is tried again when they come back.
+// A build that fails with the graphics still there is the driver refusing the shaders: say so, with the
+// line of its log that names the error (or its first line), since nothing else will ever appear. One
+// that fails because the graphics went away is tried again when they come back.
 function failed(e) {
   if (gl.isContextLost()) return;
-  notice.textContent = 'this graphics driver could not build the picture: ' + String(e.message).trim().split('\n')[0].slice(0, 160);
+  const lines = String(e.message).split('\n').map(l => l.trim()).filter(Boolean), why = lines.find(l => /error/i.test(l)) || lines[0];
+  notice.textContent = 'this graphics driver could not build the picture' + (why ? ': ' + why.slice(0, 160) : '');
   notice.hidden = false;
   throw e;
 }
 // The shaders are built after one frame has reached the screen, so there is something to read while the
 // compiler holds the page (it can take seconds on Windows the first time, where Direct3D compiles them).
-// If the graphics are lost before or while they are built, the build is left to the restore above.
+// If the graphics are lost before or while they are built, the build is left to the restore above, and
+// if they are already back by then, it has been done.
 notice.textContent = 'building shaders';
 notice.hidden = false;
 requestAnimationFrame(() => setTimeout(() => {
-  if (!gl.isContextLost()) try { boot(); } catch (e) { failed(e); }
+  if (!booted && !gl.isContextLost()) try { boot(); } catch (e) { failed(e); }
 }));
 </script>
 </body>

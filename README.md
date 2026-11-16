@@ -123,9 +123,9 @@ Three things keep the picture steady.
   only where the picture can resolve it. Anything finer than about four characters fades out,
   because the picture would show it only as static.
 - Land is drawn with dots, commas and crosses. The characters that run together into long lines
-  across the screen (`-`, `~`, `=`) are kept for water and lava. Far ground gets lighter
-  characters than near ground, and one character gives way to the next through a stipple of the
-  two.
+  across the screen (`-`, `~`, `=`) are kept off the land; water and lava get them. Far ground
+  gets lighter characters than near ground, and one character gives way to the next through a
+  stipple of the two.
 
 The height map is too coarse for anything small. So the parked lander and the dozen trees nearest
 you are drawn as real shapes, signed distance functions marched in the same shader. Each tree
