@@ -118,9 +118,9 @@ function ridge(x, y, z, oct) {
 
 const S = 1024;   // cube map face size
 
-// Every surface is drawn with its own set of characters, listed light to heavy. Land uses small marks
-// that stay apart: dots, commas, crosses. The ones that join up into lines across the screen (- ~ = and,
-// at this size, " and *) are kept for what really is level and moves: water and lava.
+// Every surface is drawn with its own set of characters, listed light to heavy. Land is dots, commas and
+// crosses. The ones that run together into long lines across the screen (- ~ =) are kept for what really
+// is level and moves: water and lava.
 const VOID = 0, SKY = 1, CLOUD = 2, WATER = 3, SAND = 4, GRASS = 5, DRY = 6, ROCK = 7, SNOW = 8, TREE = 9, LAVA = 10, ICE = 11, CRYSTAL = 12, SPIRE = 13, SHIP = 14, RING = 15;
 const RAMPS = [
   " .'`+*",       // void
@@ -493,8 +493,8 @@ function scatter() {
 
 // The ray march reads a small pyramid of maps to know how far it can go without looking. Each holds, for
 // a block of texels together with the eight blocks round it, the highest ground there and the steepest
-// slope (paintFace measures the slopes). Level 0 has blocks of TB x TB texels, about 2 to 4 m; each level
-// up doubles that, to about 130 m at level 6. Above everything in a block and its neighbours nothing can
+// slope (paintFace measures the slopes). Level 0 has blocks of TB x TB texels, about 2 to 5 m; each level
+// up doubles that, to 130 to 300 m at level 6. Above everything in a block and its neighbours nothing can
 // be in a ray's way; and where the ground there is gentle, the height over it is a fair guide to how
 // close it is.
 const TB = 4, SB = S / TB, LEVELS = 7;
@@ -742,9 +742,10 @@ float above(vec3 p) { return length(p) - uR - ground(p); }
 // - above everything in a block and the blocks round it, the ray is clear until it has come down to that
 //   height or gone a block sideways, and the ground itself need not be looked at;
 // - where nothing nearby is steeper than 60 degrees, half the height is always clear;
-// - among steep things, below their tops, the step stays under a metre, so none is stepped over whole.
-//   The last metre of a tree's tip is narrower than that and can still be missed; shorter steps there
-//   were tried and cost more than they gained.
+// - among steep things, below their tops, the step stays under a metre near the eye and under 1.2% of
+//   the distance further off, so close by none is stepped over whole. A tree's tip is narrower than the
+//   step and can still be missed, more of it the further off; shorter steps there would cost more than
+//   the tip is worth.
 // A short step needs no map at all, and what a map said holds for a block's width, so most steps cost one
 // look at the ground as they always did.
 float march(vec3 ro, vec3 rd) {
@@ -959,8 +960,8 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
 
   // F is the size, in metres on the surface, of the smallest patch the picture can show here: about
   // four characters wide and two tall. It grows with distance and, a lot, with how edge-on the surface
-  // is seen. Every pattern below fades out before it gets finer than that; a pattern finer than the
-  // picture does not look like detail, it looks like static, and on flat ground like dashed stripes.
+  // is seen. Every pattern below fades out before it gets finer than that: the picture would show a
+  // finer one only as static, and on flat ground as dashed stripes.
   float F = t * uPix * max(8., 6. / max(dot(n, -rd), .04));
 
   // Which material: the map has one answer per texel, about a metre, so where two kinds of ground meet
@@ -1090,7 +1091,8 @@ vec3 atmosphere(vec3 ro, vec3 rd, float tMax, out vec3 trans) {
     float dens = exp(-max(length(p) - uR, 0.) / hs) * ds;
     od += dens;
     // the planet's shadow is a cylinder behind it. Its edge is spread over the width of one step, so a step
-    // fades in as it crosses the edge; switching whole steps on and off drew eight hard bands in the dusk sky
+    // fades in as it crosses the edge; whole steps switching on and off would show as eight hard bands in
+    // the dusk sky
     float pb = dot(p, uSun), wide = .5 * ds * length(rd - uSun * dot(rd, uSun)) + .01;
     float lit = pb > 0. ? 1. : smoothstep(uR * .99 - wide, uR * .99 + wide, sqrt(max(dot(p, p) - pb * pb, 0.)));
     if (lit <= 0.) continue;
@@ -1167,7 +1169,7 @@ void main() {
   else { col = lights(ro, rd); st = mat == ${ROCK}. ? vec3(0.) : stars(rd); }   // no stars in front of the moon
 
   if (uShip.w > 0.) {
-    // march the lander's shape inside a 2.1 m bounding sphere, in the ship's own frame
+    // march the lander's shape inside a 2.2 m bounding sphere, in the ship's own frame
     vec3 up = normalize(uShip.xyz), fw = normalize(uShipFwd - up * dot(uShipFwd, up)), rt = cross(up, fw);
     vec3 o = ro - uShip.xyz, lo = vec3(dot(o, rt), dot(o, up), dot(o, fw)), ld = vec3(dot(rd, rt), dot(rd, up), dot(rd, fw));
     vec2 b = sphere(lo, ld, 2.2);
@@ -1283,6 +1285,7 @@ void main() {
     if (ringA > .3) mat = ${RING}.;
   }
 
+  float seen = tEnd;   // how far off what is in this pixel is: a beam in front of the sky is not as far as the sky
   for (int i = 0; i < 5; i++) {
     vec4 b = uBeacon[i];
     if (b.w <= 0.) continue;
@@ -1296,12 +1299,12 @@ void main() {
     float pulse = .75 + .25 * sin(uTime * 3. - sb * .08 + float(i));
     col += mix(vec3(.6), uBeaconCol, step(.5, b.w)) * b.w * g * pulse * 2.6 * (1. - smoothstep(reach * .35, reach, sb));
     glow = max(glow, g * b.w);
-    if (g * b.w > .45) mat = ${SPIRE}.;
+    if (g * b.w > .45) { mat = ${SPIRE}.; seen = min(seen, tb); }
   }
 
   col = 1. - exp(-col * 1.3);
   o = vec4(pow(max(col, 0.), vec3(.4545)), 1.);
-  info = vec4(mat / 255., clamp(glow, 0., 1.), 1. - exp(-tEnd / 120.), 1.);
+  info = vec4(mat / 255., clamp(glow, 0., 1.), 1. - exp(-seen / 120.), 1.);
 }`;
 
 // pass 2: one pixel per character cell. picks the character and its two colours
@@ -1357,8 +1360,8 @@ void main() {
   // a cell with an edge in it takes whichever character has the closest shape
   vec4 centre = texelFetch(uInfo, ivec2(cell) * per + per / 2, 0);
   int m = int(centre.r * 255. + .5);
-  // inside open sky, cloud or space a change in brightness is a glow, never an edge: treating the
-  // halo round the sun as one blanked a ring of cells there
+  // inside open sky, cloud or space a change in brightness is a glow, never an edge: the halo round
+  // the sun, taken for one, would be a ring of blank cells
   bool air = m == ${SKY} || m == ${CLOUD} || m == ${VOID} || m == ${RING};
   if (air && !mixed) edge = 0.;
   // Distance thins the picture out: far ground is drawn with lighter characters and far outlines are
@@ -1612,7 +1615,7 @@ const EYE = 1.7, SENS = .0023;
 let firs = [];   // the trees drawn in detail this frame
 let mode = 'loading', time = 0, signals = 0;
 const cam = { pos: [0, 0, 900], fwd: [0, 0, -1], up: [0, 1, 0], right: [1, 0, 0], fx: 1, fy: .6 };
-const ship = { pos: [0, 0, 0], fwd: [0, 0, -1], up: [0, 1, 0], vel: [0, 0, 0], parked: false };
+const ship = { pos: [0, 0, 0], fwd: [0, 0, -1], up: [0, 1, 0], vel: [0, 0, 0], parked: false, borne: false };
 const me = { dir: [0, 1, 0], h: 0, fwd: [1, 0, 0], pitch: 0, vr: 0, lean: [0, 0, 0], side: 0 };
 const look = { x: 0, y: 0 }, stick = { x: 0, y: 0 };
 const keys = new Set();
@@ -1653,10 +1656,12 @@ function fly(dt) {
 
   const out = norm(s.pos), alt = len(s.pos) - planet.R - groundAt(out);
   // A dive ends in a swoop. Close to the ground, a ship flying nose-first at it has its nose eased up,
-  // so holding W from orbit ends skimming the land, not stopped against it looking at dirt. Coming
-  // straight down with C, or hovering and looking down, is left alone.
+  // so holding W from orbit ends skimming the land, not stopped against it looking at dirt. Once the
+  // floor is holding the ship up it no longer sinks, and what counts then is that it is still being
+  // driven forward. Coming straight down with C, or hovering and looking down, is left alone.
   const dive = -dot(s.fwd, out), sink = -dot(s.vel, out), ease = lerp(.35, .08, smooth(40, 6, alt));
-  if (dive > ease && sink > 1 && dot(s.vel, s.fwd) > .7 * len(s.vel)) {
+  const driven = s.borne ? held('w') - held('s') - stick.y > .15 : sink > 1 && dot(s.vel, s.fwd) > .7 * len(s.vel);
+  if (dive > ease && driven) {
     s.fwd = norm(add(s.fwd, mul(add(s.up, out), dt * 2.5 * (dive - ease) * smooth(70, 10, alt))));
   }
   // roll is free in space and eases level with the horizon near the ground
@@ -1689,12 +1694,13 @@ function fly(dt) {
   }
   const soft = planet.R + need + 1.6, hard = planet.R + groundAt(d) + 1;
   const r = clamp(was < soft ? was + (soft - was) * (1 - Math.exp(-dt * 12)) : was, hard, planet.R * 6);
+  s.borne = r > was;   // the floor is holding the ship up
   if (r !== was) {
     s.pos = mul(d, r);
     const vr = dot(s.vel, d);
     if (vr * (r > was ? 1 : -1) < 0) s.vel = sub(s.vel, mul(d, vr));
   }
-  // flying into a beam does nothing, and nothing on screen said so
+  // flying into a beam does nothing, so say so, once
   if (!ui.told) for (const b of planet.beacons) {
     const v = sub(s.pos, b.base), along = dot(v, b.dir);
     if (!b.got && along > -5 && along < planet.R * .5 && len(sub(v, mul(b.dir, along))) < 12) { ui.told = true; say('signals are read on foot: land and walk into the light', 6); }
@@ -1709,6 +1715,9 @@ function slopeAt(d) {
   const across = (a, b) => floorAt(norm(add(d, mul(a, k)))) - floorAt(norm(sub(d, mul(b, k))));
   return Math.hypot(across(e, e), across(g, g));
 }
+
+// how far q is, measured level, from the upright line through at
+const aside = (q, at) => { const up = norm(at), v = sub(q, at); return len(sub(v, mul(up, dot(v, up)))); };
 
 function walk(dt) {
   const m = me;
@@ -1728,7 +1737,6 @@ function walk(dt) {
     // cones the height map holds for them, and the parked ship, which the height map knows nothing of.
     const solid = firs.map(t => [t.pos, t.r * 1.2 + 1.1]);
     if (ship.parked) solid.push([ship.pos, 1.9]);
-    const off = (q, at) => { const up = norm(at), v = sub(q, at); return len(sub(v, mul(up, dot(v, up)))); };
     let wet = false;
     // where a step of that length that way would end, and how much it rises; null if it cannot be taken
     const open = (way, step) => {
@@ -1738,9 +1746,12 @@ function walk(dt) {
       const rise = floorAt(norm(add(here, mul(way, .75)))) - base;
       if (rise >= .75 * 1.7) return null;
       if (planet.sea && heightAt(to) < -1) { wet = true; return null; }   // water or lava deeper than a metre
-      // no step goes further in under a tree or the ship, nor up onto the flank of a tree or a rock
-      if (solid.some(([at, reach]) => { const q = off(there, at); return q < reach && q < off(here, at); })) return null;
-      if (floorAt(to) > base + .02 && slopeAt(to) > 1.7) return null;
+      // No step goes in under a tree or the ship. Someone already under one (set down there by the ship)
+      // walks freely until they are out, or two trees close together would hold them where they stand.
+      if (solid.some(([at, reach]) => aside(there, at) < reach && aside(here, at) >= reach)) return null;
+      // nor up the flank of a tree or a rock: on ground steeper than 60 degrees nothing gains height
+      // faster than 1.2 m a second, which a slow step along a slope can still do and a stride at it cannot
+      if (floorAt(to) > base + dt * 1.2 && slopeAt(to) > 1.7) return null;
       return { to, rise };
     };
     // Straight on if the way is open. If not, slide: the same step turned 29, 57 or 80 degrees to one side
@@ -1826,8 +1837,10 @@ function land() {
       centre = Math.max(centre, h + Math.sqrt(2.25 - rr * rr) - .1);
       lo = Math.min(lo, h); hi = Math.max(hi, h);
     }
-    // a tree, crystal or spire is worst, uneven ground next; on a tie the lower spot wins
-    const score = ([TREE, CRYSTAL, SPIRE].includes(matAt(spot)) ? 2 : 0) + (hi - lo > 1 ? 1 : 0);
+    // a tree, crystal or spire is worst, and so is a spot under a tree's boughs, which reach further out
+    // than its cone in the height map; uneven ground is next; on a tie the lower spot wins
+    const at = mul(spot, planet.R + centre), boughs = firs.some(t => aside(at, t.pos) < t.r * 1.2 + 1.9);
+    const score = ([TREE, CRYSTAL, SPIRE].includes(matAt(spot)) || boughs ? 2 : 0) + (hi - lo > 1 ? 1 : 0);
     if (!best || score < best.score || (score === best.score && centre < best.centre)) best = { score, centre, spot };
     if (score === 0) break;
   }
@@ -1863,7 +1876,7 @@ function press(k) {
   if (k === 'i') ui.stats = !ui.stats;
   if (k === 'v') view.raw = !view.raw;
   if (k === 'm') mute();
-  if (k === '-' || k === '_' || k === '=' || k === '+') {
+  if (booted && (k === '-' || k === '_' || k === '=' || k === '+')) {   // not before there is a picture to size
     view.size = clamp(view.size + (k === '-' || k === '_' ? 1 : -1), 3, 16);
     view.picked = true;   // a size the player chose is never changed behind their back
     stats.drops = stats.drops.filter(step => step !== 'size');
@@ -2429,23 +2442,31 @@ canvas.addEventListener('webglcontextlost', e => {
 canvas.addEventListener('webglcontextcreationerror', stuck);
 canvas.addEventListener('webglcontextrestored', () => {
   clearTimeout(lostTimer);
+  boot();
+  lost = false;
+});
+
+// Builds everything that lives on the GPU: at the start, and again whenever the graphics come back.
+// The first time through it also charts the first planet and starts the frames.
+let booted = false;
+function boot() {
   initGL();
   if (planet.beacons) uploadPlanet();
   resize();
-  lost = false;
   notice.hidden = true;
-});
-
+  if (booted) return;
+  booted = true;
+  newPlanet(new URLSearchParams(location.search).get('seed') || randomSeed());
+  requestAnimationFrame(frame);
+}
 // The shaders are built after one frame has reached the screen, so there is something to read while the
 // compiler holds the page (it can take seconds on Windows the first time, where Direct3D compiles them).
+// If the graphics are lost before or while they are built, the build is left to the restore above.
 notice.textContent = 'building shaders';
 notice.hidden = false;
 requestAnimationFrame(() => setTimeout(() => {
-  initGL();
-  notice.hidden = true;
-  resize();
-  newPlanet(new URLSearchParams(location.search).get('seed') || randomSeed());
-  requestAnimationFrame(frame);
+  if (gl.isContextLost()) return;
+  try { boot(); } catch (e) { if (!gl.isContextLost()) throw e; }
 }));
 </script>
 </body>

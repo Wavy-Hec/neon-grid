@@ -111,21 +111,21 @@ Drawing is three passes on the GPU.
    glyph is measured once for how much ink falls in each of six regions of its cell, and that is
    compared with the cell's six samples. There are no letters or digits in the picture.
 3. Stamp the glyphs from an atlas at full resolution over a background colour that is blended
-   between cells, add bloom, and write the status line into the same grid.
+   between cells, add bloom, and write the status line on top.
 
 Three things keep the picture steady.
 
 - A tree or a rock spire is a near-vertical wall, so the height of a ray above the ground says
   little about how far it can safely go. The march reads a small pyramid of maps of the highest
   and steepest ground in each block: long steps where the way is clear, short ones among steep
-  things, so a spire or a tree is never stepped over whole.
+  things, so a spire or a tree near you is not stepped over whole.
 - Surface detail (the mottling of the ground, the tiers of a fir, the strata of a rock) is drawn
   only where the picture can resolve it. Anything finer than about four characters fades out,
-  because detail finer than the picture does not look like detail, it looks like static.
-- Land is drawn with small marks that stay apart: dots, commas, crosses. The characters that join
-  up into lines across the screen (`-`, `~`, `=`) are kept for water and lava. Far ground gets
-  lighter characters than near ground, and one character gives way to the next through a stipple
-  of the two.
+  because the picture would show it only as static.
+- Land is drawn with dots, commas and crosses. The characters that run together into long lines
+  across the screen (`-`, `~`, `=`) are kept for water and lava. Far ground gets lighter
+  characters than near ground, and one character gives way to the next through a stipple of the
+  two.
 
 The height map is too coarse for anything small. So the parked lander and the dozen trees nearest
 you are drawn as real shapes, signed distance functions marched in the same shader. Each tree
