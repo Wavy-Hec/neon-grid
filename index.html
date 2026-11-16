@@ -1684,7 +1684,7 @@ function fly(dt) {
   // flying into a beam does nothing, and nothing on screen said so
   if (!ui.told) for (const b of planet.beacons) {
     const v = sub(s.pos, b.base), along = dot(v, b.dir);
-    if (!b.got && along > -5 && len(sub(v, mul(b.dir, along))) < 12) { ui.told = true; say('signals are read on foot: land and walk into the light', 6); }
+    if (!b.got && along > -5 && along < planet.R * .5 && len(sub(v, mul(b.dir, along))) < 12) { ui.told = true; say('signals are read on foot: land and walk into the light', 6); }
   }
   cam.pos = s.pos; cam.fwd = s.fwd; cam.up = s.up;
 }
