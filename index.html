@@ -119,8 +119,8 @@ function ridge(x, y, z, oct) {
 const S = 1024;   // cube map face size
 
 // Every surface is drawn with its own set of characters, listed light to heavy. Land uses small marks
-// that stay apart (dots, commas, crosses, stars). The ones that join up into lines across the screen
-// (- ~ = and, at this size, ") are kept for what really is level and moves: water and lava.
+// that stay apart: dots, commas, crosses. The ones that join up into lines across the screen (- ~ = and,
+// at this size, " and *) are kept for what really is level and moves: water and lava.
 const VOID = 0, SKY = 1, CLOUD = 2, WATER = 3, SAND = 4, GRASS = 5, DRY = 6, ROCK = 7, SNOW = 8, TREE = 9, LAVA = 10, ICE = 11, CRYSTAL = 12, SPIRE = 13, SHIP = 14, RING = 15;
 const RAMPS = [
   " .'`+*",       // void
@@ -128,9 +128,9 @@ const RAMPS = [
   ' .:~',         // cloud
   ' .-~=',        // water
   ' .,:;',        // sand
-  ' .,;*',        // grass
+  ' .,;+',        // grass
   ' .,:;+',       // dry ground
-  ' .:^*#',       // rock
+  ' .:^+#',       // rock
   ' .:+*',        // snow
   ' .:+*%&#',     // tree
   ' .:~=*%#@',    // lava
@@ -464,10 +464,10 @@ function scatter() {
         if (dist >= 1.4) continue;
         if (dist >= 1) {
           // a ring of the prop's colour round its foot, so the sides of the cone the terrain makes
-          // do not fade into the ground's colour (trees and rock spires only)
+          // do not fade into the ground's colour (trees and rock spires only). It is still ground:
+          // paintFace gives it the ground's material, so it is not drawn with boughs or strata.
           if (!A[q * 4 + 3] && (P.mat === TREE || P.mat === SPIRE)) {
             A[q * 4] = c[0] * 200; A[q * 4 + 1] = c[1] * 200; A[q * 4 + 2] = c[2] * 200; A[q * 4 + 3] = 1;
-            planet.mat[f][q] = P.mat;
           }
           continue;
         }
@@ -577,7 +577,8 @@ function paintFace(f) {
     Nm[k * 4] = nx * sc + 127.5; Nm[k * 4 + 1] = ny * sc + 127.5; Nm[k * 4 + 2] = nz * sc + 127.5;
     const rise = Math.sqrt(Math.max(0, 1 - up * up)) / Math.max(Math.abs(up), .001), b = (j / TB | 0) * SB + (i / TB | 0);
     if (rise > steepest[b]) steepest[b] = rise;
-    if (A[k * 4 + 3]) continue;   // a prop owns this texel
+    const ring = A[k * 4 + 3] && !M[k];   // the ring round a prop's foot: it keeps the colour and takes the ground's material
+    if (A[k * 4 + 3] && !ring) continue;   // a prop owns this texel
     const h = H[k], m = W[k] / 255;
     let cr, cg, cb;
     if (sea && h <= 0) {
@@ -593,14 +594,14 @@ function paintFace(f) {
       M[k] = sn > .5 ? SNOW : cl > .5 ? ROCK : K.ground[hn < .04 ? 0 : w > .5 ? 1 : 2];
       // veins of lava follow one contour of the wetness map: a bright core that fades into the rock on
       // either side, so a vein is a few texels wide and does not break up into dashes
-      const hot = vein && h < peak * .5 ? Math.max(0, 1 - Math.abs(m - .5) / .03) ** 2 : 0;
+      const hot = vein && !ring && h < peak * .5 ? Math.max(0, 1 - Math.abs(m - .5) / .03) ** 2 : 0;
       if (hot > .02) {
         cr = lerp(cr, vein[0], hot); cg = lerp(cg, vein[1], hot); cb = lerp(cb, vein[2], hot);
         A[k * 4 + 3] = Math.max(3, hot * 220);
         if (hot > .4) M[k] = LAVA;
       }
     }
-    A[k * 4] = cr * 255; A[k * 4 + 1] = cg * 255; A[k * 4 + 2] = cb * 255;
+    if (!ring) { A[k * 4] = cr * 255; A[k * 4 + 1] = cg * 255; A[k * 4 + 2] = cb * 255; }
   }
 }
 
@@ -786,7 +787,7 @@ float march(vec3 ro, vec3 rd) {
   // A ray that runs out of steps has been skimming the ground for a long way; it takes the ground it
   // is over, which is closer to the truth than a hole or the far horizon.
   if (!hit) return t < s.y ? t : -1.;
-  for (int k = 0; k < 5; k++) {
+  for (int k = 0; k < 7; k++) {
     float tm = .5 * (tp + t);
     if (above(ro + rd * tm) < 0.) t = tm; else tp = tm;
   }
@@ -912,7 +913,6 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
   vec3 n = normalize(textureLod(uNormal, d, lod).xyz * 2. - 1.);
   bool sea = uSea.a > .5 && h < 0.;
   if (sea) n = d;
-  mat = sea ? (uSea.a > 1.5 ? ${LAVA}. : ${WATER}.) : floor(textureLod(uMat, d, 0.).r * 255. + .5);
 
   // F is the size, in metres on the surface, of the smallest patch the picture can show here: about
   // four characters wide and two tall. It grows with distance and, a lot, with how edge-on the surface
@@ -920,21 +920,30 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
   // picture does not look like detail, it looks like static, and on flat ground like dashed stripes.
   float F = t * uPix * max(8., 6. / max(dot(n, -rd), .04));
 
+  // Which material: the map has one answer per texel, about a metre, so where two meet the border would
+  // be drawn as a staircase. Close up the lookup wobbles by about a texel, which makes the border ragged.
+  vec3 md = d;
+  if (!sea && F < 2.5) md = normalize(d + (vec3(n3(p * 1.7), n3(p * 1.7 + 13.), n3(p * 1.7 + 29.)) - .5) * (1.6 * uTexel / uR));
+  mat = sea ? (uSea.a > 1.5 ? ${LAVA}. : ${WATER}.) : floor(textureLod(uMat, md, 0.).r * 255. + .5);
+
   // Props get the structure the height map is too coarse to hold (it has about a metre per point).
-  if (!sea && F < 7.) {
-    vec3 g = (vec3(n3(p * 2.4), n3(p * 2.4 + 17.), n3(p * 2.4 + 31.)) - .5) * fine(F, .42);
+  // Only their sides get it: the top of a spire and the ground round a foot are flat and stay plain.
+  float side = 1. - smoothstep(.8, .97, dot(n, d)), alt = length(p) - uR;
+  if (!sea && F < 7. && side > 0.) {
+    vec3 g = (vec3(n3(p * 2.4), n3(p * 2.4 + 17.), n3(p * 2.4 + 31.)) - .5) * fine(F, .42) * side;
     if (mat == ${TREE}.) {
       // boughs in tiers about 1.6 m apart, dark underneath and light at the tips; clumps of needles;
-      // a little variety from tree to tree
-      float tier = fract(h * .62 + n3(p * .35) * .5);
+      // a little variety from tree to tree. The tiers go by the height of the point itself: on a
+      // near-vertical side the height map's own value hardly changes from top to bottom.
+      float tier = fract(alt * .62 + n3(p * .35) * .5);
       n = normalize(n + g * 1.3);
       float boughs = .25 + 1.05 * smoothstep(.05, .5, tier) + .3 * smoothstep(.8, 1., tier);
-      alb *= mix(1., boughs, fine(F, 1.6)) * mix(1., .6 + .8 * n3(p * 3.1), fine(F, .32)) * (.8 + .4 * n3(p * .2));
+      alb *= mix(1., boughs, fine(F, 1.6) * side) * mix(1., .6 + .8 * n3(p * 3.1), fine(F, .32) * side) * (.8 + .4 * n3(p * .2));
     } else if (mat == ${SPIRE}.) {
       // thick rock strata, light and dark, with cracks
-      float layer = sin(h * 2.4 + n3(p * .3) * 3.);
+      float layer = sin(alt * 2.4 + n3(p * .3) * 3.);
       n = normalize(n + g * .8);
-      alb *= mix(1., .72 + .32 * layer, fine(F, 2.6)) * mix(1., .75 + .5 * n3(p * 1.9), fine(F, .53));
+      alb *= mix(1., .72 + .32 * layer, fine(F, 2.6) * side) * mix(1., .75 + .5 * n3(p * 1.9), fine(F, .53) * side);
     } else if (mat == ${CRYSTAL}.) {
       // facets: the normal snaps toward a few planes, so each face is flat and catches the light on its own
       n = normalize(mix(n, floor(n * 2.5 + .5) / 2.5, .85 * fine(F, 1.5)));
@@ -968,7 +977,7 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
     vec3 q = p - b.xyz, v = normalize(b.xyz);
     float along = dot(q, v);
     // the far side of the planet lies on the same axis: without the smoothstep the ground opposite every beacon glows too
-    light += uBeaconCol * b.w * 1.6 * smoothstep(-2. * uR, -1.9 * uR, along) / (1. + (dot(q, q) - along * along) / 40.);
+    light += uBeaconCol * b.w * .7 * smoothstep(-2. * uR, -1.9 * uR, along) / (1. + (dot(q, q) - along * along) / 14.);
   }
 
   if (!sea) {
@@ -1169,6 +1178,28 @@ void main() {
     }
   }
 
+  // The ring has its place in depth. From the ground it is the farthest thing in the sky, so it goes in
+  // before the clouds and the air, which then tint and fade it like anything else far away; from orbit
+  // the near half of it is in front of the planet's air, and goes in after.
+  float ringA = 0.;
+  vec3 ringC = vec3(0.);
+  bool ringFar = false;
+  if (uRing.z > 0.) {
+    float k = -dot(ro, uRingN) / dot(rd, uRingN);
+    if (k > 0. && k < tEnd) {
+      vec3 q = ro + rd * k;
+      ringA = ringBand(length(q));
+      ringC = uRingCol * uSunCol * (hits(sphere(q, uSun, uR)) ? .03 : 1.) * .5;
+      vec2 shell = sphere(ro, rd, uR + max(uAtmo, uCloud.y));
+      ringFar = shell.y > 0. && k > max(shell.x, 0.);
+    }
+  }
+  if (ringA > 0. && ringFar) {
+    col = mix(col, ringC, ringA);
+    st *= 1. - ringA;
+    if (ringA > .3) mat = ${RING}.;
+  }
+
   float tAir = tEnd;
   if (uCloud.w > 0.) {
     vec2 s = sphere(ro, rd, uR + uCloud.y);
@@ -1194,14 +1225,10 @@ void main() {
   col = (col + st * clamp(1. - dot(sc, vec3(4.)), 0., 1.)) * tr + sc;
   if (t < 0. && tEnd > 9e4 && mat != ${CLOUD}. && dot(sc, vec3(1.)) > .03) mat = ${SKY}.;   // open sky, moon included
 
-  if (uRing.z > 0.) {
-    float k = -dot(ro, uRingN) / dot(rd, uRingN);
-    if (k > 0. && k < tEnd) {
-      vec3 q = ro + rd * k;
-      float lit = hits(sphere(q, uSun, uR)) ? .03 : 1., a = ringBand(length(q));
-      col = mix(col, uRingCol * uSunCol * lit * .5, a);
-      if (a > .3) mat = ${RING}.;
-    }
+  // the ring, when it is this side of the air
+  if (ringA > 0. && !ringFar) {
+    col = mix(col, ringC, ringA);
+    if (ringA > .3) mat = ${RING}.;
   }
 
   for (int i = 0; i < 5; i++) {
@@ -1266,7 +1293,10 @@ void main() {
 
   vec3 a = vec3(d[0], d[1], d[2]), b = vec3(d[3], d[4], d[5]);
   float edge = smoothstep(.1, .3, (top - lo) / uInk);
-  float dither = fract(52.9829189 * fract(dot(cell, vec2(.06711056, .00583715)))) - .5;
+  // noise with no pattern to it: an ordered one alternates two characters column by column, like a weave
+  uint hc = uint(cell.x) * 1973U + uint(cell.y) * 9277U;
+  hc ^= hc >> 16; hc *= 0x7feb352dU; hc ^= hc >> 15; hc *= 0x846ca68bU; hc ^= hc >> 16;
+  float dither = float(hc >> 8) / 16777216. - .5;
   float mean = (a.x + a.y + a.z + b.x + b.y + b.z) / 6.;
   vec3 ca = a - mean, cb = b - mean;
   float spread = dot(ca, ca) + dot(cb, cb);   // how far the cell is from flat
