@@ -1387,13 +1387,13 @@ void main() {
   ivec2 ci = ivec2(cf.x, uGrid.y - 1. - floor(cf.y));
   vec2 uv = vec2(cf.x, uGrid.y - cf.y) / uGrid;
 
-  // interface text, on its own grid. styles: 1 plain, 2 dim, 3 status bar, 4 highlighted block, 5 accent, 6 dim on the bar
+  // interface text, on its own grid. styles: 1 plain, 2 dim, 3 status bar, 4 highlighted block, 5 accent, 6 dim on the bar, 7 accent on the bar
   vec2 tf = px / uTextCell;
   ivec2 tx = ivec2(texelFetch(uText, ivec2(tf), 0).rg * 255. + .5);
   if (tx.y > 0) {
     const vec3 accent = vec3(.36, 1., .84);
-    vec3 fg = tx.y == 2 || tx.y == 6 ? vec3(.46) : tx.y == 4 ? vec3(0.) : tx.y == 5 ? accent : vec3(.9);
-    vec3 bg = tx.y == 4 ? accent : tx.y == 3 || tx.y == 6 ? vec3(.085) : vec3(0.);
+    vec3 fg = tx.y == 2 || tx.y == 6 ? vec3(.46) : tx.y == 4 ? vec3(0.) : tx.y == 5 || tx.y == 7 ? accent : vec3(.9);
+    vec3 bg = tx.y == 4 ? accent : tx.y == 3 || tx.y >= 6 ? vec3(.085) : vec3(0.);
     o = vec4(mix(bg, fg, ink(uFont, tx.x, fract(tf))), 1.);
     return;
   }
@@ -1584,11 +1584,11 @@ let firs = [];   // the trees drawn in detail this frame
 let mode = 'loading', time = 0, signals = 0;
 const cam = { pos: [0, 0, 900], fwd: [0, 0, -1], up: [0, 1, 0], right: [1, 0, 0], fx: 1, fy: .6 };
 const ship = { pos: [0, 0, 0], fwd: [0, 0, -1], up: [0, 1, 0], vel: [0, 0, 0], parked: false };
-const me = { dir: [0, 1, 0], h: 0, fwd: [1, 0, 0], pitch: 0, vr: 0, lean: [0, 0, 0] };
+const me = { dir: [0, 1, 0], h: 0, fwd: [1, 0, 0], pitch: 0, vr: 0, lean: [0, 0, 0], side: 0 };
 const look = { x: 0, y: 0 }, stick = { x: 0, y: 0 };
 const keys = new Set();
 const held = k => (keys.has(k) ? 1 : 0);
-const ui = { note: '', msg: '', until: 0, minor: false, help: false, stats: false, leave: -1, padRow: 1e9 };
+const ui = { note: '', msg: '', until: 0, minor: false, help: false, helped: false, told: false, stats: false, leave: -1, padRow: 1e9 };
 
 // minor notes (ship recalled, sound on, sizes) never replace a message that is still up,
 // though they do replace each other
@@ -1622,23 +1622,53 @@ function fly(dt) {
   const pitch = -look.y * SENS + (held('arrowup') - held('arrowdown')) * dt * 1.3;
   s.fwd = norm(add(s.fwd, add(mul(right, yaw), mul(s.up, pitch))));
 
-  // roll is free in space and eases level with the horizon near the ground
   const out = norm(s.pos), alt = len(s.pos) - planet.R - groundAt(out);
+  // A dive ends in a swoop. Close to the ground, a ship flying nose-first at it has its nose eased up,
+  // so holding W from orbit ends skimming the land, not stopped against it looking at dirt. Coming
+  // straight down with C, or hovering and looking down, is left alone.
+  const dive = -dot(s.fwd, out), sink = -dot(s.vel, out), ease = lerp(.35, .08, smooth(40, 6, alt));
+  if (dive > ease && sink > 1 && dot(s.vel, s.fwd) > .7 * len(s.vel)) {
+    s.fwd = norm(add(s.fwd, mul(add(s.up, out), dt * 2.5 * (dive - ease) * smooth(70, 10, alt))));
+  }
+  // roll is free in space and eases level with the horizon near the ground
   let up = add(s.up, mul(right, (held('e') - held('q')) * dt * 1.5));
   if (Math.abs(dot(s.fwd, out)) < .96) up = mix3(up, out, 1 - Math.exp(-dt * 3 * smooth(planet.R * .9, 15, alt)));
   s.up = norm(sub(up, mul(s.fwd, dot(up, s.fwd))));
   right = cross(s.fwd, s.up);
 
-  const top = lerp(24, planet.R * .7, smooth(6, planet.R * 1.4, alt)) * (held('shift') ? 2.2 : 1);
+  // Top speed goes by the height in metres up to 420 m, the same on any size of planet; above that it
+  // grows with the planet, so the trip down from orbit takes about as long on a big one as on a small one.
+  const top = (lerp(24, 190, smooth(6, 420, alt)) + Math.max(0, planet.R * .7 - 190) * smooth(420, planet.R * 1.4, alt)) * (held('shift') ? 2.2 : 1);
   const push = add(add(mul(s.fwd, held('w') - held('s') - stick.y), mul(right, held('d') - held('a') + stick.x)), mul(s.up, held(' ') - held('c')));
   s.vel = add(mul(s.vel, Math.exp(-dt * 1.3)), mul(push, top * 1.3 * dt));
+  const before = out;
   s.pos = add(s.pos, mul(s.vel, dt));
+  // Level stays level. Near the ground the ship turns with the ground it passes over, so flying straight
+  // ahead follows the curve of the planet and does not climb back out to space. Above one and a half
+  // radii nothing is turned, so space flight and the way down are straight lines.
+  const turn = mul(cross(before, norm(s.pos)), smooth(planet.R * 1.5, planet.R * .5, alt));
+  s.fwd = norm(add(s.fwd, cross(turn, s.fwd))); s.up = norm(add(s.up, cross(turn, s.up))); s.vel = add(s.vel, cross(turn, s.vel));
 
-  const d = norm(s.pos), floor = planet.R + groundAt(d) + 1.6, r = clamp(len(s.pos), floor, planet.R * 6);
-  if (r !== len(s.pos)) {
+  // The floor. Trees and rocks are spikes in the height under the ship, and a floor that is just that
+  // height throws the view up metres in one frame. So the ship looks along its path: it starts to rise,
+  // at 45 degrees at most, for anything in the next 22 m and a fifth of a second of flight.
+  const d = norm(s.pos), was = len(s.pos);
+  let need = groundAt(d);
+  if (was < planet.R + planet.top + 4) {
+    const vh = sub(s.vel, mul(d, dot(s.vel, d))), sp = len(vh), lead = sp * .2;
+    if (sp > 2) for (let x = .5; x <= lead + 22; x += .5) need = Math.max(need, groundAt(norm(add(s.pos, mul(vh, x / sp)))) - Math.max(0, x - lead));
+  }
+  const soft = planet.R + need + 1.6, hard = planet.R + groundAt(d) + 1;
+  const r = clamp(was < soft ? was + (soft - was) * (1 - Math.exp(-dt * 12)) : was, hard, planet.R * 6);
+  if (r !== was) {
     s.pos = mul(d, r);
     const vr = dot(s.vel, d);
-    if (vr * (r === floor ? 1 : -1) < 0) s.vel = sub(s.vel, mul(d, vr));
+    if (vr * (r > was ? 1 : -1) < 0) s.vel = sub(s.vel, mul(d, vr));
+  }
+  // flying into a beam does nothing, and nothing on screen said so
+  if (!ui.told) for (const b of planet.beacons) {
+    const v = sub(s.pos, b.base), along = dot(v, b.dir);
+    if (!b.got && along > -5 && len(sub(v, mul(b.dir, along))) < 12) { ui.told = true; say('signals are read on foot: land and walk into the light', 6); }
   }
   cam.pos = s.pos; cam.fwd = s.fwd; cam.up = s.up;
 }
@@ -1663,25 +1693,41 @@ function walk(dt) {
   const f = held('w') - held('s') - stick.y, r = held('d') - held('a') + stick.x, amount = Math.min(1, Math.hypot(f, r));
   let stride = 0;
   if (amount > .15) {
-    const way = norm(add(mul(m.fwd, f), mul(right, r)));
-    stride = (held('shift') ? 11 : 5) * amount * dt;
-    const here = mul(m.dir, planet.R + m.h), to = norm(add(here, mul(way, stride)));
-    // the slope is judged over a fixed 0.75 m so the limit is the same at any frame rate: anything
-    // steeper than about 60 degrees is a wall, and so is water or lava deeper than a metre
-    const rise = floorAt(norm(add(here, mul(way, .75)))) - Math.max(m.h, floorAt(m.dir));
-    // The firs drawn in detail spread wider than the cones the height map holds for them, so they are
-    // obstacles of their own: no step may take you further in under one.
-    // So is the parked ship, which the height map knows nothing of.
-    const there = mul(to, planet.R + m.h);
+    const way0 = norm(add(mul(m.fwd, f), mul(right, r))), across = cross(way0, m.dir);
+    const here = mul(m.dir, planet.R + m.h), base = Math.max(m.h, floorAt(m.dir)), full = (held('shift') ? 11 : 5) * amount * dt;
+    // What stands in the way besides the ground: the firs drawn in detail, which spread wider than the
+    // cones the height map holds for them, and the parked ship, which the height map knows nothing of.
     const solid = firs.map(t => [t.pos, t.r * 1.2 + 1.1]);
     if (ship.parked) solid.push([ship.pos, 1.9]);
-    const fir = solid.some(([at, reach]) => {
-      const up = norm(at), out = q => { const v = sub(q, at); return len(sub(v, mul(up, dot(v, up)))); }, d = out(there);
-      return d < reach && d < out(here);
-    });
-    // nor up onto the flank of a tree or a rock, which a path that grazes one would otherwise climb
-    const flank = floorAt(to) > Math.max(m.h, floorAt(m.dir)) + .02 && slopeAt(to) > 1.7;
-    if (rise < .75 * 1.7 && !fir && !flank && !(planet.sea && heightAt(to) < -1)) m.dir = to;
+    const off = (q, at) => { const up = norm(at), v = sub(q, at); return len(sub(v, mul(up, dot(v, up)))); };
+    let wet = false;
+    // where a step of that length that way would end, and how much it rises; null if it cannot be taken
+    const open = (way, step) => {
+      const to = norm(add(here, mul(way, step))), there = mul(to, planet.R + m.h);
+      // the slope is judged over a fixed 0.75 m so the limit is the same at any frame rate: anything
+      // steeper than about 60 degrees is a wall
+      const rise = floorAt(norm(add(here, mul(way, .75)))) - base;
+      if (rise >= .75 * 1.7) return null;
+      if (planet.sea && heightAt(to) < -1) { wet = true; return null; }   // water or lava deeper than a metre
+      // no step goes further in under a tree or the ship, nor up onto the flank of a tree or a rock
+      if (solid.some(([at, reach]) => { const q = off(there, at); return q < reach && q < off(here, at); })) return null;
+      if (floorAt(to) > base + .02 && slopeAt(to) > 1.7) return null;
+      return { to, rise };
+    };
+    // Straight on if the way is open. If not, slide: the same step turned 29, 57 or 80 degrees to one side
+    // or the other, shorter the more it is turned, and as a last resort a slow step straight sideways,
+    // which is what gets you round a tree you walked squarely into. The lower side is tried first, and
+    // after that the side last used, so you are carried along a tree or a ledge and do not shuffle on the spot.
+    for (const [turn, pace] of [[0, 1], [.5, .88], [1, .54], [1.4, .17], [1.65, .17]]) {
+      const c = Math.cos(turn), sn = Math.sin(turn), step = full * pace;
+      const a = open(norm(add(mul(way0, c), mul(across, sn))), step), b = turn ? open(norm(add(mul(way0, c), mul(across, -sn))), step) : null;
+      if (!turn && wet) say(planet.sea > 1 ? 'no way across the lava on foot' : 'too deep to wade', 2, true);
+      if (!a && !b) continue;
+      const pick = !b ? a : !a ? b : m.side ? (m.side > 0 ? a : b) : a.rise <= b.rise ? a : b;
+      if (turn) m.side = pick === a ? 1 : -1;
+      m.dir = pick.to; stride = step;
+      break;
+    }
   }
   const floor = floorAt(m.dir);
   // walking downhill keeps you on the ground; only a real drop makes you fall
@@ -1720,10 +1766,16 @@ function facts() {
   ];
 }
 
+// why the ship cannot land where it is, or '' if it can
+function landing() {
+  const d = norm(ship.pos);
+  return len(ship.pos) - planet.R - groundAt(d) > 40 ? 'too high to land: come below 40 m'
+       : planet.sea && heightAt(d) < -1 ? 'no ground to stand on here' : '';
+}
+
 function land() {
-  const d = norm(ship.pos), alt = len(ship.pos) - planet.R - groundAt(d);
-  if (alt > 40) return say('too high to land');
-  if (planet.sea && heightAt(d) < -1) return say('no ground to stand on here');
+  const why = landing(), d = norm(ship.pos);
+  if (why) return say(why);
   me.dir = d;
   me.h = len(ship.pos) - planet.R - EYE;
   me.vr = Math.min(0, dot(ship.vel, d));
@@ -1767,7 +1819,7 @@ function board() {
 // ---- input
 
 function press(k) {
-  if (k === '?' || k === '/') ui.help = !ui.help;
+  if (k === '?' || k === '/') { ui.help = !ui.help; ui.helped = true; }
   if (k === 'escape') ui.help = false;
   if (mode === 'title' && (k === 'enter' || k === ' ')) return start();
   if (k === 'n' && mode !== 'loading') {
@@ -2106,16 +2158,23 @@ const HELP = [
   ['i', 'frame rate'],
 ];
 
-// how far the nearest signal still out there is, and which way to turn
+// How far the nearest signal still out there is, over the ground, and which way to turn. The bearing is
+// taken in the plane of the ground under you, so it is right from orbit too, where every signal on the
+// planet is "ahead" of a camera that looks at the planet.
 function nextSignal() {
+  const out = norm(cam.pos), flat = v => sub(v, mul(out, dot(v, out)));
   let near = null, best = 1e9;
   for (const b of planet.beacons) {
-    const d = len(sub(b.base, cam.pos));
+    const d = Math.acos(clamp(dot(b.dir, out), -1, 1)) * planet.R;
     if (!b.got && d < best) { best = d; near = b; }
   }
   if (!near) return '';
-  const r = sub(near.base, cam.pos), a = Math.atan2(dot(r, cam.right), dot(r, cam.fwd)) * 180 / Math.PI;
-  const way = Math.abs(a) < 25 ? 'ahead' : Math.abs(a) > 140 ? 'behind' : a > 0 ? 'right' : 'left';
+  // looking straight down, ahead is the top of the screen
+  let f = flat(cam.fwd);
+  if (len(f) < .3) f = mul(flat(cross(cam.right, cam.fwd)), dot(cam.fwd, out) < 0 ? 1 : -1);
+  const to = flat(sub(near.base, cam.pos)), a = Math.atan2(dot(to, cross(f, out)), dot(to, f)) * 180 / Math.PI;
+  const alt = len(cam.pos) - planet.R - groundAt(out);
+  const way = mode === 'fly' && best < alt * .5 ? 'below' : Math.abs(a) < 25 ? 'ahead' : Math.abs(a) > 140 ? 'behind' : a > 0 ? 'right' : 'left';
   return `next signal ${Math.round(best)}m ${way}`;
 }
 
@@ -2141,6 +2200,9 @@ function drawText() {
   put(0, bar + 1, ' '.repeat(tgrid.cols), 3);
   const tag = mode === 'fly' ? ' FLY ' : mode === 'walk' ? ' WALK ' : ' planet.txt ';
   put(0, bar, tag, 4);
+  // next to it, the one key that does something here and now
+  const hint = !playing ? '' : !touched && document.pointerLockElement !== canvas ? 'click to steer'
+             : mode === 'fly' ? (landing() ? '' : 'f land') : len(sub(cam.pos, ship.pos)) < 15 ? 'f board' : 'f call ship';
   // [text, side, importance]: on a narrow screen the least important parts are left out
   let parts = [[ui.note, 0, 9]];
   if (mode !== 'loading') {
@@ -2148,19 +2210,21 @@ function drawText() {
     parts = [[p.name, 0, 5], [p.K.label, 0, 1]];
     if (!playing) parts.push(...(touched ? [['tap to descend', 1, 9]] : [['click to descend', 1, 9], ['n next planet', 1, 3], ['? keys', 1, 2]]));
     else {
-      parts.push([`alt ${Math.round(alt)}m`, 1, 4]);
-      if (mode === 'fly') parts.push([`${Math.round(speed)}m/s`, 1, 3]);
+      if (mode === 'fly') parts.push([`alt ${Math.round(alt)}m`, 1, 4], [`${Math.round(speed)}m/s`, 1, 3]);
       const next = nextSignal();
       if (next) parts.push([next, 1, 8]);
-      parts.push([`found ${signals}/${p.beacons.length}`, 1, 7]);
+      parts.push([`${signals} of ${p.beacons.length} found`, 1, 7]);
+      if (!ui.helped) parts.push(['? keys', 1, 0]);
     }
     if (ui.stats) parts.push([`${stats.fps}fps ${view.cols}x${view.rows}`, 1, 6]);
   }
   const side = n => parts.filter(q => q[1] === n).map(q => q[0]).join('   ');
-  while (parts.length && tag.length + side(0).length + side(1).length + 4 > cols) {
+  const left = tag.length + 1 + (hint ? hint.length + 3 : 0);
+  while (parts.length && left + side(0).length + side(1).length + 3 > cols) {
     parts.splice(parts.indexOf(parts.reduce((a, b) => (b[2] < a[2] ? b : a))), 1);
   }
-  put(tag.length + 1, bar, side(0), 3);
+  put(tag.length + 1, bar, hint, 7);
+  put(left, bar, side(0), 3);
   put(cols - side(1).length - 1, bar, side(1), playing ? 3 : 6);
 
   if (time < ui.until) {
@@ -2225,7 +2289,8 @@ async function newPlanet(seed) {
 }
 
 function start() {
-  ship.pos = cam.pos; ship.fwd = cam.fwd; ship.up = cam.up; ship.vel = [0, 0, 0];
+  // the click carries the orbit's own motion on, into a drift toward the planet
+  ship.pos = cam.pos; ship.fwd = cam.fwd; ship.up = cam.up; ship.vel = add(mul(cross([0, 1, 0], cam.pos), .05), mul(cam.fwd, 50));
   mode = 'fly';
   startAudio();
   if (!fingers.size) grabMouse();
