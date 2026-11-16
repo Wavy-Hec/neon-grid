@@ -2053,8 +2053,9 @@ function drawScene() {
   gl.uniform1f(u.uTop, p.top);
   gl.uniform1f(u.uPix, 2 * cam.fy / (rows * 3));
   gl.uniform1f(u.uTexel, Math.PI / 2 * p.R / S);
-  // the narrowest a block of the finest high-ground map gets, at the corners of the cube: sqrt(2)/3 of its width at a face centre
-  gl.uniform1f(u.uBlock, TB * 2 * p.R / S * .47);
+  // The narrowest a block of the finest high-ground map gets. At a corner of the cube a block is a rhombus
+  // with sides .47 of its width at a face centre and a 60 degree angle, so .41 across; .4 to be sure.
+  gl.uniform1f(u.uBlock, TB * 2 * p.R / S * .4);
   gl.uniform1f(u.uAtmo, p.atmo);
   gl.uniform3fv(u.uBeta, p.K.tau.map(t => t / hs));
   // the sky is brighter to an eye standing in it than it is from orbit

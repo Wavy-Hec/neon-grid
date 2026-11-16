@@ -10,8 +10,10 @@ or play it at <https://wavy-hec.github.io/planet.txt/>.
 ## Playing
 
 You start in orbit. Every planet has five signals on the ground, visible as beams of light
-(a world that is almost all ocean may have fewer). Fly down to one, land, and walk into it.
-The status line at the bottom says how far the next one is and which way to turn. That is
+(a world that is almost all ocean may have fewer). Fly down to one, land, and walk into it:
+a signal only counts on foot. Hold `W` and the ship dives, levels out and skims the land.
+The status line at the bottom says how far the next signal is and which way to turn, and names
+the key that does something where you are, such as `f land` once you are low enough. That is
 the whole game; the rest is looking around.
 
 ![a whole run: down from orbit through the ring, in over fir trees, a walk up to a signal beam, then back out to orbit](shots/run.gif)
@@ -25,7 +27,7 @@ the whole game; the rest is looking around.
 | `space` `C` | up and down, jump |
 | `Q` `E` | roll |
 | `shift` | boost, run |
-| `F` | land and step out, board and lift off |
+| `F` | land and step out; on foot, board the ship or call it to you |
 | `N` | next planet (press twice if you are partway through a survey) |
 | `P` | save the view as a text file |
 | `V` | show the render under the text |
