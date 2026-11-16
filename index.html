@@ -457,12 +457,13 @@ function scatter() {
       const w = Math.ceil(r / texel) + 1;
       if (ci - w < 0 || cj - w < 0 || ci + w > S - 1 || cj + w > S - 1) continue;   // the whole stamp stays on one face
       const k = cj * S + ci, H = planet.height[f], A = planet.albedo[f], h0 = H[k], hn = h0 / top;
-      if (hn < P.hn[0] || hn > P.hn[1] || h0 < .3 || wet[f * S * S + k] / 255 < P.wet) continue;
+      if (hn < P.hn[0] || hn > P.hn[1] || h0 < .3 || A[k * 4 + 3] || wet[f * S * S + k] / 255 < P.wet) continue;   // not on top of another
       if ((Math.abs(H[k + 1] - H[k - 1]) + Math.abs(H[k + S] - H[k - S])) / (2 * texel) > 1.4) continue;   // too steep
       for (let j = cj - w; j <= cj + w; j++) for (let i = ci - w; i <= ci + w; i++) {
         const q = j * S + i, dist = len(sub(faceDir(f, i, j, dq), d0)) * planet.R / r;
         if (dist >= 1.4) continue;
-        if (dist >= 1) {
+        // a tree's cone is slimmer than the fir drawn over it, so it never shows between the boughs
+        if (dist >= (P.mat === TREE ? .9 : 1)) {
           // a ring of the prop's colour round its foot, so the sides of the cone the terrain makes
           // do not fade into the ground's colour (trees and rock spires only). It is still ground:
           // paintFace gives it the ground's material, so it is not drawn with boughs or strata.
@@ -471,7 +472,7 @@ function scatter() {
           }
           continue;
         }
-        const v = h0 + hh * (P.flat ? smooth(1, .55, dist) : Math.pow(1 - dist, .8));
+        const v = h0 + hh * (P.flat ? smooth(1, .55, dist) : P.mat === TREE ? 1 - dist / .9 : Math.pow(1 - dist, .8));
         if (v <= H[q]) continue;
         H[q] = v;
         A[q * 4] = c[0] * 255; A[q * 4 + 1] = c[1] * 255; A[q * 4 + 2] = c[2] * 255; A[q * 4 + 3] = 1 + (P.glow || 0) * 254;
@@ -741,7 +742,7 @@ float above(vec3 p) { return length(p) - uR - ground(p); }
 float march(vec3 ro, vec3 rd) {
   vec2 s = sphere(ro, rd, uR + uTop);
   if (s.y < 0.) return -1.;
-  float t = max(s.x, 0.), tp = t, a = -1e9;
+  float t = max(s.x, 0.), tp = t, a = -1e9, ap = 1.;   // ap: height over the ground at tp, the last point known clear
   // air: the last map read said the ray is above everything near, so read the map first again.
   // room: what the last map said about the ground, and for how many more metres sideways it holds;
   //       positive for gentle ground, negative for steep things close by.
@@ -765,7 +766,7 @@ float march(vec3 ro, vec3 rd) {
         if (room > 0. && a * .5 > room / across) lv = min(lv + 1., floor(roof));
         room = room > 0. ? max(room - go * across, 0.) : min(room + go * across, 0.);
         roof = min(roof + .25, 6.);
-        tp = t; t += go; a = -1e9;
+        tp = t; ap = a; t += go; a = -1e9;
         continue;
       }
     }
@@ -774,7 +775,7 @@ float march(vec3 ro, vec3 rd) {
     if (c > 0.) {
       air = true; room = 0.;
       float side = block / across, drop = c / max(down, 1e-3);
-      tp = t; t += max(min(side, drop), least); a = -1e9;
+      tp = t; ap = c; t += max(min(side, drop), least); a = -1e9;
       if (side < drop) lv = min(lv + 1., floor(roof));
       roof = min(roof + .25, 6.);
       continue;
@@ -784,14 +785,18 @@ float march(vec3 ro, vec3 rd) {
     if (hi.y >= 1.7 && lv > 0.) { roof = lv - 1.; lv = max(lv - 2., 0.); }
     else room = hi.y < 1.7 ? block : -2. * block;
   }
-  // A ray that runs out of steps has been skimming the ground for a long way; it takes the ground it
-  // is over, which is closer to the truth than a hole or the far horizon.
-  if (!hit) return t < s.y ? t : -1.;
-  for (int k = 0; k < 7; k++) {
-    float tm = .5 * (tp + t);
-    if (above(ro + rd * tm) < 0.) t = tm; else tp = tm;
+  if (!hit) {
+    // A ray that runs out of steps close over the ground has been skimming it for a long way; it takes
+    // the ground it is over, which is closer to the truth than a hole or the far horizon.
+    if (t >= s.y) return -1.;
+    return above(ro + rd * t) < .03 * t + .5 ? t : -1.;
   }
-  return t;
+  for (int k = 0; k < 5; k++) {
+    float tm = .5 * (tp + t), am = above(ro + rd * tm);
+    if (am < 0.) { t = tm; a = am; } else { tp = tm; ap = am; }
+  }
+  // one height above the ground and one below it point at where the ground is between them
+  return a < 0. && ap > 0. ? mix(tp, t, ap / (ap - a)) : t;
 }
 
 // The parked lander, in its own frame: y away from the planet, z forward, origin at ship.pos (about
@@ -844,7 +849,7 @@ float fir(vec3 q, float r, float h, float fade, float seed) {
 float shadow(vec3 p) {
   float res = 1., t = .6, a = -1e9, room = 0., lv = 0., roof = 6.;
   bool air = false;
-  for (int i = 0; i < 30; i++) {
+  for (int i = 0; i < 36; i++) {
     vec3 q = p + uSun * t;
     float r = length(q), alt = r - uR;
     if (r > uR + uTop) break;
@@ -866,8 +871,8 @@ float shadow(vec3 p) {
     }
     vec2 hi = textureLod(uTops, q, lv).rg;
     float c = alt - hi.x, block = uBlock * exp2(lv);
-    if (c > 0. && 9. * c >= res * t) {
-      // above everything near, and too far above it for the shadow to deepen
+    if (c > 0. && (9. * c >= res * t || t > 15.)) {
+      // above everything near, and too far above it (or too far from p) for the shadow's soft edge to matter
       air = true; room = 0.;
       float side = block / across, drop = c / max(-rise, 1e-3);
       t += max(min(side, drop), .6); a = -1e9;
@@ -880,6 +885,27 @@ float shadow(vec3 p) {
     else room = hi.y < 1.7 ? block : -3. * block;
   }
   return clamp(res, 0., 1.);
+}
+
+float cloudAt(vec3 d);
+float ringBand(float r);
+// what dims the sun at p besides the terrain: cloud, the ring's shadow, the parked ship
+float skyShade(vec3 p) {
+  float v = 1.;
+  if (uCloud.w > 0. && length(p) < uR + uCloud.y) {
+    vec2 s = sphere(p, uSun, uR + uCloud.y);
+    v *= 1. - .75 * uCloud.w * cloudAt(normalize(p + uSun * s.y));
+  }
+  if (uRing.z > 0.) {
+    float k = -dot(p, uRingN) / dot(uSun, uRingN);
+    if (k > 0.) v *= 1. - .8 * ringBand(length(p + uSun * k));
+  }
+  if (uShip.w > 0.) {
+    vec3 sc = uShip.xyz - p;
+    float along = dot(sc, uSun);
+    if (along > 0.) v *= mix(.35, 1., smoothstep(1.1, 1.8, length(sc - uSun * along)));
+  }
+  return v;
 }
 
 float cloudAt(vec3 d) {
@@ -908,9 +934,10 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
   vec3 p = ro + rd * t, d = normalize(p);
   float lod = clamp(log2(t * uPix / uTexel), 0., 6.);
   float h = textureLod(uHeight, d, 0.).r;
-  vec4 al = textureLod(uAlbedo, d, lod);
-  vec3 alb = pow(al.rgb, vec3(2.2));
   vec3 n = normalize(textureLod(uNormal, d, lod).xyz * 2. - 1.);
+  // seen edge-on a pixel covers a long strip of ground, so the colour comes from a coarser level, up to two
+  vec4 al = textureLod(uAlbedo, d, min(lod - log2(max(dot(n, -rd), .25)), 6.));
+  vec3 alb = pow(al.rgb, vec3(2.2));
   bool sea = uSea.a > .5 && h < 0.;
   if (sea) n = d;
 
@@ -954,19 +981,7 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
   vec3 amb = skyCol() * day * .1 + vec3(.03, .035, .05);
   float ndl = max(dot(n, uSun), 0.), vis = 1.;
   if (ndl > 0.) vis = shadow(p + n * .3);
-  if ((ndl > 0. || sea) && uCloud.w > 0. && length(p) < uR + uCloud.y) {   // a face turned from the sun has no use for the cloud's shadow
-    vec2 s = sphere(p, uSun, uR + uCloud.y);
-    vis *= 1. - .75 * uCloud.w * cloudAt(normalize(p + uSun * s.y));
-  }
-  if (uRing.z > 0.) {
-    float k = -dot(p, uRingN) / dot(uSun, uRingN);
-    if (k > 0.) vis *= 1. - .8 * ringBand(length(p + uSun * k));
-  }
-  if (uShip.w > 0.) {
-    vec3 sc = uShip.xyz - p;
-    float along = dot(sc, uSun);
-    if (along > 0.) vis *= mix(.35, 1., smoothstep(1.1, 1.8, length(sc - uSun * along)));
-  }
+  if (ndl > 0. || sea) vis *= skyShade(p);   // a face turned from the sun has no use for it
   vec3 sun = uSunCol * sunTint(mu, 1.5) * vis;
   vec3 light = sun * ndl + amb;
   // headlamp, only once it gets dark
@@ -993,7 +1008,7 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
     return alb * light + alb * em * 3.2;
   }
   if (uSea.a > 1.5) {
-    float crust = smoothstep(.38, .6, n3(p * .22 + vec3(0., uTime * .02, 0.)) * .6 + n3(p * .9) * .4);
+    float crust = smoothstep(.38, .6, mix(.5, n3(p * .22 + vec3(0., uTime * .02, 0.)), fine(F, 4.5)) * .6 + mix(.5, n3(p * .9), fine(F, 1.1)) * .4);
     glow = 1. - crust;
     return mix(vec3(2.2, .38, .035), vec3(.03, .015, .012) * light, crust);
   }
@@ -1099,7 +1114,7 @@ bool trees(vec3 ro, vec3 rd, inout float tEnd, out vec3 col) {
                       + e.yxy * fir(q + e.yxy, r, h, fade, seed) + e.xxx * fir(q + e.xxx, r, h, fade, seed));
     vec3 n = nl.x * ax + nl.y * up + nl.z * az;
     float mu = dot(up, uSun), day = smoothstep(-.25, .25, mu), ndl = max(dot(n, uSun), 0.);
-    float vis = ndl > 0. ? shadow(p + n * .3) : 1.;
+    float vis = ndl > 0. ? shadow(p + n * .3) * skyShade(p) : 1.;
     // darker toward the trunk and under each tier, clumps of needles
     float occ = .4 + .6 * clamp(length(q.xz) / (r * 1.1), 0., 1.);
     vec3 alb = uTreeCol * occ * (.65 + .7 * n3(q * 4. + seed));
@@ -1129,8 +1144,10 @@ void main() {
     // march the lander's shape inside a 2.1 m bounding sphere, in the ship's own frame
     vec3 up = normalize(uShip.xyz), fw = normalize(uShipFwd - up * dot(uShipFwd, up)), rt = cross(up, fw);
     vec3 o = ro - uShip.xyz, lo = vec3(dot(o, rt), dot(o, up), dot(o, fw)), ld = vec3(dot(rd, rt), dot(rd, up), dot(rd, fw));
-    vec2 b = sphere(lo, ld, 2.1);
-    if (b.y > 0. && b.x < tEnd) {
+    vec2 b = sphere(lo, ld, 2.2);
+    float inside;
+    // with the eye inside the hull every ray would hit it at once and fill the screen: leave it out then
+    if (b.y > 0. && b.x < tEnd && (b.x > 0. || lander(lo, inside) > .05)) {
       float ts = max(b.x, 0.), part = 0.;
       bool hit = false;
       for (int i = 0; i < 64; i++) {
@@ -1148,8 +1165,10 @@ void main() {
         float ndl = max(dot(n, uSun), 0.), spec = pow(max(dot(n, normalize(uSun - rd)), 0.), part == 1. ? 120. : 40.);
         // the hull shades what is under its rim
         float under = (1. - smoothstep(-.5, -.1, q.y)) * step(length(q.xz), 1.3);
-        vec3 sunL = uSunCol * sunTint(dot(up, uSun), 1.) * (1. - .75 * under) * smoothstep(-.1, .1, dot(up, uSun));
-        vec3 amb = skyCol() * .12 + vec3(.04, .045, .055);
+        // a hill, a cloud or the ring shades the ship too
+        vec3 sunL = uSunCol * sunTint(dot(up, uSun), 1.) * (1. - .75 * under) * smoothstep(-.1, .1, dot(up, uSun))
+                  * shadow(uShip.xyz + up * .6) * skyShade(uShip.xyz);
+        vec3 amb = skyCol() * .12 * smoothstep(-.25, .25, dot(up, uSun)) + vec3(.04, .045, .055);
         if (part < .5) {
           // hull: light panels with darker seams, and a dark band above the engine ring
           float f = fract(atan(q.z, q.x) * 1.2732), seam = 1. - smoothstep(0., .03, min(f, 1. - f));
@@ -1198,6 +1217,7 @@ void main() {
     // seen through the air it has to be bright to show at all against a daytime sky, as the moon does
     col = mix(col, ringC * 2.4, ringA);
     st *= 1. - ringA;
+    glow *= 1. - ringA;
     if (ringA > .3) mat = ${RING}.;
   }
 
@@ -1647,10 +1667,13 @@ function walk(dt) {
     const rise = floorAt(norm(add(here, mul(way, .75)))) - Math.max(m.h, floorAt(m.dir));
     // The firs drawn in detail spread wider than the cones the height map holds for them, so they are
     // obstacles of their own: no step may take you further in under one.
+    // So is the parked ship, which the height map knows nothing of.
     const there = mul(to, planet.R + m.h);
-    const fir = firs.some(t => {
-      const up = norm(t.pos), out = q => { const v = sub(q, t.pos); return len(sub(v, mul(up, dot(v, up)))); }, d = out(there);
-      return d < t.r * 1.2 + 1.1 && d < out(here);
+    const solid = firs.map(t => [t.pos, t.r * 1.2 + 1.1]);
+    if (ship.parked) solid.push([ship.pos, 1.9]);
+    const fir = solid.some(([at, reach]) => {
+      const up = norm(at), out = q => { const v = sub(q, at); return len(sub(v, mul(up, dot(v, up)))); }, d = out(there);
+      return d < reach && d < out(here);
     });
     // nor up onto the flank of a tree or a rock, which a path that grazes one would otherwise climb
     const flank = floorAt(to) > Math.max(m.h, floorAt(m.dir)) + .02 && slopeAt(to) > 1.7;
