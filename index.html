@@ -63,7 +63,8 @@ const linear = c => c.map(v => v ** 2.2);
 // ---- noise
 
 let noise;
-function makeNoise() {
+// the table Perlin noise is built on: the numbers 0..255 in the planet's own order, twice over
+function shuffled() {
   const p = new Uint8Array(512);
   for (let i = 0; i < 256; i++) p[i] = i;
   for (let i = 255; i > 0; i--) {
@@ -71,6 +72,9 @@ function makeNoise() {
     p[i] = p[j]; p[j] = t;
   }
   for (let i = 0; i < 256; i++) p[i + 256] = p[i];
+  return p;
+}
+function noiseOf(p) {
   const fade = t => t * t * t * (t * (t * 6 - 15) + 10);
   const grad = (h, x, y, z) => {
     h &= 15;
@@ -112,19 +116,21 @@ function ridge(x, y, z, oct) {
 
 // ---- planets
 
-const S = 512;   // cube map face size
+const S = 1024;   // cube map face size
 
-// every surface is drawn with its own set of characters, listed light to heavy
-const VOID = 0, SKY = 1, CLOUD = 2, WATER = 3, SAND = 4, GRASS = 5, DRY = 6, ROCK = 7, SNOW = 8, TREE = 9, LAVA = 10, ICE = 11, CRYSTAL = 12, SPIRE = 13, SHIP = 14;
+// Every surface is drawn with its own set of characters, listed light to heavy. Dry land uses dots,
+// ticks and crosses; the dashes that join up into lines across the screen (- ~ =) are kept for what
+// really is smooth and level: water, ice and lava.
+const VOID = 0, SKY = 1, CLOUD = 2, WATER = 3, SAND = 4, GRASS = 5, DRY = 6, ROCK = 7, SNOW = 8, TREE = 9, LAVA = 10, ICE = 11, CRYSTAL = 12, SPIRE = 13, SHIP = 14, RING = 15;
 const RAMPS = [
   " .'`+*",       // void
   ' .',           // sky
   ' .:~',         // cloud
   ' .-~=',        // water
-  ' .,:;=',       // sand
+  ' .,:;',        // sand
   ' .,;"*',       // grass
-  ' .,:;=+',      // dry ground
-  ' .:^=',        // rock
+  ' .,:;+',       // dry ground
+  ' .:^*#',       // rock
   ' .:+*',        // snow
   ' .:+*%&#',     // tree
   ' .:~=*%#@',    // lava
@@ -132,13 +138,14 @@ const RAMPS = [
   ' .:+<>*#',     // crystal
   ' .:|!#',       // spire
   ' .:-=+*#',     // ship
+  ' .:;',         // ring
 ];
 // how much of the surface colour fills the cell behind the character. high values read as
 // solid shapes with a light texture, low values as loose characters on black
-const BACKING = [.9, .92, .9, .75, .7, .8, .8, .75, .85, .6, .5, .75, .5, .6, .6];
+const BACKING = [.9, .92, .9, .75, .7, .8, .8, .75, .85, .6, .5, .75, .5, .6, .6, .9];
 // how much brighter than the scene the characters are drawn on a flat surface. low on sky and
 // cloud, so their dots read as a fine grain over the colour rather than a pattern of their own
-const GAIN = [1.45, 1.12, 1.15, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45];
+const GAIN = [1.45, 1.12, 1.15, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.15];
 
 // heights are metres, colour stops run from the shore (0) to the highest peak (1),
 // tau is how much red/green/blue light the air scatters straight overhead,
@@ -212,7 +219,7 @@ const SUNS = [[1.3, 1.24, 1.14], [1.3, 1.24, 1.14], [1.4, 1.08, .8], [1.14, 1.22
 
 const planet = { height: [], normal: [], albedo: [], mat: [] };
 for (let f = 0; f < 6; f++) {
-  planet.height.push(new Float32Array(S * S));
+  planet.height.push(new Float32Array(0));   // filled by buildFaces
   planet.normal.push(new Uint8Array(S * S * 4));
   planet.albedo.push(new Uint8Array(S * S * 4));
   planet.mat.push(new Uint8Array(S * S));
@@ -223,17 +230,28 @@ const wet = new Uint8Array(S * S * 6);
 const faceVec = (f, s, t) => f === 0 ? [1, -t, -s] : f === 1 ? [-1, -t, s] : f === 2 ? [s, 1, t]
                            : f === 3 ? [s, -1, -t] : f === 4 ? [s, -t, 1] : [-s, -t, -1];
 
-// unit direction of every texel centre, per cube face
-const dirs = [];
-for (let f = 0; f < 6; f++) {
-  const D = new Float32Array(S * S * 3);
-  for (let j = 0, k = 0; j < S; j++) for (let i = 0; i < S; i++, k += 3) {
-    const s = (2 * i + 1) / S - 1, t = (2 * j + 1) / S - 1, l = 1 / Math.hypot(1, s, t), d = faceVec(f, s, t);
-    D[k] = d[0] * l; D[k + 1] = d[1] * l; D[k + 2] = d[2] * l;
-  }
-  dirs.push(D);
+// faceVec is linear in s and t, so a face is three vectors: its centre and the steps along s and t
+const AXES = [0, 1, 2, 3, 4, 5].map(f => {
+  const a = faceVec(f, 0, 0);
+  return [...a, ...sub(faceVec(f, 1, 0), a), ...sub(faceVec(f, 0, 1), a)];
+});
+// unit direction of the centre of texel (i, j) of face f
+function faceDir(f, i, j, out = [0, 0, 0]) {
+  const A = AXES[f], s = (2 * i + 1) / S - 1, t = (2 * j + 1) / S - 1, l = 1 / Math.sqrt(1 + s * s + t * t);
+  out[0] = (A[0] + s * A[3] + t * A[6]) * l;
+  out[1] = (A[1] + s * A[4] + t * A[7]) * l;
+  out[2] = (A[2] + s * A[5] + t * A[8]) * l;
+  return out;
 }
-const faceDir = (f, i, j) => dirs[f].subarray((j * S + i) * 3, (j * S + i) * 3 + 3);
+// the directions of one whole face at a time, for the passes that visit every texel and its neighbours
+const D = new Float32Array(S * S * 3);
+function faceDirs(f) {
+  const d = [0, 0, 0];
+  for (let j = 0, k = 0; j < S; j++) for (let i = 0; i < S; i++, k += 3) {
+    faceDir(f, i, j, d);
+    D[k] = d[0]; D[k + 1] = d[1]; D[k + 2] = d[2];
+  }
+}
 
 function cubeUV(d) {
   const [x, y, z] = d, ax = Math.abs(x), ay = Math.abs(y), az = Math.abs(z);
@@ -283,10 +301,14 @@ const onSphere = () => {
 
 function design(seed) {
   rnd = mulberry(hashStr(seed));
-  noise = makeNoise();
-  const K = pick(KINDS), R = Math.round(rf(240, 330));
+  const perm = shuffled();
+  noise = noiseOf(perm);
+  const K = pick(KINDS), R = Math.round(rf(480, 660));
+  // Mountains, roughness and forests keep the size in metres they have on a planet of radius 285 m, so a
+  // bigger planet has more of them rather than bigger ones. Continents grow a little with the planet.
+  const k = R / 285;
   Object.assign(planet, {
-    seed, K, R, sea: K.sea,
+    seed, K, R, k, kc: k ** .6, perm, sea: K.sea,
     name: pick(NAME_A) + pick(NAME_B) + (rnd() < .35 ? pick(NAME_B) : '') + pick(NAME_C),
     lush: rampTable(K.ramp), dry: rampTable(K.dry),
     atmo: K.atmo * R, cover: rf(K.cover[0], K.cover[1]), cloudAlt: R * rf(.085, .11), cloudF: rf(2.6, 3.6),
@@ -298,24 +320,24 @@ function design(seed) {
       col: linear(hex(pick(['#d8c8a8', '#b8c4d8', '#e0b090']))), alpha: rf(.5, .85), seed: rf(0, 50),
     },
     moon: rnd() < .6 && { dist: R * rf(9, 11), r: R * rf(.2, .34), speed: rf(.006, .015), phase: rf(0, 6), incl: rf(-.4, .4) },
-    craters: Array.from({ length: K.craters || 0 }, () => ({ d: onSphere(), r: rf(.03, .16) })),
+    craters: Array.from({ length: Math.round((K.craters || 0) * k) }, () => ({ d: onSphere(), r: rf(.03, .16) / Math.sqrt(k) })),
   });
 }
 
-function terrain(x, y, z) {
-  const K = planet.K, [ox, oy, oz] = planet.off;
-  const land = (fbm(x * K.cf + ox, y * K.cf + oy, z * K.cf + oz, 5) + planet.bias) * 2.4;
+function terrain(x, y, z, craters) {
+  const K = planet.K, [ox, oy, oz] = planet.off, cf = K.cf * planet.kc, mf = 3.1 * planet.k, df = 13 * planet.k;
+  const land = (fbm(x * cf + ox, y * cf + oy, z * cf + oz, 5) + planet.bias) * 2.4;
   let h;
   if (land > 0) {
-    const m = ridge(x * 3.1 + oy, y * 3.1 + oz, z * 3.1 + ox, 4);
+    const m = ridge(x * mf + oy, y * mf + oz, z * mf + ox, 4);
     h = land * K.low + m * m * K.mount * Math.min(1, land * 2.2);
   } else h = land * K.deep;
-  h += fbm(x * 13 + oz, y * 13 + ox, z * 13 + oy, 2) * K.rough * (land > 0 ? 1 : .35);
+  h += fbm(x * df + oz, y * df + ox, z * df + oy, 2) * K.rough * (land > 0 ? 1 : .35);
   if (K.terrace) {
     const s = h / K.terrace, f = Math.floor(s);
     h = (f + smooth(.3, .7, s - f)) * K.terrace;
   }
-  for (const c of planet.craters) {
+  for (const c of craters) {
     const q = Math.sqrt(Math.max(0, 2 - 2 * (x * c.d[0] + y * c.d[1] + z * c.d[2]))) / c.r;
     if (q > 1.7) continue;
     const depth = c.r * planet.R * .22;
@@ -324,13 +346,88 @@ function terrain(x, y, z) {
   return K.sea ? h : Math.max(h, 0);
 }
 
-function buildFace(f) {
-  const H = planet.height[f], D = dirs[f], W = wet.subarray(f * S * S), [ox, oy, oz] = planet.off;
-  planet.albedo[f].fill(0);
-  for (let k = 0; k < S * S; k++) {
-    const x = D[k * 3], y = D[k * 3 + 1], z = D[k * 3 + 2];
-    H[k] = terrain(x, y, z);
-    W[k] = clamp(fbm(x * 2.7 - ox, y * 2.7 - oy, z * 2.7 - oz, 2) * 1.7 + .5, 0, 1) * 255;
+// Heights and wetness of one cube face. It uses nothing but the planet's numbers and the functions
+// above, so it runs unchanged in a worker (see WORKER below).
+function faceHeights(f, H, W) {
+  const [ox, oy, oz] = planet.off, wf = 2.7 * planet.kc, d = [0, 0, 0], c = [0, 0, 0], B = 64;
+  // craters are sorted into blocks of 64 x 64 texels, so a texel only tests the few that can reach it
+  for (let bj = 0; bj < S; bj += B) for (let bi = 0; bi < S; bi += B) {
+    faceDir(f, bi + B / 2 - .5, bj + B / 2 - .5, c);
+    let reach = 0;
+    for (const [ci, cj] of [[bi, bj], [bi + B, bj], [bi, bj + B], [bi + B, bj + B]]) {
+      faceDir(f, ci - .5, cj - .5, d);
+      reach = Math.max(reach, Math.acos(Math.min(1, c[0] * d[0] + c[1] * d[1] + c[2] * d[2])));
+    }
+    // a crater changes the ground out to 1.7 of its radius, measured along the chord
+    const near = planet.craters.filter(q => Math.acos(clamp(c[0] * q.d[0] + c[1] * q.d[1] + c[2] * q.d[2], -1, 1)) < reach + 2 * Math.asin(Math.min(1, .85 * q.r)) + .001);
+    for (let j = bj; j < bj + B; j++) for (let i = bi, k = j * S + bi; i < bi + B; i++, k++) {
+      faceDir(f, i, j, d);
+      H[k] = terrain(d[0], d[1], d[2], near);
+      W[k] = clamp(fbm(d[0] * wf - ox, d[1] * wf - oy, d[2] * wf - oz, 2) * 1.7 + .5, 0, 1) * 255;
+    }
+  }
+}
+
+// The six faces are worked out side by side in workers where the browser allows it; a worker is this
+// page's own functions, pasted into a script of its own.
+const WORKER = `'use strict';
+const S = ${S}, AXES = ${JSON.stringify(AXES)};
+const clamp = ${clamp}, lerp = ${lerp}, smooth = ${smooth};
+${noiseOf}
+${fbm}
+${ridge}
+${terrain}
+${faceDir}
+${faceHeights}
+let noise, planet;
+onmessage = e => {
+  planet = e.data.planet;
+  noise = noiseOf(planet.perm);
+  const H = new Float32Array(S * S), W = new Uint8Array(S * S);
+  faceHeights(e.data.f, H, W);
+  postMessage({ f: e.data.f, id: e.data.id, H, W }, [H.buffer, W.buffer]);
+};`;
+let pool = null, job = 0;
+function workers() {
+  if (pool) return pool;
+  pool = [];
+  try {
+    const url = URL.createObjectURL(new Blob([WORKER], { type: 'text/javascript' }));
+    for (let i = clamp((navigator.hardwareConcurrency || 2) - 1, 1, 6); i > 0; i--) pool.push(new Worker(url));
+  } catch (e) { pool = []; }
+  return pool;
+}
+// fills planet.height and wet for all six faces; tick(n) is called as each face is done
+async function buildFaces(tick) {
+  const id = ++job, { K, off, bias, craters, R, k, kc, perm } = planet, todo = [0, 1, 2, 3, 4, 5], got = new Set();
+  const keep = (f, H, W) => { planet.height[f] = H; wet.set(W, f * S * S); got.add(f); tick(got.size); };
+  const ws = workers();
+  if (ws.length) await new Promise(finish => {
+    let busy = 0;
+    const next = w => {
+      if (!todo.length) { if (!busy) finish(); return; }
+      busy++;
+      w.postMessage({ f: todo.shift(), id, planet: { K, off, bias, craters, R, k, kc, perm } });
+    };
+    for (const w of ws) {
+      w.onmessage = e => {
+        if (e.data.id !== id) return;   // an answer for a planet we have since left
+        busy--;
+        keep(e.data.f, e.data.H, e.data.W);
+        next(w);
+      };
+      // a browser that will not run the worker: stop using them and do the rest here
+      w.onerror = () => { pool = []; finish(); };
+      next(w);
+    }
+  });
+  // whatever the workers did not do: all of it if there are none, the rest if one failed
+  for (let f = 0; f < 6; f++) {
+    if (got.has(f)) continue;
+    await nextFrame();
+    const H = new Float32Array(S * S), W = new Uint8Array(S * S);
+    faceHeights(f, H, W);
+    keep(f, H, W);
   }
 }
 
@@ -345,22 +442,23 @@ function scatter() {
   planet.flat = low / (6 * S * S);
   planet.trees = [];   // the nearest of these are drawn as real shapes
   planet.treeCol = [0, 0, 0]; planet.treeGlow = 0;
+  const dq = [0, 0, 0];
   for (const P of planet.K.props) {
-    const c = hex(P.col);
-    for (let n = 0; n < P.n; n++) {
+    const c = hex(P.col), count = Math.round(P.n * planet.k * planet.k);   // as many per square metre on any size of planet
+    for (let n = 0; n < count; n++) {
       // centres are uniform over the sphere: cube texels shrink toward the edges, so picking
       // texels uniformly would crowd the props there
       const [f, cu, cv] = cubeUV(onSphere()), ci = Math.round(cu), cj = Math.round(cv);
       const r = rf(P.r[0], P.r[1]), hh = rf(P.h[0], P.h[1]);
       if (ci < 1 || cj < 1 || ci > S - 2 || cj > S - 2) continue;
-      const d0 = faceDir(f, ci, cj), texel = planet.R * len(sub(faceDir(f, ci + 1, cj), d0));   // texel size here, metres
+      const d0 = faceDir(f, ci, cj), texel = planet.R * len(sub(faceDir(f, ci + 1, cj, dq), d0));   // texel size here, metres
       const w = Math.ceil(r / texel) + 1;
       if (ci - w < 0 || cj - w < 0 || ci + w > S - 1 || cj + w > S - 1) continue;   // the whole stamp stays on one face
       const k = cj * S + ci, H = planet.height[f], A = planet.albedo[f], h0 = H[k], hn = h0 / top;
       if (hn < P.hn[0] || hn > P.hn[1] || h0 < .3 || wet[f * S * S + k] / 255 < P.wet) continue;
       if ((Math.abs(H[k + 1] - H[k - 1]) + Math.abs(H[k + S] - H[k - S])) / (2 * texel) > 1.4) continue;   // too steep
       for (let j = cj - w; j <= cj + w; j++) for (let i = ci - w; i <= ci + w; i++) {
-        const q = j * S + i, dist = len(sub(faceDir(f, i, j), d0)) * planet.R / r;
+        const q = j * S + i, dist = len(sub(faceDir(f, i, j, dq), d0)) * planet.R / r;
         if (dist >= 1.4) continue;
         if (dist >= 1) {
           // a ring of the prop's colour round its foot, so the sides of the cone the terrain makes
@@ -384,10 +482,47 @@ function scatter() {
   planet.top = top + 22;   // tallest prop on the highest ground
 }
 
+// Two numbers for each block of TB x TB texels and the eight blocks round it: the highest ground there, and
+// the steepest slope (paintFace measures the slopes). The ray march reads them to know how far it can go
+// without looking: above everything within a block of it nothing can be in a ray's way, and where the
+// ground is gentle the height over it is a fair guide to how close it is.
+const TB = 16, SB = S / TB;
+const steep = Array.from({ length: 6 }, () => new Float32Array(SB * SB));
+function highGround() {
+  const own = [];
+  for (let f = 0; f < 6; f++) {
+    const H = planet.height[f], C = new Float32Array(SB * SB).fill(-1e9);
+    for (let j = 0; j < S; j++) for (let i = 0, row = (j / TB | 0) * SB; i < S; i++) {
+      const b = row + (i / TB | 0);
+      if (H[j * S + i] > C[b]) C[b] = H[j * S + i];
+    }
+    own.push(C);
+  }
+  // each block also takes in its eight neighbours, across the edges of the cube where it has to
+  planet.tops = own.map((C, f) => {
+    const T = new Float32Array(SB * SB * 2);
+    for (let j = 0; j < SB; j++) for (let i = 0; i < SB; i++) {
+      let top = -1e9, slope = 0;
+      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+        let g = f, b = (j + dj) * SB + i + di;
+        if (i + di < 0 || i + di >= SB || j + dj < 0 || j + dj >= SB) {
+          const [face, u, v] = cubeUV(faceVec(f, (2 * (i + di) + 1) / SB - 1, (2 * (j + dj) + 1) / SB - 1));
+          g = face; b = clamp(Math.floor((v + .5) / TB), 0, SB - 1) * SB + clamp(Math.floor((u + .5) / TB), 0, SB - 1);
+        }
+        top = Math.max(top, own[g][b]); slope = Math.max(slope, steep[g][b]);
+      }
+      T[(j * SB + i) * 2] = planet.sea ? Math.max(top, 0) : top;
+      T[(j * SB + i) * 2 + 1] = slope;
+    }
+    return T;
+  });
+}
+
 // normals, colours and materials for one face
 function paintFace(f) {
-  const H = planet.height[f], A = planet.albedo[f], Nm = planet.normal[f], M = planet.mat[f], D = dirs[f], W = wet.subarray(f * S * S);
-  const { R, sea, lush, dry, K, peak } = planet;
+  const H = planet.height[f], A = planet.albedo[f], Nm = planet.normal[f], M = planet.mat[f], W = wet.subarray(f * S * S);
+  const { R, sea, lush, dry, K, peak } = planet, steepest = steep[f].fill(0);
+  faceDirs(f);
   const rock = hex(K.rock), ice = hex(K.ice), bed = hex(K.bed), vein = K.veins && hex(K.veins);
   const rad = h => R + (sea ? Math.max(h, 0) : h);
   // position of texel (i, j); past the edge of the face it is the neighbouring face's texel there,
@@ -420,16 +555,14 @@ function paintFace(f) {
     const nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx, nl = Math.hypot(nx, ny, nz);
     const up = (nx * D[k * 3] + ny * D[k * 3 + 1] + nz * D[k * 3 + 2]) / nl, sc = (up < 0 ? -127.5 : 127.5) / nl;
     Nm[k * 4] = nx * sc + 127.5; Nm[k * 4 + 1] = ny * sc + 127.5; Nm[k * 4 + 2] = nz * sc + 127.5;
+    const rise = Math.sqrt(Math.max(0, 1 - up * up)) / Math.max(Math.abs(up), .001), b = (j / TB | 0) * SB + (i / TB | 0);
+    if (rise > steepest[b]) steepest[b] = rise;
     if (A[k * 4 + 3]) continue;   // a prop owns this texel
     const h = H[k], m = W[k] / 255;
     let cr, cg, cb;
     if (sea && h <= 0) {
       [cr, cg, cb] = bed;
       M[k] = SAND;
-    } else if (vein && Math.abs(m - .5) < .016 && h < peak * .5) {
-      [cr, cg, cb] = vein;
-      A[k * 4 + 3] = 220;
-      M[k] = LAVA;
     } else {
       const slope = 1 - Math.abs(up), hn = clamp(h / peak, 0, 1), q = (hn * 255 | 0) * 3;
       const w = smooth(.3, .6, m), cl = smooth(.1, .28, slope);
@@ -438,6 +571,14 @@ function paintFace(f) {
       cg = lerp(lerp(lerp(dry[q + 1], lush[q + 1], w), rock[1], cl), ice[1], sn);
       cb = lerp(lerp(lerp(dry[q + 2], lush[q + 2], w), rock[2], cl), ice[2], sn);
       M[k] = sn > .5 ? SNOW : cl > .5 ? ROCK : K.ground[hn < .04 ? 0 : w > .5 ? 1 : 2];
+      // veins of lava follow one contour of the wetness map: a bright core that fades into the rock on
+      // either side, so a vein is a few texels wide and does not break up into dashes
+      const hot = vein && h < peak * .5 ? Math.max(0, 1 - Math.abs(m - .5) / .03) ** 2 : 0;
+      if (hot > .02) {
+        cr = lerp(cr, vein[0], hot); cg = lerp(cg, vein[1], hot); cb = lerp(cb, vein[2], hot);
+        A[k * 4 + 3] = Math.max(3, hot * 220);
+        if (hot > .4) M[k] = LAVA;
+      }
     }
     A[k * 4] = cr * 255; A[k * 4 + 1] = cg * 255; A[k * 4 + 2] = cb * 255;
   }
@@ -448,7 +589,7 @@ function placeBeacons() {
   for (let i = 0; i < 6000 && list.length < 5; i++) {
     const d = onSphere(), h = heightAt(d), side = norm(cross(d, [.3, .9, .2]));
     if (h < 1.5 || h > planet.peak * (i < 3000 ? .5 : 1)) continue;
-    if (Math.abs(heightAt(norm(add(d, mul(side, .01)))) - h) > 1.5) continue;
+    if (Math.abs(heightAt(norm(add(d, mul(side, 2.7 / planet.R)))) - h) > 1.5) continue;
     if (list.some(b => dot(b.dir, d) > (i < 2000 ? .5 : i < 4000 ? .8 : .96))) continue;
     list.push({ dir: d, base: mul(d, planet.R + h), got: false });
   }
@@ -510,16 +651,17 @@ precision highp float;
 precision highp int;
 precision highp sampler3D;
 
-uniform samplerCube uHeight, uNormal, uAlbedo, uMat;
+uniform samplerCube uHeight, uNormal, uAlbedo, uMat, uTops;
 uniform sampler3D uNoise;
 uniform vec3 uPos, uFwd, uRight, uUp, uSun, uSunCol;
 uniform vec2 uFov;
-uniform float uTime, uR, uTop, uPix, uTexel, uAtmo, uAdapt;
+uniform float uTime, uR, uTop, uPix, uTexel, uBlock, uAtmo, uAdapt;
 uniform vec3 uBeta, uShallow, uCloudCol, uRingN, uRingCol, uBeaconCol;
 uniform vec4 uSea, uCloud, uRing, uMoon, uShip;
 uniform vec3 uShipFwd;
 uniform vec4 uTree[12], uTreeB[12];   // the nearest trees: base position and height; radius and a seed
 uniform int uTreeN;
+uniform vec2 uTreeFade;
 uniform vec3 uTreeCol;
 uniform float uTreeGlow;
 uniform vec4 uBeacon[5];
@@ -553,11 +695,31 @@ vec2 sphere(vec3 ro, vec3 rd, float r) {
 }
 bool hits(vec2 s) { return s.x > 0. && s.x < s.y; }
 
+// 1 while a pattern of wavelength lambda (metres) is coarser than the picture's finest patch F, 0 once it is finer
+float fine(float F, float lambda) { return 1. - smoothstep(lambda, 2.5 * lambda, F); }
+
 float ground(vec3 p) {
   float h = textureLod(uHeight, p, 0.).r;
   return uSea.a > .5 ? max(h, 0.) : h;
 }
 float above(vec3 p) { return length(p) - uR - ground(p); }
+
+// How far the ray may go from p before anything can be in its way. a is the height over the ground
+// straight below, which is not the distance to the ground: a tree or a rock spire is a near-vertical wall,
+// and a ray can be metres above the plain and a hand's width from one. The map of high ground settles it.
+// Above everything within a block of here, the ray is clear until it has come down to that height or left
+// the block. Below that, on gentle ground (nothing steeper than 60 degrees nearby), half the height is
+// always clear. Among steep things the step stays shorter than the narrowest of them, so none is
+// stepped over whole.
+float stride(vec3 p, vec3 rd, float a, float t, int i) {
+  // the shortest step grows the longer the ray has been going, so one that skims a crest still gets past it
+  float r = length(p), least = t * (.006 + .00012 * float(i));
+  vec2 hi = textureLod(uTops, p, 0.).rg;
+  float c = r - uR - hi.x;
+  if (c > 0.) return max(min(uBlock, c / max(-dot(rd, p) / r, 1e-3)), least);
+  if (hi.y < 1.7) return max(min(a * .5, uBlock), least);
+  return clamp(a * .5, least, max(.7, .012 * t));
+}
 
 // distance along the ray to the terrain, or -1
 float march(vec3 ro, vec3 rd) {
@@ -565,17 +727,16 @@ float march(vec3 ro, vec3 rd) {
   if (s.y < 0.) return -1.;
   float t = max(s.x, 0.), tp = t;
   bool hit = false;
-  for (int i = 0; i < 110 && t < s.y; i++) {
-    float a = above(ro + rd * t);
+  for (int i = 0; i < 170 && t < s.y; i++) {
+    vec3 p = ro + rd * t;
+    float a = above(p);
     if (a < .0015 * t) { hit = true; break; }
     tp = t;
-    t += max(a * .5, .004 * t);
+    t += stride(p, rd, a, t, i);
   }
-  if (!hit) {
-    // a grazing ray can run out of steps; let it land on the smooth sphere instead of leaving a hole
-    vec2 q = sphere(ro, rd, uR);
-    return t < s.y && q.x > t ? q.x : -1.;
-  }
+  // A ray that runs out of steps has been skimming the ground for a long way; it takes the ground it
+  // is over, which is closer to the truth than a hole or the far horizon.
+  if (!hit) return t < s.y ? t : -1.;
   for (int k = 0; k < 5; k++) {
     float tm = .5 * (tp + t);
     if (above(ro + rd * tm) < 0.) t = tm; else tp = tm;
@@ -630,12 +791,15 @@ float fir(vec3 q, float r, float h, float fade, float seed) {
 
 float shadow(vec3 p) {
   float res = 1., t = .6;
-  for (int i = 0; i < 22; i++) {
+  for (int i = 0; i < 28; i++) {
     vec3 q = p + uSun * t;
-    float a = above(q);
+    float a = above(q), r = length(q);
     res = min(res, 9. * a / t);
-    if (res < .02 || length(q) > uR + uTop) break;
-    t += clamp(a, .6, 14.);
+    if (res < .02 || r > uR + uTop) break;
+    // the same rule as the march: long steps only where the map of high ground says the way is clear
+    vec2 hi = textureLod(uTops, q, 0.).rg;
+    float c = r - uR - hi.x;
+    t += c > 0. ? max(min(uBlock, c / max(-dot(uSun, q) / r, 1e-3)), .6) : clamp(a, .6, hi.y < 1.7 ? uBlock : 2.5);
   }
   return clamp(res, 0., 1.);
 }
@@ -659,7 +823,7 @@ float ringBand(float r) {
   float x = (r - uRing.x) / (uRing.y - uRing.x);
   if (x < 0. || x > 1.) return 0.;
   float b = .3 + .7 * n3(vec3(x * 9. + uRing.w, .5, .5));
-  return b * smoothstep(0., .05, x) * smoothstep(1., .92, x) * smoothstep(.02, .05, abs(x - .58)) * uRing.z;
+  return b * smoothstep(0., .05, x) * (1. - smoothstep(.92, 1., x)) * smoothstep(.02, .05, abs(x - .58)) * uRing.z;
 }
 
 vec3 surface(vec3 ro, vec3 rd, float t) {
@@ -673,26 +837,30 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
   if (sea) n = d;
   mat = sea ? (uSea.a > 1.5 ? ${LAVA}. : ${WATER}.) : floor(textureLod(uMat, d, 0.).r * 255. + .5);
 
+  // F is the size, in metres on the surface, of the smallest patch the picture can show here: about
+  // four characters wide and two tall. It grows with distance and, a lot, with how edge-on the surface
+  // is seen. Every pattern below fades out before it gets finer than that; a pattern finer than the
+  // picture does not look like detail, it looks like static, and on flat ground like dashed stripes.
+  float F = t * uPix * max(8., 6. / max(dot(n, -rd), .04));
+
   // Props get the structure the height map is too coarse to hold (it has about a metre per point).
-  // All of it fades with distance, so far props do not shimmer.
-  float near = exp(-t * .02);
-  if (!sea && near > .02) {
-    vec3 g = vec3(n3(p * 2.4), n3(p * 2.4 + 17.), n3(p * 2.4 + 31.)) - .5;
+  if (!sea && F < 7.) {
+    vec3 g = (vec3(n3(p * 2.4), n3(p * 2.4 + 17.), n3(p * 2.4 + 31.)) - .5) * fine(F, .42);
     if (mat == ${TREE}.) {
       // boughs in tiers about 1.6 m apart, dark underneath and light at the tips; clumps of needles;
       // a little variety from tree to tree
       float tier = fract(h * .62 + n3(p * .35) * .5);
-      n = normalize(n + g * 1.3 * near);
-      float boughs = (.25 + 1.05 * smoothstep(.05, .5, tier) + .3 * smoothstep(.8, 1., tier)) * (.6 + .8 * n3(p * 3.1));
-      alb *= mix(1., boughs, near) * (.8 + .4 * n3(p * .2));
+      n = normalize(n + g * 1.3);
+      float boughs = .25 + 1.05 * smoothstep(.05, .5, tier) + .3 * smoothstep(.8, 1., tier);
+      alb *= mix(1., boughs, fine(F, 1.6)) * mix(1., .6 + .8 * n3(p * 3.1), fine(F, .32)) * (.8 + .4 * n3(p * .2));
     } else if (mat == ${SPIRE}.) {
       // thick rock strata, light and dark, with cracks
       float layer = sin(h * 2.4 + n3(p * .3) * 3.);
-      n = normalize(n + g * .8 * near);
-      alb *= mix(1., (.72 + .32 * layer) * (.75 + .5 * n3(p * 1.9)), near);
+      n = normalize(n + g * .8);
+      alb *= mix(1., .72 + .32 * layer, fine(F, 2.6)) * mix(1., .75 + .5 * n3(p * 1.9), fine(F, .53));
     } else if (mat == ${CRYSTAL}.) {
       // facets: the normal snaps toward a few planes, so each face is flat and catches the light on its own
-      n = normalize(mix(n, floor(n * 2.5 + .5) / 2.5, .85 * near));
+      n = normalize(mix(n, floor(n * 2.5 + .5) / 2.5, .85 * fine(F, 1.5)));
     }
   }
 
@@ -726,13 +894,16 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
   }
 
   if (!sea) {
-    float det = n3(p * .9) * .5 + n3(p * 3.7) * .5;
-    alb *= mix(1., .55 + .9 * det, exp(-t * .03));
+    // Mottling of the ground, at the finest scale the picture resolves here: specks at your feet,
+    // patches a few metres across further off, and nothing past that, where the colour map takes over.
+    float l = max(log2(F / .27), 0.), i = floor(l), sc = 3.7 * exp2(-i);
+    float det = mix(n3(p * sc + i * 7.3), n3(p * sc * .5 + i * 7.3 + 7.3), l - i);
+    alb *= mix(1., .55 + .9 * det, 1. - smoothstep(3., 6., l));
     float em = step(.01, al.a) * (al.a - .004);
     // each crystal facet glows at its own brightness
-    if (mat == ${CRYSTAL}.) em *= mix(1., .35 + .9 * abs(dot(n, normalize(vec3(.4, .8, .45)))), near);
+    if (mat == ${CRYSTAL}.) em *= mix(1., .35 + .9 * abs(dot(n, normalize(vec3(.4, .8, .45)))), fine(F, 1.5));
     glow = em;
-    return alb * light + alb * em * 7.;
+    return alb * light + alb * em * 3.2;
   }
   if (uSea.a > 1.5) {
     float crust = smoothstep(.38, .6, n3(p * .22 + vec3(0., uTime * .02, 0.)) * .6 + n3(p * .9) * .4);
@@ -741,12 +912,16 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
   }
   vec3 wc = mix(uShallow, uSea.rgb, 1. - exp(h * .3));
   wc = mix(alb, wc, 1. - exp(h * 1.4));
+  // Ripples. Where they are smaller than the picture can show they stop moving the normal and widen
+  // the sun's glint instead, which is what a camera sees of far water: a smooth path of light, not sparks.
+  float calm = 1. - fine(F, .9);
   vec3 rip = vec3(n3(p * 1.1 + uTime * .5), n3(p * 1.1 + 9. - uTime * .4), n3(p * 1.1 + 17. + uTime * .3)) - .5;
-  vec3 wn = normalize(d + rip * .14 * exp(-t * .008));
+  vec3 wn = normalize(d + rip * .14 * (1. - calm));
   float fres = pow(1. - max(dot(-rd, wn), 0.), 5.);
   float sp = max(dot(reflect(rd, wn), uSun), 0.);
-  glow = pow(sp, 90.) * vis;
-  return wc * light * (1. - fres) + (skyCol() * day * .3 + .008) * fres + sun * (pow(sp, 90.) * 7. + pow(sp, 10.) * .2);
+  float glint = pow(sp, mix(90., 22., calm)) * mix(7., 2.2, calm);
+  glow = min(glint * .15, 1.) * vis;
+  return wc * light * (1. - fres) + (skyCol() * day * .3 + .008) * fres + sun * (glint + pow(sp, 10.) * .2);
 }
 
 vec3 stars(vec3 rd) {
@@ -755,7 +930,7 @@ vec3 stars(vec3 rd) {
   if (h < .986) return vec3(0.);
   float b = (h - .986) / .014;
   float tw = .75 + .25 * sin(uTime * (1.5 + b * 4.) + b * 60.);
-  return mix(vec3(1., .85, .7), vec3(.75, .85, 1.), fract(b * 7.3)) * smoothstep(.5, .1, length(fract(q) - .5)) * (.25 + b * b * 1.5) * tw;
+  return mix(vec3(1., .85, .7), vec3(.75, .85, 1.), fract(b * 7.3)) * (1. - smoothstep(.1, .5, length(fract(q) - .5))) * (.25 + b * b * 1.5) * tw;
 }
 
 // sun and moon; they stay visible through a daytime sky, the stars do not
@@ -797,8 +972,9 @@ vec3 atmosphere(vec3 ro, vec3 rd, float tMax, out vec3 trans) {
   return sum * uSunCol * uAdapt * (uBeta * .45 * (1. + mu * mu) + (.012 * pow(m, 6.) + .09 * pow(m, 90.)) / hs);
 }
 
-// The nearest trees, drawn as real shapes; past 25 m each blends back into the plain cone the terrain
-// already has. Checked before any shading, so the terrain behind a tree is never shaded for nothing.
+// The nearest trees, drawn as real shapes. Each blends back into the plain cone the terrain already has
+// before it reaches the edge of that set (uTreeFade), so a tree never changes shape from one frame to the
+// next. Checked before any shading, so the terrain behind a tree is never shaded for nothing.
 bool trees(vec3 ro, vec3 rd, inout float tEnd, out vec3 col) {
   bool found = false;
   col = vec3(0.);
@@ -807,7 +983,7 @@ bool trees(vec3 ro, vec3 rd, inout float tEnd, out vec3 col) {
     vec4 tr = uTree[i];
     float r = uTreeB[i].x, h = tr.w, seed = uTreeB[i].y;
     vec3 up = normalize(tr.xyz), o = ro - tr.xyz;
-    float fade = smoothstep(38., 25., length(o));
+    float fade = 1. - smoothstep(uTreeFade.x, uTreeFade.y, length(o));
     if (fade <= 0.) continue;
     vec2 b = sphere(o - up * (h * .5), rd, length(vec2(h * .56, r * 1.3 + .6)));
     if (b.y <= 0. || b.x >= tEnd) continue;
@@ -834,7 +1010,7 @@ bool trees(vec3 ro, vec3 rd, inout float tEnd, out vec3 col) {
     vec3 alb = uTreeCol * occ * (.65 + .7 * n3(q * 4. + seed));
     vec3 light = uSunCol * sunTint(mu, 1.5) * vis * ndl + skyCol() * day * .1 + vec3(.03, .035, .05)
                + vec3(1.5, 1.4, 1.15) * (1. - day) * max(dot(n, -rd), 0.) / (1. + ts * ts / 250.);
-    col = alb * light + alb * uTreeGlow * 7.;
+    col = alb * light + alb * uTreeGlow * 3.2;
     glow = uTreeGlow;
     tEnd = ts;
     mat = ${TREE}.;
@@ -876,13 +1052,13 @@ void main() {
         vec3 n = nl.x * rt + nl.y * up + nl.z * fw;
         float ndl = max(dot(n, uSun), 0.), spec = pow(max(dot(n, normalize(uSun - rd)), 0.), part == 1. ? 120. : 40.);
         // the hull shades what is under its rim
-        float under = smoothstep(-.1, -.5, q.y) * step(length(q.xz), 1.3);
+        float under = (1. - smoothstep(-.5, -.1, q.y)) * step(length(q.xz), 1.3);
         vec3 sunL = uSunCol * sunTint(dot(up, uSun), 1.) * (1. - .75 * under) * smoothstep(-.1, .1, dot(up, uSun));
         vec3 amb = skyCol() * .12 + vec3(.04, .045, .055);
         if (part < .5) {
           // hull: light panels with darker seams, and a dark band above the engine ring
-          float f = fract(atan(q.z, q.x) * 1.2732), seam = smoothstep(.03, 0., min(f, 1. - f));
-          vec3 base = mix(vec3(.62, .64, .68), vec3(.28, .3, .33), max(seam * .7, smoothstep(.05, 0., abs(q.y - .2)) * .8));
+          float f = fract(atan(q.z, q.x) * 1.2732), seam = 1. - smoothstep(0., .03, min(f, 1. - f));
+          vec3 base = mix(vec3(.62, .64, .68), vec3(.28, .3, .33), max(seam * .7, (1. - smoothstep(0., .05, abs(q.y - .2))) * .8));
           col = base * (sunL * ndl + amb) + sunL * spec * .35;
           glow = 0.;
         } else if (part < 1.5) {
@@ -921,7 +1097,7 @@ void main() {
       st *= 1. - a;
       if (a > .5) mat = ${CLOUD}.;
     }
-    float inside = cloudAt(normalize(ro)) * uCloud.w * smoothstep(8., 0., abs(length(ro) - uR - uCloud.y));
+    float inside = cloudAt(normalize(ro)) * uCloud.w * (1. - smoothstep(0., 8., abs(length(ro) - uR - uCloud.y)));
     col = mix(col, cloudLit(normalize(ro)), inside * .9);
   }
 
@@ -936,7 +1112,7 @@ void main() {
       vec3 q = ro + rd * k;
       float lit = hits(sphere(q, uSun, uR)) ? .03 : 1., a = ringBand(length(q));
       col = mix(col, uRingCol * uSunCol * lit * .5, a);
-      if (a > .3) mat = ${SAND}.;
+      if (a > .3) mat = ${RING}.;
     }
   }
 
@@ -946,30 +1122,31 @@ void main() {
     // closest approach between the view ray and the beam
     vec3 v = normalize(b.xyz), w = ro - b.xyz;
     float bb = dot(rd, v), dd = dot(rd, w), e = dot(v, w), den = 1. - bb * bb;
-    float sb = clamp(den < 1e-4 ? e : (e - bb * dd) / den, 0., 170.);
+    float reach = uR * .5, sb = clamp(den < 1e-4 ? e : (e - bb * dd) / den, 0., reach);
     float tb = clamp(sb * bb - dd, 0., tEnd);
     float dist = length(ro + rd * tb - b.xyz - v * sb), wid = .3 + tb * .0035;
     float g = 1. / (1. + dist * dist / (wid * wid));
     float pulse = .75 + .25 * sin(uTime * 3. - sb * .08 + float(i));
-    col += mix(vec3(.6), uBeaconCol, step(.5, b.w)) * b.w * g * pulse * 2.6 * smoothstep(170., 60., sb);
+    col += mix(vec3(.6), uBeaconCol, step(.5, b.w)) * b.w * g * pulse * 2.6 * (1. - smoothstep(reach * .35, reach, sb));
     glow = max(glow, g * b.w);
     if (g * b.w > .45) mat = ${SPIRE}.;
   }
 
   col = 1. - exp(-col * 1.3);
   o = vec4(pow(col, vec3(.4545)), 1.);
-  info = vec4(mat / 255., clamp(glow, 0., 1.), 0., 1.);
+  info = vec4(mat / 255., clamp(glow, 0., 1.), 1. - exp(-tEnd / 120.), 1.);
 }`;
 
 // pass 2: one pixel per character cell. picks the character and its two colours
 const CELLS = `#version 300 es
 precision highp float;
 precision highp int;
-uniform sampler2D uScene, uInfo, uShapes, uRamps, uAllow;
+uniform sampler2D uScene, uInfo, uTables;   // uTables: rows 0-1 glyph shapes; row 2 + m, material m's characters
 uniform vec2 uGrid;
 uniform int uCount;
 uniform float uInk;
 uniform float uBack[${RAMPS.length}], uGain[${RAMPS.length}];
+const float DITHER = .06, FAR_TONE = .6, EDGE_FAR = .75;
 layout(location = 0) out vec4 o0;
 layout(location = 1) out vec4 o1;
 layout(location = 2) out vec4 o2;
@@ -977,7 +1154,7 @@ layout(location = 2) out vec4 o2;
 void main() {
   vec2 cell = floor(gl_FragCoord.xy);
   vec3 c[6], avg = vec3(0.), dark;
-  float d[6], top = 0., lo = 9., low = 9., em = 0., first = 0.;
+  float d[6], top = 0., lo = 9., low = 9., em = 0., first = 0., nearest = 1.;
   bool mixed = false;   // do the six samples see more than one material
   // the info buffer holds ids, so read whole texels rather than sampling on the corners they share
   ivec2 per = textureSize(uInfo, 0) / ivec2(uGrid), part = per / ivec2(2, 3);
@@ -987,6 +1164,7 @@ void main() {
     avg += c[k] / 6.;
     vec4 info = texelFetch(uInfo, ivec2(cell) * per + ivec2(k & 1, 2 - (k >> 1)) * part + part / 2, 0);
     em += info.g / 6.;
+    nearest = min(nearest, info.b);
     if (k == 0) first = info.r; else mixed = mixed || abs(info.r - first) > .002;
     float l = dot(c[k], vec3(.299, .587, .114));
     if (l < low) { low = l; dark = c[k]; }
@@ -1006,17 +1184,24 @@ void main() {
 
   // a flat cell takes the character its material uses at this brightness;
   // a cell with an edge in it takes whichever character has the closest shape
-  int m = int(texelFetch(uInfo, ivec2(cell) * per + per / 2, 0).r * 255. + .5);
+  vec4 centre = texelFetch(uInfo, ivec2(cell) * per + per / 2, 0);
+  int m = int(centre.r * 255. + .5);
   // inside open sky, cloud or space a change in brightness is a glow, never an edge: treating the
   // halo round the sun as one blanked a ring of cells there
-  bool air = m == ${SKY} || m == ${CLOUD} || m == ${VOID};
+  bool air = m == ${SKY} || m == ${CLOUD} || m == ${VOID} || m == ${RING};
   if (air && !mixed) edge = 0.;
-  int level = int(clamp(mean / uInk + dither * (air ? .08 : .025), 0., 1.) * 15. + .5);
-  int tone = int(texelFetch(uRamps, ivec2(level, m), 0).r * 255. + .5), glyph = tone;
+  // Distance thins the picture out: far ground is drawn with lighter characters and far outlines are
+  // left to the colour behind them, so what is near you is what has texture and hard edges.
+  edge *= 1. - EDGE_FAR * nearest;
+  float tone01 = mean / uInk * (air ? 1. : mix(1., FAR_TONE, centre.b));
+  // the noise spans a whole step between characters, so one character gives way to the next through a
+  // stipple of the two, not along a line
+  int level = int(clamp(tone01 + dither * (air ? .08 : DITHER), 0., 1.) * 15. + .5);
+  int tone = int(texelFetch(uTables, ivec2(level, 2 + m), 0).r * 255. + .5), glyph = tone;
   float best = 1e9;
   for (int i = 0; i < uCount; i++) {
-    if (i != tone && texelFetch(uAllow, ivec2(i, m), 0).r < .5) continue;
-    vec3 ga = texelFetch(uShapes, ivec2(i, 0), 0).rgb, gb = texelFetch(uShapes, ivec2(i, 1), 0).rgb;
+    if (i != tone && texelFetch(uTables, ivec2(i, 2 + m), 0).g < .5) continue;
+    vec3 ga = texelFetch(uTables, ivec2(i, 0), 0).rgb, gb = texelFetch(uTables, ivec2(i, 1), 0).rgb;
     float gm = (ga.x + ga.y + ga.z + gb.x + gb.y + gb.z) / 6.;
     vec3 sa = ga - gm - ca, sb = gb - gm - cb;
     // another character only replaces the tone when it really has the shape of this edge
@@ -1037,7 +1222,8 @@ void main() {
   fg /= max(1., max(fg.r, max(fg.g, fg.b)));
 
   o0 = vec4(fg, float(glyph) / 255.);
-  o1 = vec4((m == ${VOID} ? dark : avg) * uBack[m], 1.);
+  // lighter characters carry less of the brightness, so far off the colour behind them carries more
+  o1 = vec4((m == ${VOID} ? dark : avg) * (air ? uBack[m] : mix(uBack[m], max(uBack[m], .9), centre.b)), 1.);
   o2 = vec4(avg * em, 1.);
 }`;
 
@@ -1086,13 +1272,12 @@ texture(1, gl.TEXTURE_CUBE_MAP, gl.LINEAR_MIPMAP_LINEAR);    // normal
 texture(2, gl.TEXTURE_CUBE_MAP, gl.LINEAR_MIPMAP_LINEAR);    // albedo
 texture(3, gl.TEXTURE_3D, gl.LINEAR, gl.REPEAT);             // noise
 const sceneTex = [texture(4, gl.TEXTURE_2D, gl.LINEAR), texture(10, gl.TEXTURE_2D, gl.NEAREST)];
-texture(5, gl.TEXTURE_2D, gl.NEAREST);                       // glyph shapes
+texture(5, gl.TEXTURE_2D, gl.NEAREST);                       // glyph shapes, and each material's characters
 const cellTex = [texture(6, gl.TEXTURE_2D, gl.NEAREST), texture(7, gl.TEXTURE_2D, gl.LINEAR), texture(8, gl.TEXTURE_2D, gl.LINEAR_MIPMAP_LINEAR)];
 texture(9, gl.TEXTURE_2D, gl.NEAREST);                       // glyph atlas
 texture(11, gl.TEXTURE_CUBE_MAP, gl.NEAREST);                // material
-texture(12, gl.TEXTURE_2D, gl.NEAREST);                      // character per material and brightness
+texture(12, gl.TEXTURE_CUBE_MAP, gl.NEAREST);                // highest ground in each block of the height map
 texture(13, gl.TEXTURE_2D, gl.NEAREST);                      // interface text
-texture(14, gl.TEXTURE_2D, gl.NEAREST);                      // characters each material may use
 texture(15, gl.TEXTURE_2D, gl.NEAREST);                      // interface font
 gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
 {
@@ -1113,15 +1298,16 @@ gl.bindVertexArray(gl.createVertexArray());
 initGL();
 
 function uploadPlanet() {
-  const cube = (unit, faces, internal, format, type, mips) => {
+  const cube = (unit, faces, internal, format, type, mips, size = S) => {
     gl.activeTexture(gl.TEXTURE0 + unit);
-    for (let f = 0; f < 6; f++) gl.texImage2D(gl.TEXTURE_CUBE_MAP_POSITIVE_X + f, 0, internal, S, S, 0, format, type, faces[f]);
+    for (let f = 0; f < 6; f++) gl.texImage2D(gl.TEXTURE_CUBE_MAP_POSITIVE_X + f, 0, internal, size, size, 0, format, type, faces[f]);
     if (mips) gl.generateMipmap(gl.TEXTURE_CUBE_MAP);
   };
   cube(0, planet.height, gl.R16F, gl.RED, gl.FLOAT, false);
   cube(1, planet.normal, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, true);
   cube(2, planet.albedo, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, true);
   cube(11, planet.mat, gl.R8, gl.RED, gl.UNSIGNED_BYTE, false);
+  cube(12, planet.tops, gl.RG16F, gl.RG, gl.FLOAT, false, SB);
 }
 
 // ---- characters
@@ -1179,17 +1365,18 @@ function buildAtlas() {
     shapes[i * 6 + k] = s /= 255 * (x1 - x0) * (y1 - y0);
     if (s > max) max = s;
   }
-  const data = new Uint8Array(n * 2 * 4);
+  // One small table for the cell pass. Rows 0 and 1: each glyph's ink in the top and bottom three regions.
+  // Row 2 + m, for material m: in red, the character to use at each of 16 brightness levels; in green,
+  // whether the material may use glyph x at all (its own set, plus the line shapes for edges).
+  const tw = Math.max(n, 16), data = new Uint8Array(tw * (2 + RAMPS.length) * 4);
   for (let i = 0; i < n; i++) for (let k = 0; k < 6; k++) {
     const v = shapes[i * 6 + k] / max;
-    data[((k < 3 ? 0 : n) + i) * 4 + k % 3] = v * 255;
+    data[((k < 3 ? 0 : tw) + i) * 4 + k % 3] = v * 255;
     mean[i] += v / 6;
   }
   view.ink = Math.max(...mean);   // the densest glyph is the top of the brightness scale
-
-  // for each material, the character to use at each of 16 brightness levels
-  const ramps = new Uint8Array(16 * RAMPS.length);
   RAMPS.forEach((chars, m) => {
+    const row = (2 + m) * tw * 4;
     for (let level = 0; level < 16; level++) {
       const want = level / 15 * view.ink;
       let best = 0;
@@ -1197,21 +1384,12 @@ function buildAtlas() {
         const i = GLYPHS.indexOf(ch);
         if (Math.abs(mean[i] - want) < Math.abs(mean[best] - want)) best = i;
       }
-      ramps[m * 16 + level] = best;
+      data[row + level * 4] = best;
     }
+    for (let i = 0; i < n; i++) data[row + i * 4 + 1] = chars.includes(GLYPHS[i]) || EDGES.includes(GLYPHS[i]) ? 255 : 0;
   });
-  const upload = (unit, format, w, h, pixels) => {
-    gl.activeTexture(gl.TEXTURE0 + unit);
-    gl.texImage2D(gl.TEXTURE_2D, 0, format === gl.RED ? gl.R8 : gl.RGBA8, w, h, 0, format, gl.UNSIGNED_BYTE, pixels);
-  };
-  // which characters each material may use: its own set, plus the line shapes for edges
-  const allow = new Uint8Array(n * RAMPS.length);
-  RAMPS.forEach((chars, m) => {
-    for (let i = 0; i < n; i++) allow[m * n + i] = chars.includes(GLYPHS[i]) || EDGES.includes(GLYPHS[i]) ? 255 : 0;
-  });
-  upload(5, gl.RGBA, n, 2, data);
-  upload(12, gl.RED, 16, RAMPS.length, ramps);
-  upload(14, gl.RED, n, RAMPS.length, allow);
+  gl.activeTexture(gl.TEXTURE5);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, tw, 2 + RAMPS.length, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
   gl.activeTexture(gl.TEXTURE9);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, c);
   gl.activeTexture(gl.TEXTURE15);
@@ -1298,7 +1476,7 @@ function fly(dt) {
   s.up = norm(sub(up, mul(s.fwd, dot(up, s.fwd))));
   right = cross(s.fwd, s.up);
 
-  const top = lerp(24, 190, smooth(6, planet.R * 1.4, alt)) * (held('shift') ? 2.2 : 1);
+  const top = lerp(24, planet.R * .7, smooth(6, planet.R * 1.4, alt)) * (held('shift') ? 2.2 : 1);
   const push = add(add(mul(s.fwd, held('w') - held('s') - stick.y), mul(right, held('d') - held('a') + stick.x)), mul(s.up, held(' ') - held('c')));
   s.vel = add(mul(s.vel, Math.exp(-dt * 1.3)), mul(push, top * 1.3 * dt));
   s.pos = add(s.pos, mul(s.vel, dt));
@@ -1644,7 +1822,7 @@ function drawScene() {
   gl.viewport(0, 0, cols * 2 * ss, rows * 3 * ss);
   gl.useProgram(scene.p);
   let u = scene.u;
-  gl.uniform1i(u.uHeight, 0); gl.uniform1i(u.uNormal, 1); gl.uniform1i(u.uAlbedo, 2); gl.uniform1i(u.uNoise, 3); gl.uniform1i(u.uMat, 11);
+  gl.uniform1i(u.uHeight, 0); gl.uniform1i(u.uNormal, 1); gl.uniform1i(u.uAlbedo, 2); gl.uniform1i(u.uNoise, 3); gl.uniform1i(u.uMat, 11); gl.uniform1i(u.uTops, 12);
   gl.uniform3fv(u.uPos, cam.pos); gl.uniform3fv(u.uFwd, cam.fwd); gl.uniform3fv(u.uRight, cam.right); gl.uniform3fv(u.uUp, up);
   gl.uniform2f(u.uFov, cam.fx, cam.fy);
   gl.uniform3fv(u.uSun, sunDir());
@@ -1654,6 +1832,8 @@ function drawScene() {
   gl.uniform1f(u.uTop, p.top);
   gl.uniform1f(u.uPix, 2 * cam.fy / (rows * 3));
   gl.uniform1f(u.uTexel, Math.PI / 2 * p.R / S);
+  // the narrowest a block of the high-ground map gets, at the corners of the cube: sqrt(2)/3 of its width at a face centre
+  gl.uniform1f(u.uBlock, TB * 2 * p.R / S * .47);
   gl.uniform1f(u.uAtmo, p.atmo);
   gl.uniform3fv(u.uBeta, p.K.tau.map(t => t / hs));
   // the sky is brighter to an eye standing in it than it is from orbit
@@ -1669,7 +1849,9 @@ function drawScene() {
   gl.uniform4f(u.uMoon, ...(p.moon ? moonPos() : [0, 0, 0]), p.moon ? p.moon.r : 0);
   gl.uniform4f(u.uShip, ...ship.pos, ship.parked ? 1 : 0);
   gl.uniform3fv(u.uShipFwd, ship.face || [0, 0, 1]);
-  // the twelve nearest trees within 40 m are drawn as real shapes
+  // The twelve nearest trees within 40 m are drawn as real shapes. Their detail has faded out by 38 m,
+  // or by the distance of the thirteenth tree where the forest is thick, so dropping out of the twelve
+  // changes nothing you can see.
   const close = [];
   for (const t of p.trees) {
     const dx = t.pos[0] - cam.pos[0], dy = t.pos[1] - cam.pos[1], dz = t.pos[2] - cam.pos[2], d2 = dx * dx + dy * dy + dz * dz;
@@ -1684,6 +1866,8 @@ function drawScene() {
   }
   gl.uniform4fv(u.uTree, trees);
   gl.uniform4fv(u.uTreeB, treeB);
+  const reach = Math.min(38, close.length > 12 ? Math.sqrt(close[12][0]) - .5 : 38);
+  gl.uniform2f(u.uTreeFade, reach * .66, reach);
   gl.uniform1i(u.uTreeN, nt);
   gl.uniform3fv(u.uTreeCol, p.treeCol);
   gl.uniform1f(u.uTreeGlow, p.treeGlow);
@@ -1697,7 +1881,7 @@ function drawScene() {
   gl.viewport(0, 0, cols, rows);
   gl.useProgram(cells.p);
   u = cells.u;
-  gl.uniform1i(u.uScene, 4); gl.uniform1i(u.uInfo, 10); gl.uniform1i(u.uShapes, 5); gl.uniform1i(u.uRamps, 12); gl.uniform1i(u.uAllow, 14);
+  gl.uniform1i(u.uScene, 4); gl.uniform1i(u.uInfo, 10); gl.uniform1i(u.uTables, 5);
   gl.uniform2f(u.uGrid, cols, rows);
   gl.uniform1i(u.uCount, GLYPHS.length);
   gl.uniform1f(u.uInk, view.ink);
@@ -1849,15 +2033,17 @@ async function newPlanet(seed) {
   ui.leave = -1;
   if (document.pointerLockElement) document.exitPointerLock();
   design(seed);
-  for (let f = 0; f < 6; f++) {
-    ui.note = `charting ${planet.name}  ${f + 1}/6`;
-    await nextFrame();
-    planet.mat[f].fill(0);
-    buildFace(f);
-  }
-  scatter();
+  ui.note = `charting ${planet.name}`;
   await nextFrame();
-  for (let f = 0; f < 6; f++) paintFace(f);
+  await buildFaces(n => { ui.note = `charting ${planet.name}  ${n}/6`; });
+  for (let f = 0; f < 6; f++) { planet.mat[f].fill(0); planet.albedo[f].fill(0); }
+  scatter();
+  for (let f = 0; f < 6; f++) {
+    ui.note = `colouring ${planet.name}  ${f + 1}/6`;
+    await nextFrame();
+    paintFace(f);
+  }
+  highGround();
   placeBeacons();
   uploadPlanet();
   signals = 0;
