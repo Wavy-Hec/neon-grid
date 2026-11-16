@@ -118,7 +118,7 @@ Three things keep the picture steady.
 - A tree or a rock spire is a near-vertical wall, so the height of a ray above the ground says
   little about how far it can safely go. The march reads a small pyramid of maps of the highest
   and steepest ground in each block: long steps where the way is clear, short ones among steep
-  things, so nothing thin is stepped over.
+  things, so a spire or a tree is never stepped over whole.
 - Surface detail (the mottling of the ground, the tiers of a fir, the strata of a rock) is drawn
   only where the picture can resolve it. Anything finer than about four characters fades out,
   because detail finer than the picture does not look like detail, it looks like static.

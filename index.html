@@ -742,8 +742,9 @@ float above(vec3 p) { return length(p) - uR - ground(p); }
 // - above everything in a block and the blocks round it, the ray is clear until it has come down to that
 //   height or gone a block sideways, and the ground itself need not be looked at;
 // - where nothing nearby is steeper than 60 degrees, half the height is always clear;
-// - among steep things, below their tops, the step stays shorter than the narrowest of them, so none is
-//   stepped over whole.
+// - among steep things, below their tops, the step stays under a metre, so none is stepped over whole.
+//   The last metre of a tree's tip is narrower than that and can still be missed; shorter steps there
+//   were tried and cost more than they gained.
 // A short step needs no map at all, and what a map said holds for a block's width, so most steps cost one
 // look at the ground as they always did.
 float march(vec3 ro, vec3 rd) {
@@ -2278,30 +2279,37 @@ function saveText() {
 const randomSeed = () => (NAME_A[Math.floor(Math.random() * 16)] + NAME_B[Math.floor(Math.random() * 16)]).toLowerCase() + '-' + Math.floor(Math.random() * 900 + 100);
 const nextFrame = () => new Promise(r => requestAnimationFrame(() => setTimeout(r)));
 
+// One planet is built at a time: the generator works on the one planet object, in steps spread over
+// several frames, so a second call while the first is under way is refused.
+let charting = false;
 async function newPlanet(seed) {
-  mode = 'loading';
-  ui.until = 0;
-  ui.leave = -1;
-  if (document.pointerLockElement) document.exitPointerLock();
-  design(seed);
-  ui.note = `charting ${planet.name}`;
-  await nextFrame();
-  await buildFaces(n => { ui.note = `charting ${planet.name}  ${n}/6`; });
-  for (let f = 0; f < 6; f++) { planet.mat[f].fill(0); planet.albedo[f].fill(0); }
-  scatter();
-  for (let f = 0; f < 6; f++) {
-    ui.note = `colouring ${planet.name}  ${f + 1}/6`;
+  if (charting) return;
+  charting = true;
+  try {
+    mode = 'loading';
+    ui.until = 0;
+    ui.leave = -1;
+    if (document.pointerLockElement) document.exitPointerLock();
+    design(seed);
+    ui.note = `charting ${planet.name}`;
     await nextFrame();
-    paintFace(f);
-  }
-  highGround();
-  placeBeacons();
-  uploadPlanet();
-  signals = 0;
-  ship.parked = false;
-  ui.until = 0;
-  try { history.replaceState(null, '', '?seed=' + encodeURIComponent(seed)); } catch (e) { /* some browsers refuse on file:// */ }
-  mode = 'title';
+    await buildFaces(n => { ui.note = `charting ${planet.name}  ${n}/6`; });
+    for (let f = 0; f < 6; f++) { planet.mat[f].fill(0); planet.albedo[f].fill(0); }
+    scatter();
+    for (let f = 0; f < 6; f++) {
+      ui.note = `colouring ${planet.name}  ${f + 1}/6`;
+      await nextFrame();
+      paintFace(f);
+    }
+    highGround();
+    placeBeacons();
+    uploadPlanet();
+    signals = 0;
+    ship.parked = false;
+    ui.until = 0;
+    try { history.replaceState(null, '', '?seed=' + encodeURIComponent(seed)); } catch (e) { /* some browsers refuse on file:// */ }
+    mode = 'title';
+  } finally { charting = false; }
 }
 
 function start() {
