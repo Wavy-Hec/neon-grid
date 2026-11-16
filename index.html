@@ -659,7 +659,8 @@ function texture(unit, target, min, wrap = gl.CLAMP_TO_EDGE) {
   gl.activeTexture(gl.TEXTURE0 + unit);
   gl.bindTexture(target, t);
   gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, min);
-  gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, min === gl.NEAREST ? gl.NEAREST : gl.LINEAR);
+  // a nearest min filter gets a nearest mag filter too: the maps of high ground must be read a block at a time
+  gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, min === gl.NEAREST || min === gl.NEAREST_MIPMAP_NEAREST ? gl.NEAREST : gl.LINEAR);
   gl.texParameteri(target, gl.TEXTURE_WRAP_S, wrap);
   gl.texParameteri(target, gl.TEXTURE_WRAP_T, wrap);
   if (target === gl.TEXTURE_3D) gl.texParameteri(target, gl.TEXTURE_WRAP_R, wrap);
@@ -851,11 +852,14 @@ float fir(vec3 q, float r, float h, float fade, float seed) {
   return mix(sdCappedCone(q - vec3(0., h * .3, 0.), h * .3, r * .7, 0.), d, fade);
 }
 
-// how much of the sun reaches p: the same rules as the march, along the ray to the sun
+// How much of the sun reaches p: the same rules as the march, along the ray to the sun. The soft edge of
+// a shadow comes from how close the ray passes over the ground: 9 times that height over the distance
+// gone, and past 15 m over 15 m, so a far shadow's edge is 1.7 m wide. With the width fixed, the ray
+// may skip the ground wherever the maps put it more than that width above everything, and miss nothing.
 float shadow(vec3 p) {
   float res = 1., t = .6, a = -1e9, room = 0., lv = 0., roof = 6.;
   bool air = false;
-  for (int i = 0; i < 36; i++) {
+  for (int i = 0; i < 64; i++) {
     vec3 q = p + uSun * t;
     float r = length(q), alt = r - uR;
     if (r > uR + uTop) break;
@@ -863,7 +867,7 @@ float shadow(vec3 p) {
     if (!air) {
       if (a < -1e8) {
         a = alt - ground(q);
-        res = min(res, 9. * a / t);
+        res = min(res, 9. * a / min(t, 15.));
         if (res < .02) break;
       }
       if (a <= 1.2 || room != 0.) {
@@ -877,10 +881,11 @@ float shadow(vec3 p) {
     }
     vec2 hi = textureLod(uTops, q, lv).rg;
     float c = alt - hi.x, block = uBlock * exp2(lv);
-    if (c > 0. && (9. * c >= res * t || t > 15.)) {
-      // above everything near, and too far above it (or too far from p) for the shadow's soft edge to matter
+    if (9. * c >= res * 15.) {
+      // above everything near by more than the soft edge: nothing on the way can deepen the shadow until
+      // the ray has come down to within that edge of it, or gone a block sideways
       air = true; room = 0.;
-      float side = block / across, drop = c / max(-rise, 1e-3);
+      float side = block / across, drop = (c - res * 15. / 9.) / max(-rise, 1e-3);
       t += max(min(side, drop), .6); a = -1e9;
       if (side < drop) lv = min(lv + 1., floor(roof));
       roof = min(roof + .25, 6.);
