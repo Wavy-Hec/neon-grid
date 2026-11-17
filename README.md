@@ -28,6 +28,7 @@ the whole game; the rest is looking around.
 | `Q` `E` | roll |
 | `shift` | boost, run |
 | `F` | land and step out; on foot, board the ship or call it to you |
+| `tab` | chart of the planet: you in the middle, the way you face at the top |
 | `N` | next planet (press twice if you are partway through a survey) |
 | `P` | save the view as a text file |
 | `V` | show the render under the text |
@@ -37,7 +38,7 @@ the whole game; the rest is looking around.
 
 `W` `A` `S` `D` and the other movement keys go by position, so they work on any keyboard layout.
 On a phone, the left half of the screen moves and the right half looks; there are buttons for up,
-down, `F`, sound and a new planet.
+down, `F`, the chart, sound and a new planet.
 
 The planet comes from the seed in the address bar, so `?seed=dust` is the same place for everyone.
 

@@ -21,7 +21,7 @@
 <body>
 <canvas id="view"></canvas>
 <div id="pad"><button data-k="c">down</button><button data-k=" ">up</button><button data-k="f">f</button></div>
-<div id="pad2"><button data-k="m">sound</button><button data-k="n">new</button></div>
+<div id="pad2"><button data-k="tab">map</button><button data-k="m">sound</button><button data-k="n">new</button></div>
 <div id="notice" hidden>graphics reset, restoring</div>
 
 <script>
@@ -442,12 +442,17 @@ async function buildFaces(tick) {
 // trees, spires and crystals are bumps stamped into the height map
 function scatter() {
   let top = 0, low = 0;
+  const land = [];
   for (const H of planet.height) for (let i = 0; i < H.length; i++) {
     if (H[i] > top) top = H[i];
     if (H[i] <= 0) low++;
+    else if (i % 61 === 0) land.push(H[i]);
   }
   planet.peak = top;
   planet.flat = low / (6 * S * S);
+  // the heights that half and nine tenths of the land lie below: lowland, hills and mountains on the chart
+  land.sort((a, b) => a - b);
+  planet.shelf = [land[land.length >> 1] || 0, land[Math.floor(land.length * .9)] || 0];
   planet.trees = [];   // the nearest of these are drawn as real shapes
   planet.treeCol = [0, 0, 0]; planet.treeGlow = 0;
   const dq = [0, 0, 0];
@@ -1433,12 +1438,12 @@ void main() {
   ivec2 ci = ivec2(cf.x, uGrid.y - 1. - floor(cf.y));
   vec2 uv = vec2(cf.x, uGrid.y - cf.y) / uGrid;
 
-  // interface text, on its own grid. styles: 1 plain, 2 dim, 3 status bar, 4 highlighted block, 5 accent, 6 dim on the bar, 7 accent on the bar
+  // interface text, on its own grid. styles: 1 plain, 2 dim, 3 status bar, 4 highlighted block, 5 accent, 6 dim on the bar, 7 accent on the bar, 8 faint
   vec2 tf = px / uTextCell;
   ivec2 tx = ivec2(texelFetch(uText, ivec2(tf), 0).rg * 255. + .5);
   if (tx.y > 0) {
     const vec3 accent = vec3(.36, 1., .84);
-    vec3 fg = tx.y == 2 || tx.y == 6 ? vec3(.46) : tx.y == 4 ? vec3(0.) : tx.y == 5 || tx.y == 7 ? accent : vec3(.9);
+    vec3 fg = tx.y == 8 ? vec3(.2) : tx.y == 2 || tx.y == 6 ? vec3(.46) : tx.y == 4 ? vec3(0.) : tx.y == 5 || tx.y == 7 ? accent : vec3(.9);
     vec3 bg = tx.y == 4 ? accent : tx.y == 3 || tx.y >= 6 ? vec3(.085) : vec3(0.);
     o = vec4(mix(bg, fg, ink(uFont, tx.x, fract(tf))), 1.);
     return;
@@ -1634,7 +1639,7 @@ const me = { dir: [0, 1, 0], h: 0, fwd: [1, 0, 0], pitch: 0, vr: 0, lean: [0, 0,
 const look = { x: 0, y: 0 }, stick = { x: 0, y: 0 };
 const keys = new Set();
 const held = k => (keys.has(k) ? 1 : 0);
-const ui = { note: '', msg: '', until: 0, minor: false, help: false, helped: false, told: false, stats: false, leave: -1, padRow: 1e9 };
+const ui = { note: '', msg: '', until: 0, minor: false, help: false, helped: false, chart: false, told: false, stats: false, leave: -1, padRow: 1e9 };
 
 // minor notes (ship recalled, sound on, sizes) never replace a message that is still up,
 // though they do replace each other
@@ -1881,8 +1886,9 @@ function board() {
 // ---- input
 
 function press(k) {
-  if (k === '?' || k === '/') { ui.help = !ui.help; ui.helped = true; }
-  if (k === 'escape') ui.help = false;
+  if (k === '?' || k === '/') { ui.help = !ui.help; ui.helped = true; ui.chart = false; }
+  if (k === 'tab' && (mode === 'fly' || mode === 'walk')) { ui.chart = !ui.chart; ui.help = false; }
+  if (k === 'escape') ui.help = ui.chart = false;
   if (mode === 'title' && (k === 'enter' || k === ' ')) return start();
   if (k === 'n' && mode !== 'loading') {
     // in the middle of a survey, n asks first
@@ -1917,7 +1923,7 @@ addEventListener('keydown', e => {
   if (!e.repeat) press(typedOf(e));
   const k = keyOf(e);
   keys.add(k);
-  if (k === ' ' || k.startsWith('arrow')) e.preventDefault();
+  if (k === ' ' || k === 'tab' || k.startsWith('arrow')) e.preventDefault();
 });
 addEventListener('keyup', e => keys.delete(keyOf(e)));
 addEventListener('blur', () => {
@@ -2215,6 +2221,7 @@ const HELP = [
   ['q e', 'roll'],
   ['shift', 'boost, run'],
   ['f', 'land, or board the ship'],
+  ['tab', 'chart of the planet'],
   ['n', 'next planet'],
   ['p', 'save the view as a text file'],
   ['v', 'show the render under the text'],
@@ -2301,6 +2308,57 @@ function drawText() {
     put(2, 2 + i, ` ${k.padEnd(9)}`, 1);
     put(12, 2 + i, ` ${what.padEnd(wide)}`, 2);
   });
+  if (ui.chart && playing) drawChart(cols, bar);
+}
+
+// The chart: the whole planet on one disk, laid out round where you are. You are the middle, the way you
+// face is up, and the rim is the one point on the far side. Directions from you are true. Distance out
+// from the middle grows with distance over the ground, faster close to you than far off (as its power
+// NEAR), so the ground you can walk to takes up a fair part of the disk and the far side is not stretched
+// over most of it.
+const NEAR = .6;
+let chartPlan = null;   // for each character of the disk, where on the planet its four soundings fall
+function drawChart(cols, bar) {
+  const p = planet, ry = Math.min(13, Math.floor((bar - 5) / 2), Math.floor((cols - 2) / 2 * tgrid.cw / tgrid.ch) - 1), rx = ry * tgrid.ch / tgrid.cw;
+  if (ry < 4) return;
+  if (!chartPlan || chartPlan.ry !== ry) {
+    chartPlan = { ry, cells: [] };
+    for (let y = -ry; y <= ry; y++) for (let x = -Math.ceil(rx); x <= Math.ceil(rx); x++) {
+      if (Math.hypot(x / (rx + .5), y / (ry + .5)) > 1) continue;
+      // a sounding is a mix of three directions: straight down from you, to your right, and ahead
+      const k = [];
+      for (const [i, j] of [[-.25, -.25], [.25, -.25], [-.25, .25], [.25, .25]]) {
+        const u = (x + i) / (rx + .5), v = (y + j) / (ry + .5), rho = Math.min(Math.hypot(u, v), 1), th = Math.PI * rho ** (1 / NEAR), s = rho ? Math.sin(th) / rho : 0;
+        k.push(Math.cos(th), u * s, -v * s);
+      }
+      chartPlan.cells.push([x, y, k]);
+    }
+  }
+  const c0 = Math.floor(cols / 2), r0 = Math.floor((bar - 2) / 2), d = norm(cam.pos), f = mode === 'walk' ? me.fwd : ship.fwd;
+  // straight up or down has no heading: the top of the view is ahead then
+  let ahead = sub(f, mul(d, dot(f, d)));
+  if (len(ahead) < .05) ahead = sub(cam.up, mul(d, dot(cam.up, d)));
+  ahead = norm(ahead);
+  const right = cross(ahead, d), q = [0, 0, 0];
+  for (const [x, y, k] of chartPlan.cells) {
+    // four soundings to a character, so the land does not flicker as you turn
+    let h = 0;
+    for (let i = 0; i < 12; i += 3) {
+      for (let a = 0; a < 3; a++) q[a] = d[a] * k[i] + right[a] * k[i + 1] + ahead[a] * k[i + 2];
+      h += heightAt(q) / 4;
+    }
+    // sea is left empty; land is lowland, hills or mountains, by how much of this planet's land lies below it
+    put(c0 + x, r0 + y, p.sea && h < 0 ? ' ' : h < p.shelf[0] ? '.' : h < p.shelf[1] ? ':' : '^', 2);
+  }
+  const mark = (to, ch, style) => {
+    const c = clamp(dot(d, to), -1, 1), t = sub(to, mul(d, c)), far = (Math.acos(c) / Math.PI) ** NEAR / (len(t) || 1);
+    put(c0 + Math.round(dot(t, right) * far * (rx + .5)), r0 - Math.round(dot(t, ahead) * far * (ry + .5)), ch, style);
+  };
+  for (const b of p.beacons) mark(b.dir, b.got ? 'x' : '!', b.got ? 2 : 5);
+  if (ship.parked) mark(norm(ship.pos), '&', 1);
+  put(c0, r0, '@', 1);
+  const key = `@ you${ship.parked ? '   & ship' : ''}   ! signal${signals ? '   x found' : ''}`;
+  put(c0 - key.length / 2 - 1, r0 + ry + 2, ` ${key} `, 2);
 }
 
 function saveText() {
@@ -2337,6 +2395,7 @@ async function newPlanet(seed) {
     mode = 'loading';
     ui.until = 0;
     ui.leave = -1;
+    ui.chart = false;
     if (document.pointerLockElement) document.exitPointerLock();
     design(seed);
     ui.note = `charting ${planet.name}`;
