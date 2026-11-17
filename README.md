@@ -41,6 +41,7 @@ On a phone, the left half of the screen moves and the right half looks; there ar
 down, `F`, the chart, sound and a new planet.
 
 The planet comes from the seed in the address bar, so `?seed=dust` is the same place for everyone.
+The signals you have found are kept in your browser, so a planet you come back to is as you left it.
 
 ## Examples
 

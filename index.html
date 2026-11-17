@@ -1641,6 +1641,16 @@ const keys = new Set();
 const held = k => (keys.has(k) ? 1 : 0);
 const ui = { note: '', msg: '', until: 0, minor: false, help: false, helped: false, chart: false, told: false, stats: false, leave: -1, padRow: 1e9 };
 
+// What has been found is kept in the browser, by seed, so a planet you come back to is as you left it:
+// one character for each signal. Where the browser gives no storage (a private window) nothing is kept.
+const kept = Object.create(null);
+try { Object.assign(kept, JSON.parse(localStorage.getItem('planet.txt') || '{}')); } catch (e) { /* no storage, or not ours */ }
+function keep() {
+  kept[planet.seed] = planet.beacons.map(b => (b.got ? 1 : 0)).join('');
+  try { localStorage.setItem('planet.txt', JSON.stringify(kept)); } catch (e) { /* no storage */ }
+}
+const count = (n, what) => `${n} ${what}${n === 1 ? '' : 's'}`;
+
 // minor notes (ship recalled, sound on, sizes) never replace a message that is still up,
 // though they do replace each other
 function say(msg, secs = 5, minor = false) {
@@ -1811,6 +1821,7 @@ function walk(dt) {
     if (b.got || len(sub(cam.pos, b.base)) > 5) continue;
     b.got = true;
     signals++;
+    keep();
     chime();
     say(signals < planet.beacons.length ? `signal ${signals} of ${planet.beacons.length}: ${facts()[signals - 1]}`
                                         : `survey of ${planet.name} complete. ${touched ? 'tap new' : 'n'} for another world`, 9);
@@ -2280,7 +2291,10 @@ function drawText() {
   if (mode !== 'loading') {
     const alt = len(cam.pos) - p.R - groundAt(norm(cam.pos)), speed = mode === 'fly' ? len(ship.vel) : 0;
     parts = [[p.name, 0, 5], [p.K.label, 0, 1]];
-    if (!playing) parts.push(...(touched ? [['tap to descend', 1, 9]] : [['click to descend', 1, 9], ['n next planet', 1, 3], ['? keys', 1, 2]]));
+    if (!playing) {
+      if (signals) parts.push([signals < p.beacons.length ? `${signals} of ${p.beacons.length} found` : 'surveyed', 0, 4]);
+      parts.push(...(touched ? [['tap to descend', 1, 9]] : [['click to descend', 1, 9], ['n next planet', 1, 3], ['? keys', 1, 2]]));
+    }
     else {
       if (mode === 'fly') parts.push([`alt ${Math.round(alt)}m`, 1, 4], [`${Math.round(speed)}m/s`, 1, 3]);
       const next = nextSignal();
@@ -2411,7 +2425,10 @@ async function newPlanet(seed) {
     highGround();
     placeBeacons();
     uploadPlanet();
-    signals = 0;
+    // signals found here on an earlier visit stay found
+    const was = kept[seed];
+    if (typeof was === 'string') planet.beacons.forEach((b, i) => { b.got = was[i] === '1'; });
+    signals = planet.beacons.filter(b => b.got).length;
     ship.parked = false;
     ui.until = 0;
     try { history.replaceState(null, '', '?seed=' + encodeURIComponent(seed)); } catch (e) { /* some browsers refuse on file:// */ }
@@ -2425,8 +2442,10 @@ function start() {
   mode = 'fly';
   startAudio();
   if (!fingers.size) grabMouse();
-  say(touched ? `left side moves, right side looks. ${planet.beacons.length} signals on the surface: fly down, f to land, walk to them`
-              : `${planet.beacons.length} signals on the surface. fly down, f to land, walk to them`, 9);
+  const left = planet.beacons.length - signals;
+  const todo = !left ? `${planet.name} is surveyed. ${touched ? 'tap new' : 'n'} for another world`
+    : `${count(left, 'signal')} ${signals ? 'still to find' : 'on the surface'}${touched ? ':' : '.'} fly down, f to land, walk to ${left === 1 ? 'it' : 'them'}`;
+  say(touched && left ? `left side moves, right side looks. ${todo}` : todo, 9);
 }
 
 let last = 0;
