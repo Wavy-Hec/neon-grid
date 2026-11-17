@@ -21,7 +21,7 @@
 <body>
 <canvas id="view"></canvas>
 <div id="pad"><button data-k="c">down</button><button data-k=" ">up</button><button data-k="f">f</button></div>
-<div id="pad2"><button data-k="tab">map</button><button data-k="m">sound</button><button data-k="n">new</button></div>
+<div id="pad2"><button data-k="tab">map</button><button data-k="j">log</button><button data-k="m">sound</button><button data-k="n">new</button></div>
 <div id="notice" hidden>graphics reset, restoring</div>
 
 <script>
@@ -1639,19 +1639,29 @@ const me = { dir: [0, 1, 0], h: 0, fwd: [1, 0, 0], pitch: 0, vr: 0, lean: [0, 0,
 const look = { x: 0, y: 0 }, stick = { x: 0, y: 0 };
 const keys = new Set();
 const held = k => (keys.has(k) ? 1 : 0);
-const ui = { note: '', msg: '', until: 0, minor: false, help: false, helped: false, chart: false, told: false, stats: false, leave: -1, padRow: 1e9 };
+const ui = { note: '', msg: '', until: 0, minor: false, help: false, helped: false, chart: false, journal: false, told: false, stats: false, leave: -1, padRow: 1e9 };
 
 // What has been found is kept in the browser, by seed, so a planet you come back to is as you left it:
-// one character for each signal. Where the browser gives no storage (a private window) nothing is kept.
+// one character for each signal, then the world's name, its kind and the time of the last find, which is
+// what the journal lists. Where the browser gives no storage (a private window) nothing is kept.
 const kept = Object.create(null);
 const recall = () => { try { Object.assign(kept, JSON.parse(localStorage.getItem('planet.txt') || '{}')); } catch (e) { /* no storage, or not ours */ } };
 recall();
 function keep() {
   recall();   // another tab may have found something on another planet since
-  kept[planet.seed] = planet.beacons.map(b => (b.got ? 1 : 0)).join('');
+  kept[planet.seed] = [planet.beacons.map(b => (b.got ? 1 : 0)).join(''), planet.name, planet.K.label, Math.floor(Date.now() / 1000)].join('|');
   try { localStorage.setItem('planet.txt', JSON.stringify(kept)); } catch (e) { /* no storage */ }
 }
 const count = (n, what) => `${n} ${what}${n === 1 ? '' : 's'}`;
+// the worlds where something has been found, the latest first
+function journal() {
+  return Object.keys(kept).map(seed => {
+    const [flags, name, kind, at] = String(kept[seed]).split('|');
+    return { seed, name, kind, of: flags.length, found: flags.split('1').length - 1, at: +at || 0 };
+  }).filter(w => w.name && w.kind).sort((a, b) => b.at - a.at);
+}
+// one world a day, the same for everyone: its seed is the date
+const today = () => new Date().toISOString().slice(0, 10);
 
 // minor notes (ship recalled, sound on, sizes) never replace a message that is still up,
 // though they do replace each other
@@ -1916,18 +1926,23 @@ function board() {
 // ---- input
 
 function press(k) {
-  if (k === '?' || k === '/') { ui.help = !ui.help; ui.helped = true; ui.chart = false; }
-  if (k === 'tab' && (mode === 'fly' || mode === 'walk')) { ui.chart = !ui.chart; ui.help = false; }
-  if (k === 'escape') ui.help = ui.chart = false;
+  if (k === '?' || k === '/') { ui.help = !ui.help; ui.helped = true; ui.chart = ui.journal = false; }
+  if (k === 'tab' && (mode === 'fly' || mode === 'walk')) { ui.chart = !ui.chart; ui.help = ui.journal = false; }
+  if (k === 'j' && mode !== 'loading') { ui.journal = !ui.journal; ui.help = ui.chart = false; }
+  if (k === 'escape') ui.help = ui.chart = ui.journal = false;
+  // with the journal open, a number goes back to that world
+  const back = ui.journal && mode !== 'loading' && /^[1-9]$/.test(k) && journal()[k - 1];
+  if (back) return newPlanet(back.seed);
   if (mode === 'title' && (k === 'enter' || k === ' ')) return start();
-  if (k === 'n' && mode !== 'loading') {
-    // in the middle of a survey, n asks first
+  if ((k === 'n' || k === 't') && mode !== 'loading') {
+    if (k === 't' && planet.seed === today()) return say("this is today's world", 3, true);
+    // in the middle of a survey, n and t ask first
     const midway = (mode === 'fly' || mode === 'walk') && signals > 0 && signals < planet.beacons.length;
     if (midway && !(time < ui.leave)) {
       ui.leave = time + 3;
-      return say(`${touched ? 'tap new' : 'press n'} again to leave ${planet.name}`, 3);
+      return say(`${touched ? 'tap new' : `press ${k}`} again to leave ${planet.name}`, 3);
     }
-    return newPlanet(randomSeed());
+    return newPlanet(k === 't' ? today() : randomSeed());
   }
   if (k === 'i') ui.stats = !ui.stats;
   if (k === 'v') view.raw = !view.raw;
@@ -2253,6 +2268,8 @@ const HELP = [
   ['f', 'land, or board the ship'],
   ['tab', 'chart of the planet'],
   ['n', 'next planet'],
+  ['t', "today's world, the same for everyone"],
+  ['j', 'journal of the worlds you have been to'],
   ['p', 'save the view as a text file'],
   ['v', 'show the render under the text'],
   ['- =', 'bigger or smaller characters'],
@@ -2312,7 +2329,7 @@ function drawText() {
     parts = [[p.name, 0, 5], [p.K.label, 0, 1]];
     if (!playing) {
       if (signals) parts.push([signals < p.beacons.length ? `${signals} of ${p.beacons.length} found` : 'surveyed', 0, 4]);
-      parts.push(...(touched ? [['tap to descend', 1, 9]] : [['click to descend', 1, 9], ['n next planet', 1, 3], ['? keys', 1, 2]]));
+      parts.push(...(touched ? [['tap to descend', 1, 9]] : [['click to descend', 1, 9], ['n next planet', 1, 3], [p.seed === today() ? "today's world" : "t today's world", 1, 1], ['? keys', 1, 2]]));
     }
     else {
       if (mode === 'fly') parts.push([`alt ${Math.round(alt)}m`, 1, 4], [`${Math.round(speed)}m/s`, 1, 3]);
@@ -2342,6 +2359,19 @@ function drawText() {
     put(12, 2 + i, ` ${what.padEnd(wide)}`, 2);
   });
   if (ui.chart && playing) drawChart(cols, bar);
+  if (ui.journal && mode !== 'loading') {
+    const list = journal(), done = list.filter(w => w.found === w.of).length;
+    const rows = list.slice(0, 9).map((w, i) => [`${i + 1}`, `${w.name.padEnd(14)} ${w.kind.padEnd(10)} ${w.found === w.of ? 'surveyed' : `${w.found} of ${w.of}`}`]);
+    if (!touched) rows.push(['t', "today's world"]);
+    const foot = !list.length ? 'nothing found yet' : `${count(list.length, 'world')}, ${done} surveyed${touched ? '' : '. a number goes back to one'}`;
+    const width = Math.max(foot.length - 3, ...rows.map(r => r[1].length)) + 1;
+    put(2, 2, ` ${'journal'.padEnd(width + 3)}`, 1);
+    rows.forEach(([k, what], i) => {
+      put(2, 3 + i, ` ${k} `, 1);
+      put(5, 3 + i, ` ${what.padEnd(width)}`, 2);
+    });
+    put(2, 3 + rows.length, ` ${foot.padEnd(width + 3)}`, 2);
+  }
 }
 
 // The chart: the whole planet on one disk, laid out round where you are. You are the middle, the way you
@@ -2428,7 +2458,7 @@ async function newPlanet(seed) {
     mode = 'loading';
     ui.until = 0;
     ui.leave = -1;
-    ui.chart = false;
+    ui.chart = ui.journal = false;
     if (document.pointerLockElement) document.exitPointerLock();
     design(seed);
     ui.note = `charting ${planet.name}`;
@@ -2446,7 +2476,7 @@ async function newPlanet(seed) {
     uploadPlanet();
     // signals found here on an earlier visit stay found
     const was = kept[seed];
-    if (typeof was === 'string') planet.beacons.forEach((b, i) => { b.got = was[i] === '1'; });
+    if (typeof was === 'string') planet.beacons.forEach((b, i) => { b.got = was.split('|')[0][i] === '1'; });
     signals = planet.beacons.filter(b => b.got).length;
     ship.parked = false;
     ui.until = 0;
