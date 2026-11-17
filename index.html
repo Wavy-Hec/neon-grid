@@ -464,6 +464,16 @@ function placeFinds() {
     return !taken(matAt(d)) && h > 1.5;
   };
   const apart = (d, m) => list.every(f => over(d, f.dir) > m) && planet.beacons.every(b => over(d, b.dir) > 60);
+  // the same, looked at every 0.6 m: nothing grows on any of it and there is no step in it
+  const whole = (d, m, by) => {
+    const h = heightAt(d), e = norm(cross(d, Math.abs(d[1]) < .9 ? [0, 1, 0] : [1, 0, 0])), g = cross(d, e);
+    for (let x = -m; x <= m; x += .6) for (let y = -m; y <= m; y += .6) {
+      if (x * x + y * y > m * m) continue;
+      const q = norm(add(d, mul(add(mul(e, x), mul(g, y)), 1 / R)));
+      if (taken(matAt(q)) || Math.abs(heightAt(q) - h) > by) return false;
+    }
+    return true;
+  };
   const add1 = (what, d, near, says, more) => list.push({ what, dir: d, pos: mul(d, R + heightAt(d)), face: sub(beside(d, 1, r()), d), near, says, got: false, ...more });
 
   // stones: of the open, level places tried, the one that stands highest over the ground 45 m round it
@@ -475,7 +485,7 @@ function placeFinds() {
     for (let k = 0; k < 8; k++) round += floorAt(beside(d, 45, k / 8)) / 8;
     const rise = heightAt(d) - round;
     found++;
-    if (!best || rise > best.rise) best = { d, rise };
+    if ((!best || rise > best.rise) && apart(d, 0) && whole(d, HENGE + 1.5, .8)) best = { d, rise };
   }
   if (best) {
     const n = 5 + Math.floor(r() * 4), skip = Math.floor(r() * n);
@@ -495,7 +505,10 @@ function placeFinds() {
     for (let k = 0; k < H.length; k++) if (H[k] > top && !taken(M[k])) { top = H[k]; tf = f; tk = k; }
   }
   const peak = [...faceDir(tf, tk % S, tk / S | 0)];
-  if (top > 3 && apart(peak, 30)) add1('summit', peak, 5, `the summit of ${planet.name}, ${Math.round(top)} m above the datum`);
+  // a peak is one texel across and the pile is wider: it sits as low as the ground under its rim, though
+  // never so low that the tip of the peak shows through it
+  const rim = Math.min(...[0, 1, 2, 3, 4, 5, 6, 7].map(k => heightAt(beside(peak, .6, k / 8))));
+  if (top > 3 && apart(peak, 30)) add1('summit', peak, 5, `the summit of ${planet.name}, ${Math.round(top)} m above the datum`, { pos: mul(peak, R + Math.max(rim, top - .9)) });
   planet.finds = list;
 }
 
@@ -1290,10 +1303,11 @@ void main() {
   // The parked ship and the things to find. Each is marched in its own frame (y away from the planet, z
   // the way it faces) inside a sphere that holds it.
   for (int k = 0; k < 4; k++) {
-    vec4 at = k == 0 ? uShip : uFind[k - 1];
+    int j = max(k - 1, 0);
+    vec4 at = k == 0 ? uShip : uFind[j];
     if (at.w <= 0.) continue;
-    float what = k == 0 ? 0. : at.w, more = k == 0 ? 0. : uFindB[k - 1].w;
-    vec3 face = k == 0 ? uShipFwd : uFindB[k - 1].xyz;
+    float what = k == 0 ? 0. : at.w, more = k == 0 ? 0. : uFindB[j].w;
+    vec3 face = k == 0 ? uShipFwd : uFindB[j].xyz;
     vec3 up = normalize(at.xyz), fw = normalize(face - up * dot(face, up)), rt = cross(up, fw);
     vec3 o = ro - at.xyz, lo = vec3(dot(o, rt), dot(o, up), dot(o, fw)), ld = vec3(dot(rd, rt), dot(rd, up), dot(rd, fw));
     // the sphere: 2.2 m round the ship's hull; round the others it is centred a little above the ground
@@ -1318,10 +1332,13 @@ void main() {
         float ndl = max(dot(n, uSun), 0.), spec = pow(max(dot(n, normalize(uSun - rd)), 0.), part == 1. ? 120. : 40.);
         // the ship's hull shades what is under its rim
         float under = what < .5 ? (1. - smoothstep(-.5, -.1, q.y)) * step(length(q.xz), 1.3) : 0.;
-        // a hill, a cloud or the ring shades it too
+        // a hill, a cloud or the ring shades it too (a wreck or a cairn is asked 3 m up, clear of the patch
+        // of shade it throws itself)
         vec3 sunL = uSunCol * sunTint(dot(up, uSun), 1.) * (1. - .75 * under) * smoothstep(-.1, .1, dot(up, uSun))
-                  * shadow(at.xyz + up * .6) * skyShade(at.xyz);
+                  * shadow(at.xyz + up * .6) * skyShade(at.xyz + up * (what > 1.5 ? 3. : 0.));
         vec3 amb = skyCol() * .12 * smoothstep(-.25, .25, dot(up, uSun)) + vec3(.04, .045, .055);
+        // the things to find are lit by the headlamp once it is dark, like the ground; the ship has lights of its own
+        if (what > .5) amb += vec3(1.5, 1.4, 1.15) * (1. - smoothstep(-.25, .25, dot(up, uSun))) * max(dot(n, -rd), 0.) / (1. + ts * ts / 250.);
         // a wreck is the ship's shape gone dull: dust on the hull, no light in the ring or the lamp
         float dead = what > 1.5 ? 1. : 0.;
         glow = 0.;
@@ -1816,9 +1833,10 @@ function fly(dt) {
   // A dive ends in a swoop. Close to the ground, a ship flying nose-first at it has its nose eased up,
   // so holding W from orbit ends skimming the land, not stopped against it looking at dirt. Once the
   // floor is holding the ship up it no longer sinks, and what counts then is that it is still being
-  // driven forward. Coming straight down with C, or hovering and looking down, is left alone.
+  // driven forward. Coming straight down with C, hovering and looking down, and the ship setting itself
+  // down (you may be looking at the place you chose) are left alone.
   const dive = -dot(s.fwd, out), sink = -dot(s.vel, out), ease = lerp(.35, .08, smooth(40, 6, alt));
-  const driven = s.borne ? held('w') - held('s') - stick.y > .15 : sink > 1 && dot(s.vel, s.fwd) > .7 * len(s.vel);
+  const driven = s.setting > 0 ? false : s.borne ? held('w') - held('s') - stick.y > .15 : sink > 1 && dot(s.vel, s.fwd) > .7 * len(s.vel);
   if (dive > ease && driven) {
     s.fwd = norm(add(s.fwd, mul(add(s.up, out), dt * 2.5 * (dive - ease) * smooth(70, 10, alt))));
   }
@@ -2033,7 +2051,11 @@ function land() {
     // On a tree, crystal or spire is worst. Under a tree's boughs, which reach further out than its cone
     // in the height map, is next, the worse the further under; then uneven ground. On a tie the lower spot wins.
     const clear = Math.min(1.9, ...woods.map(t => aside(spot, t.pos) - t.r * 1.2));
-    const score = ([TREE, CRYSTAL, SPIRE].includes(matAt(spot)) ? 4 : clear < 1.9 ? 2.9 - clear / 2.2 : 0) + (hi - lo > 1 ? 1 : 0);
+    // nor on one of the things to find: the hull and legs reach 1.75 m from the ship's middle
+    const onThing = planet.finds.some(f => len(sub(f.pos, feet)) < 40 && (f.what === 'stones'
+      ? Array.from({ length: f.n }, (_, i) => i).some(i => i !== f.skip && aside(spot, stoneAt(f, i)) < 2.6)
+      : aside(spot, f.pos) < (f.what === 'wreck' ? 4.2 : 2.9)));
+    const score = ([TREE, CRYSTAL, SPIRE].includes(matAt(spot)) ? 4 : clear < 1.9 ? 2.9 - clear / 2.2 : 0) + (hi - lo > 1 ? 1 : 0) + (onThing ? 3 : 0);
     if (!best || score < best.score || (score === best.score && centre < best.centre)) best = { score, centre, spot };
     if (score === 0) break;
   }

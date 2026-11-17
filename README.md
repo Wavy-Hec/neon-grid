@@ -15,8 +15,8 @@ a signal only counts on foot. Hold `W` and the ship dives, levels out and skims 
 The status line at the bottom says how far the next signal is and which way to turn, and names
 the key that does something where you are, such as `f land` once you are low enough.
 
-There is a little more to find. Each signal you read marks a place on the chart (`tab`) where
-something else stands: a ring of stones, the wreck of a lander, a cairn on the planet's highest
+There is a little more to find. The first three signals you read each mark a place on the chart
+(`tab`) where something else stands: a ring of stones, the wreck of a lander, a cairn on the planet's highest
 ground. They count for nothing; they are there to be walked up to. The rest is looking around.
 
 ![a whole run: down from orbit through the ring, in over fir trees, a walk up to a signal beam, then back out to orbit](shots/run.gif)
