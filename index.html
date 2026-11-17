@@ -1634,7 +1634,7 @@ const EYE = 1.7, SENS = .0023;
 let firs = [];   // the trees drawn in detail this frame
 let mode = 'loading', time = 0, signals = 0;
 const cam = { pos: [0, 0, 900], fwd: [0, 0, -1], up: [0, 1, 0], right: [1, 0, 0], fx: 1, fy: .6 };
-const ship = { pos: [0, 0, 0], fwd: [0, 0, -1], up: [0, 1, 0], vel: [0, 0, 0], parked: false, borne: false };
+const ship = { pos: [0, 0, 0], fwd: [0, 0, -1], up: [0, 1, 0], vel: [0, 0, 0], parked: false, borne: false, setting: 0 };
 const me = { dir: [0, 1, 0], h: 0, fwd: [1, 0, 0], pitch: 0, vr: 0, lean: [0, 0, 0], side: 0 };
 const look = { x: 0, y: 0 }, stick = { x: 0, y: 0 };
 const keys = new Set();
@@ -1684,6 +1684,12 @@ function fly(dt) {
   s.fwd = norm(add(s.fwd, add(mul(right, yaw), mul(s.up, pitch))));
 
   const out = norm(s.pos), alt = len(s.pos) - planet.R - groundAt(out);
+  // Setting down: the ship takes itself straight down and lets you out just above the ground. Space calls
+  // it off, and so does drifting out over deep water.
+  if (s.setting > 0) {
+    if (held(' ') || landing()) s.setting = 0;
+    else if ((s.setting -= dt) <= 0 || alt < 2.4) return land();
+  }
   // A dive ends in a swoop. Close to the ground, a ship flying nose-first at it has its nose eased up,
   // so holding W from orbit ends skimming the land, not stopped against it looking at dirt. Once the
   // floor is holding the ship up it no longer sinks, and what counts then is that it is still being
@@ -1702,8 +1708,10 @@ function fly(dt) {
   // Top speed goes by the height in metres up to 420 m, the same on any size of planet; above that it
   // grows with the planet, so the trip down from orbit takes about as long on a big one as on a small one.
   const top = (lerp(24, 190, smooth(6, 420, alt)) + Math.max(0, planet.R * .7 - 190) * smooth(420, planet.R * 1.4, alt)) * (held('shift') ? 2.2 : 1);
-  const push = add(add(mul(s.fwd, held('w') - held('s') - stick.y), mul(right, held('d') - held('a') + stick.x)), mul(s.up, held(' ') - held('c')));
+  const push = s.setting > 0 ? [0, 0, 0] : add(add(mul(s.fwd, held('w') - held('s') - stick.y), mul(right, held('d') - held('a') + stick.x)), mul(s.up, held(' ') - held('c')));
   s.vel = add(mul(s.vel, Math.exp(-dt * 1.3)), mul(push, top * 1.3 * dt));
+  // setting down, it sheds its speed over the ground and sinks, slower the lower it is
+  if (s.setting > 0) s.vel = mix3(s.vel, mul(out, -clamp(alt * 2, 2, 30)), 1 - Math.exp(-dt * 6));
   const before = out;
   s.pos = add(s.pos, mul(s.vel, dt));
   // Level stays level. Near the ground the ship turns with the ground it passes over, so flying straight
@@ -1845,8 +1853,16 @@ function landing() {
        : planet.sea && heightAt(d) < -1 ? 'no ground to stand on here' : '';
 }
 
+// f in the air: if this is a place to land, the ship starts down (fly() does the rest, 4 s at most)
+function setDown() {
+  const why = landing();
+  if (why) return say(why);
+  ship.setting = 4;
+}
+
 function land() {
   const why = landing(), d = norm(ship.pos);
+  ship.setting = 0;
   if (why) return say(why);
   me.dir = d;
   me.h = len(ship.pos) - planet.R - EYE;
@@ -1891,6 +1907,7 @@ function board() {
   ship.fwd = norm(cam.fwd); ship.up = me.dir; ship.vel = mul(me.dir, 8);
   ship.parked = false;
   ship.borne = false;   // nothing holds it up yet: that was the flight before
+  ship.setting = 0;
   mode = 'fly';
 }
 
@@ -1921,7 +1938,7 @@ function press(k) {
     say(`${view.cols} x ${view.rows} characters`, 2, true);
   }
   if (mode !== 'fly' && mode !== 'walk') return;
-  if (k === 'f') mode === 'fly' ? land() : board();
+  if (k === 'f') mode === 'fly' ? setDown() : board();
   if (k === 'p') saveText();
 }
 // Held movement goes by where the key is, so W A S D work on any layout. Commands (F to land, M, N...)
@@ -2285,7 +2302,7 @@ function drawText() {
   put(0, bar, tag, 4);
   // next to it, the one key that does something here and now
   const hint = !playing ? '' : !touched && document.pointerLockElement !== canvas ? 'click to steer'
-             : mode === 'fly' ? (landing() ? '' : 'f land') : len(sub(cam.pos, ship.pos)) < 15 ? 'f board' : 'f call ship';
+             : mode === 'fly' ? (ship.setting > 0 ? 'setting down' : landing() ? '' : 'f land') : len(sub(cam.pos, ship.pos)) < 15 ? 'f board' : 'f call ship';
   // [text, side, importance]: on a narrow screen the least important parts are left out
   let parts = [[ui.note, 0, 9]];
   if (mode !== 'loading') {
@@ -2439,6 +2456,7 @@ async function newPlanet(seed) {
 function start() {
   // the click carries the orbit's own motion on, into a drift toward the planet
   ship.pos = cam.pos; ship.fwd = cam.fwd; ship.up = cam.up; ship.vel = add(mul(cross([0, 1, 0], cam.pos), .05), mul(cam.fwd, 50));
+  ship.setting = 0;
   mode = 'fly';
   startAudio();
   if (!fingers.size) grabMouse();
