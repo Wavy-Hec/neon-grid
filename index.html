@@ -488,6 +488,19 @@ function scatter() {
     }
     if (P.mat === TREE) { planet.treeCol = linear(c); planet.treeGlow = P.glow || 0; }
   }
+  // A fir's boughs spread wider than its cone, and nobody walks in under them: each tree has a reach,
+  // 1.1 m beyond its boughs. Where two reaches would meet, both are drawn in, as far as 0.45 m from the
+  // boughs, so there is a way between two trees unless their boughs all but touch.
+  const byX = planet.trees.slice().sort((a, b) => a.pos[0] - b.pos[0]);
+  byX.forEach((t, i) => {
+    t.reach = t.r * 1.2 + 1.1;
+    for (const step of [-1, 1]) for (let j = i + step; byX[j] && Math.abs(byX[j].pos[0] - t.pos[0]) < 12; j += step) {
+      const o = byX[j];
+      if (len(sub(o.pos, t.pos)) > 12) continue;   // near in x only, anywhere round the planet
+      const gap = aside(norm(o.pos), t.pos) - (t.r + o.r) * 1.2 - 2.2;
+      if (gap < .5) t.reach = Math.min(t.reach, t.r * 1.2 + 1.1 - Math.min(.65, (.5 - gap) / 2));
+    }
+  });
   planet.top = top + 22;   // tallest prop on the highest ground
 }
 
@@ -1717,8 +1730,10 @@ function slopeAt(d) {
   return Math.hypot(across(e, e), across(g, g));
 }
 
-// how far q is, measured level, from the upright line through at
-const aside = (q, at) => { const up = norm(at), v = sub(q, at); return len(sub(v, mul(up, dot(v, up)))); };
+// How far the point over direction d is from the upright line through at, measured level at the height
+// of at. It does not depend on how high the walker or the ship is, so going up or down a slope, or a
+// jump, moves nobody nearer to a tree.
+const aside = (d, at) => len(cross(d, at));
 
 function walk(dt) {
   const m = me;
@@ -1736,12 +1751,12 @@ function walk(dt) {
     const here = mul(m.dir, planet.R + m.h), base = Math.max(m.h, floorAt(m.dir)), full = (held('shift') ? 11 : 5) * amount * dt;
     // What stands in the way besides the ground: the firs drawn in detail, which spread wider than the
     // cones the height map holds for them, and the parked ship, which the height map knows nothing of.
-    const solid = firs.map(t => [t.pos, t.r * 1.2 + 1.1]);
+    const solid = firs.map(t => [t.pos, t.reach]);
     if (ship.parked) solid.push([ship.pos, 1.9]);
     let wet = false;
     // where a step of that length that way would end, and how much it rises; null if it cannot be taken
     const open = (way, step) => {
-      const to = norm(add(here, mul(way, step))), there = mul(to, planet.R + m.h);
+      const to = norm(add(here, mul(way, step)));
       // the slope is judged over a fixed 0.75 m so the limit is the same at any frame rate: anything
       // steeper than about 60 degrees is a wall
       const rise = floorAt(norm(add(here, mul(way, .75)))) - base;
@@ -1749,7 +1764,7 @@ function walk(dt) {
       if (planet.sea && heightAt(to) < -1) { wet = true; return null; }   // water or lava deeper than a metre
       // No step goes in under a tree or the ship. Someone already under one (set down there by the ship)
       // walks freely until they are out, or two trees close together would hold them where they stand.
-      if (solid.some(([at, reach]) => aside(there, at) < reach && aside(here, at) >= reach)) return null;
+      if (solid.some(([at, reach]) => aside(to, at) < reach && aside(m.dir, at) >= reach)) return null;
       // nor up the flank of a tree or a rock: on ground steeper than 60 degrees nothing gains height
       // faster than 1.2 m a second, which a slow step along a slope can still do and a stride at it cannot
       if (floorAt(to) > base + dt * 1.2 && slopeAt(to) > 1.7) return null;
@@ -1824,12 +1839,15 @@ function land() {
   me.fwd = norm(len(flat) > .05 ? flat : cross(d, [.3, .9, .2]));
   me.pitch = Math.asin(clamp(dot(ship.fwd, d), -1, 1));
   me.lean = sub(norm(ship.up), d);
-  // The ship sets down a few steps away: behind you if the ground there is clear and level,
-  // otherwise beside you or ahead. The hull is a 1.5 m sphere, so it is raised until no ground
-  // under its whole footprint pokes into it (it may sink 10 cm).
+  // The ship sets down a few steps away: behind you if the ground there is clear and level, otherwise
+  // beside you, ahead, or on one of the diagonals. The hull is a 1.5 m sphere, so it is raised until no
+  // ground under its whole footprint pokes into it (it may sink 10 cm).
   const side = cross(me.fwd, d);
+  // the firs round the place you are set down, however high the ship was when you got out
+  const feet = mul(d, planet.R + groundAt(d)), woods = planet.trees.filter(t => len(sub(t.pos, feet)) < 20);
   let best = null;
-  for (const way of [mul(me.fwd, -1), side, mul(side, -1), me.fwd]) {
+  const back = mul(me.fwd, -1), left = mul(side, -1);
+  for (const way of [back, side, left, me.fwd, norm(add(back, side)), norm(add(back, left)), norm(add(me.fwd, side)), norm(add(me.fwd, left))]) {
     const spot = norm(add(mul(d, planet.R), mul(way, 6))), e = norm(cross(spot, way)), g = cross(spot, e);
     let centre = groundAt(spot) + 1.4, lo = 1e9, hi = -1e9;
     for (const rr of [.5, .9, 1.2, 1.4, 1.5]) for (let a = 0; a < 16; a++) {
@@ -1838,10 +1856,10 @@ function land() {
       centre = Math.max(centre, h + Math.sqrt(2.25 - rr * rr) - .1);
       lo = Math.min(lo, h); hi = Math.max(hi, h);
     }
-    // a tree, crystal or spire is worst, and so is a spot under a tree's boughs, which reach further out
-    // than its cone in the height map; uneven ground is next; on a tie the lower spot wins
-    const at = mul(spot, planet.R + centre), boughs = firs.some(t => aside(at, t.pos) < t.r * 1.2 + 1.9);
-    const score = ([TREE, CRYSTAL, SPIRE].includes(matAt(spot)) || boughs ? 2 : 0) + (hi - lo > 1 ? 1 : 0);
+    // On a tree, crystal or spire is worst. Under a tree's boughs, which reach further out than its cone
+    // in the height map, is next, the worse the further under; then uneven ground. On a tie the lower spot wins.
+    const clear = Math.min(1.9, ...woods.map(t => aside(spot, t.pos) - t.r * 1.2));
+    const score = ([TREE, CRYSTAL, SPIRE].includes(matAt(spot)) ? 4 : clear < 1.9 ? 2.9 - clear / 2.2 : 0) + (hi - lo > 1 ? 1 : 0);
     if (!best || score < best.score || (score === best.score && centre < best.centre)) best = { score, centre, spot };
     if (score === 0) break;
   }
@@ -1856,6 +1874,7 @@ function board() {
   ship.pos = mul(me.dir, planet.R + me.h + EYE + .2);
   ship.fwd = norm(cam.fwd); ship.up = me.dir; ship.vel = mul(me.dir, 8);
   ship.parked = false;
+  ship.borne = false;   // nothing holds it up yet: that was the flight before
   mode = 'fly';
 }
 
