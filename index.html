@@ -1644,8 +1644,10 @@ const ui = { note: '', msg: '', until: 0, minor: false, help: false, helped: fal
 // What has been found is kept in the browser, by seed, so a planet you come back to is as you left it:
 // one character for each signal. Where the browser gives no storage (a private window) nothing is kept.
 const kept = Object.create(null);
-try { Object.assign(kept, JSON.parse(localStorage.getItem('planet.txt') || '{}')); } catch (e) { /* no storage, or not ours */ }
+const recall = () => { try { Object.assign(kept, JSON.parse(localStorage.getItem('planet.txt') || '{}')); } catch (e) { /* no storage, or not ours */ } };
+recall();
 function keep() {
+  recall();   // another tab may have found something on another planet since
   kept[planet.seed] = planet.beacons.map(b => (b.got ? 1 : 0)).join('');
   try { localStorage.setItem('planet.txt', JSON.stringify(kept)); } catch (e) { /* no storage */ }
 }
