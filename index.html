@@ -439,6 +439,66 @@ async function buildFaces(tick) {
   }
 }
 
+// Besides the signals a planet has a few things to come upon: a ring of standing stones on a rise, the
+// wreck of a lander on a flat, a cairn on the highest ground. Where they go comes from the seed, by a
+// random stream of their own, so nothing else about the planet depends on them; one that finds no place
+// is left out. Each is found by walking up to it.
+const HENGE = 4.4;   // radius of the ring of standing stones, metres
+function placeFinds() {
+  const r = mulberry(hashStr(planet.seed + ' finds')), R = planet.R, list = [];
+  const any = () => { const z = r() * 2 - 1, a = r() * Math.PI * 2, q = Math.sqrt(1 - z * z); return [q * Math.cos(a), z, q * Math.sin(a)]; };
+  const over = (a, b) => Math.acos(clamp(dot(a, b), -1, 1)) * R;   // metres over the ground between two directions
+  const taken = m => m === TREE || m === CRYSTAL || m === SPIRE || m === LAVA;
+  // the point m metres from d, a of the way round it
+  const beside = (d, m, a) => {
+    const e = norm(cross(d, Math.abs(d[1]) < .9 ? [0, 1, 0] : [1, 0, 0])), g = cross(d, e);
+    return norm(add(d, mul(add(mul(e, Math.cos(a * 6.2832)), mul(g, Math.sin(a * 6.2832))), m / R)));
+  };
+  // dry, open ground for m metres round d that rises and falls by no more than by
+  const clear = (d, m, by) => {
+    const h = heightAt(d);
+    for (const part of [.4, .7, 1]) for (let i = 0; i < 8; i++) {
+      const q = beside(d, m * part, i / 8);
+      if (taken(matAt(q)) || Math.abs(heightAt(q) - h) > by) return false;
+    }
+    return !taken(matAt(d)) && h > 1.5;
+  };
+  const apart = (d, m) => list.every(f => over(d, f.dir) > m) && planet.beacons.every(b => over(d, b.dir) > 60);
+  const add1 = (what, d, near, says, more) => list.push({ what, dir: d, pos: mul(d, R + heightAt(d)), face: sub(beside(d, 1, r()), d), near, says, got: false, ...more });
+
+  // stones: of the open, level places tried, the one that stands highest over the ground 45 m round it
+  let best = null;
+  for (let i = 0, found = 0; i < 4000 && found < 30; i++) {
+    const d = any();
+    if (heightAt(d) < 2 || slopeAt(d) > .2 || !clear(d, HENGE + 3, .8)) continue;
+    let round = 0;
+    for (let k = 0; k < 8; k++) round += floorAt(beside(d, 45, k / 8)) / 8;
+    const rise = heightAt(d) - round;
+    found++;
+    if (!best || rise > best.rise) best = { d, rise };
+  }
+  if (best) {
+    const n = 5 + Math.floor(r() * 4), skip = Math.floor(r() * n);
+    add1('stones', best.d, HENGE + 3, `standing stones: ${n - 1} in a ring ${Math.round(HENGE * 2)} m across, and a gap where one stood`, { n, skip });
+  }
+  // wreck: the first flat, open place well away from the stones
+  for (let i = 0; i < 4000; i++) {
+    const d = any();
+    if (heightAt(d) < 1.5 || slopeAt(d) > .25 || !clear(d, 4, .6) || !apart(d, 150)) continue;
+    add1('wreck', d, 6, 'the wreck of a lander');
+    break;
+  }
+  // cairn: on the highest texel that is ground
+  let top = -1, tf = 0, tk = 0;
+  for (let f = 0; f < 6; f++) {
+    const H = planet.height[f], M = planet.mat[f];
+    for (let k = 0; k < H.length; k++) if (H[k] > top && !taken(M[k])) { top = H[k]; tf = f; tk = k; }
+  }
+  const peak = [...faceDir(tf, tk % S, tk / S | 0)];
+  if (top > 3 && apart(peak, 30)) add1('summit', peak, 5, `the summit of ${planet.name}, ${Math.round(top)} m above the datum`);
+  planet.finds = list;
+}
+
 // trees, spires and crystals are bumps stamped into the height map
 function scatter() {
   let top = 0, low = 0;
@@ -707,7 +767,8 @@ uniform vec2 uFov;
 uniform float uTime, uR, uTop, uPix, uTexel, uBlock, uAtmo, uAdapt, uEmit;
 uniform vec3 uBeta, uShallow, uCloudCol, uRingN, uRingCol, uBeaconCol;
 uniform vec4 uSea, uCloud, uRing, uMoon, uShip;
-uniform vec3 uShipFwd;
+uniform vec3 uShipFwd, uRock;
+uniform vec4 uFind[3], uFindB[3];   // the things to find: where and what (0 none, 1 stones, 2 wreck, 3 cairn); which way it faces and one number more
 uniform vec4 uTree[12], uTreeB[12];   // the nearest trees: base position and height; radius and a seed
 uniform int uTreeN;
 uniform vec2 uTreeFade;
@@ -849,6 +910,38 @@ float lander(vec3 q, out float part) {
   return d;
 }
 
+// Standing stones, in their own frame (y up, origin on the ground at the middle of the ring): n places
+// evenly round a ring, one of them (skip) empty. Each stone is a slab that narrows upward, its height by
+// its place in the ring. The nearest stone is the one in this slice of the ring or the next on either side.
+float stones(vec3 q, float n, float skip) {
+  float slice = 6.2832 / n, here = floor(atan(q.x, q.z) / slice + .5), d = 1e3;
+  for (int j = -1; j <= 1; j++) {
+    float i = mod(here + float(j) + n, n);
+    if (abs(i - skip) < .5) continue;
+    float turn = i * slice, c = cos(turn), s = sin(turn), tall = 2.4 + 1.2 * fract(i * .618 + .37);
+    vec3 p = vec3(q.x * c - q.z * s, q.y, q.x * s + q.z * c - ${HENGE.toFixed(1)});
+    vec3 e = abs(p - vec3(0., tall * .5 - .5, 0.)) - vec3(.5 - .12 * clamp(p.y / tall, 0., 1.), tall * .5 + .5, .2);
+    d = min(d, length(max(e, 0.)) + min(max(e.x, max(e.y, e.z)), 0.) - .1);
+  }
+  return d;
+}
+// a cairn: a waist-high pile of rounded stones, origin on the ground under it
+float cairn(vec3 q) {
+  float d = sdEllipsoid(q - vec3(0., .98, 0.), vec3(.3, .2, .28));
+  d = min(d, sdEllipsoid(vec3(abs(q.x), q.y, abs(q.z)) - vec3(.36, .2, .36), vec3(.42, .3, .42)));
+  return min(d, sdEllipsoid(vec3(abs(q.x), q.y, q.z) - vec3(.24, .62, .04), vec3(.34, .24, .32)));
+}
+// The shape of thing number what: 0 the ship, 1 standing stones (more holds how many and which is missing),
+// 2 a wreck, which is the ship lying over on its side and half in the ground, 3 a cairn. part is the
+// piece of the ship that is nearest, or 5 for stone.
+float thing(vec3 q, float what, float more, out float part) {
+  part = 5.;
+  if (what > 2.5) return cairn(q);
+  if (what > .5 && what < 1.5) return stones(q, floor(more / 16.), mod(more, 16.));
+  if (what > 1.5) q = vec3(q.x * .82 + (q.y - .5) * .57, (q.y - .5) * .82 - q.x * .57, q.z);
+  return lander(q, part);
+}
+
 // a capped cone from y = -h (radius r1) to y = +h (radius r2)
 float sdCappedCone(vec3 p, float h, float r1, float r2) {
   vec2 q = vec2(length(p.xz), p.y), k1 = vec2(r2, h), k2 = vec2(r2 - r1, 2. * h);
@@ -936,6 +1029,13 @@ float skyShade(vec3 p) {
     vec3 sc = uShip.xyz - p;
     float along = dot(sc, uSun);
     if (along > 0.) v *= mix(.35, 1., smoothstep(1.1, 1.8, length(sc - uSun * along)));
+  }
+  // a wreck and a cairn throw a soft patch of shade the same way
+  for (int k = 0; k < 3; k++) {
+    if (uFind[k].w < 1.5) continue;
+    vec3 sc = uFind[k].xyz + normalize(uFind[k].xyz) * .6 - p;
+    float along = dot(sc, uSun), wide = uFind[k].w < 2.5 ? 1.2 : .5;
+    if (along > 0.) v *= mix(.4, 1., smoothstep(wide, wide + .7, length(sc - uSun * along)));
   }
   return v;
 }
@@ -1187,18 +1287,24 @@ void main() {
   else if (t > 0.) col = surface(ro, rd, t);
   else { col = lights(ro, rd); st = mat == ${ROCK}. ? vec3(0.) : stars(rd); }   // no stars in front of the moon
 
-  if (uShip.w > 0.) {
-    // march the lander's shape inside a 2.2 m bounding sphere, in the ship's own frame
-    vec3 up = normalize(uShip.xyz), fw = normalize(uShipFwd - up * dot(uShipFwd, up)), rt = cross(up, fw);
-    vec3 o = ro - uShip.xyz, lo = vec3(dot(o, rt), dot(o, up), dot(o, fw)), ld = vec3(dot(rd, rt), dot(rd, up), dot(rd, fw));
-    vec2 b = sphere(lo, ld, 2.2);
+  // The parked ship and the things to find. Each is marched in its own frame (y away from the planet, z
+  // the way it faces) inside a sphere that holds it.
+  for (int k = 0; k < 4; k++) {
+    vec4 at = k == 0 ? uShip : uFind[k - 1];
+    if (at.w <= 0.) continue;
+    float what = k == 0 ? 0. : at.w, more = k == 0 ? 0. : uFindB[k - 1].w;
+    vec3 face = k == 0 ? uShipFwd : uFindB[k - 1].xyz;
+    vec3 up = normalize(at.xyz), fw = normalize(face - up * dot(face, up)), rt = cross(up, fw);
+    vec3 o = ro - at.xyz, lo = vec3(dot(o, rt), dot(o, up), dot(o, fw)), ld = vec3(dot(rd, rt), dot(rd, up), dot(rd, fw));
+    // the sphere: 2.2 m round the ship's hull; round the others it is centred a little above the ground
+    vec2 b = what < .5 ? sphere(lo, ld, 2.2) : sphere(lo - vec3(0., what < 1.5 ? 1.4 : .7, 0.), ld, what < 1.5 ? ${(HENGE + 1.8).toFixed(1)} : what < 2.5 ? 2.7 : 1.6);
     float inside;
-    // with the eye inside the hull every ray would hit it at once and fill the screen: leave it out then
-    if (b.y > 0. && b.x < tEnd && (b.x > 0. || lander(lo, inside) > .05)) {
+    // with the eye inside the shape every ray would hit it at once and fill the screen: leave it out then
+    if (b.y > 0. && b.x < tEnd && (b.x > 0. || thing(lo, what, more, inside) > .05)) {
       float ts = max(b.x, 0.), part = 0.;
       bool hit = false;
       for (int i = 0; i < 64; i++) {
-        float dd = lander(lo + ld * ts, part);
+        float dd = thing(lo + ld * ts, what, more, part);
         if (dd < .002 * (1. + ts)) { hit = true; break; }
         ts += dd;
         if (ts > b.y || ts > tEnd) break;
@@ -1207,38 +1313,41 @@ void main() {
         vec3 q = lo + ld * ts;
         const vec2 e = vec2(.004, -.004);
         float pp;
-        vec3 nl = normalize(e.xyy * lander(q + e.xyy, pp) + e.yyx * lander(q + e.yyx, pp) + e.yxy * lander(q + e.yxy, pp) + e.xxx * lander(q + e.xxx, pp));
+        vec3 nl = normalize(e.xyy * thing(q + e.xyy, what, more, pp) + e.yyx * thing(q + e.yyx, what, more, pp) + e.yxy * thing(q + e.yxy, what, more, pp) + e.xxx * thing(q + e.xxx, what, more, pp));
         vec3 n = nl.x * rt + nl.y * up + nl.z * fw;
         float ndl = max(dot(n, uSun), 0.), spec = pow(max(dot(n, normalize(uSun - rd)), 0.), part == 1. ? 120. : 40.);
-        // the hull shades what is under its rim
-        float under = (1. - smoothstep(-.5, -.1, q.y)) * step(length(q.xz), 1.3);
-        // a hill, a cloud or the ring shades the ship too
+        // the ship's hull shades what is under its rim
+        float under = what < .5 ? (1. - smoothstep(-.5, -.1, q.y)) * step(length(q.xz), 1.3) : 0.;
+        // a hill, a cloud or the ring shades it too
         vec3 sunL = uSunCol * sunTint(dot(up, uSun), 1.) * (1. - .75 * under) * smoothstep(-.1, .1, dot(up, uSun))
-                  * shadow(uShip.xyz + up * .6) * skyShade(uShip.xyz);
+                  * shadow(at.xyz + up * .6) * skyShade(at.xyz);
         vec3 amb = skyCol() * .12 * smoothstep(-.25, .25, dot(up, uSun)) + vec3(.04, .045, .055);
-        if (part < .5) {
+        // a wreck is the ship's shape gone dull: dust on the hull, no light in the ring or the lamp
+        float dead = what > 1.5 ? 1. : 0.;
+        glow = 0.;
+        if (part > 4.5) {
+          // stone: the planet's own rock, streaked down its faces
+          col = uRock * (1.1 + .9 * n3(vec3(q.x * 2.5, q.y * .5, q.z * 2.5))) * (sunL * ndl + amb);
+        } else if (part < .5) {
           // hull: light panels with darker seams, and a dark band above the engine ring
           float f = fract(atan(q.z, q.x) * 1.2732), seam = 1. - smoothstep(0., .03, min(f, 1. - f));
           vec3 base = mix(vec3(.62, .64, .68), vec3(.28, .3, .33), max(seam * .7, (1. - smoothstep(0., .05, abs(q.y - .2))) * .8));
-          col = base * (sunL * ndl + amb) + sunL * spec * .35;
-          glow = 0.;
+          col = mix(base, uRock * 1.6 + .05, dead * .6) * (sunL * ndl + amb) + sunL * spec * .35 * (1. - dead);
         } else if (part < 1.5) {
           // canopy: dark glass that reflects the sky
-          col = vec3(.03, .05, .07) * (sunL * ndl + amb) + skyCol() * .3 * pow(clamp(1. - dot(n, -rd), 0., 1.), 3.) + sunL * spec * 1.6;
-          glow = 0.;
-        } else if (part < 2.5) {
+          col = vec3(.03, .05, .07) * (sunL * ndl + amb) + (skyCol() * .3 * pow(clamp(1. - dot(n, -rd), 0., 1.), 3.) + sunL * spec * 1.6) * (1. - .8 * dead);
+        } else if (part < 2.5 && dead < .5) {
           col = uBeaconCol * 2.2;
           glow = .9;
-        } else if (part < 3.5) {
+        } else if (part < 3.5 || dead > .5) {
           col = vec3(.22, .23, .25) * (sunL * ndl + amb) + sunL * spec * .2;
-          glow = 0.;
         } else {
           float on = step(.5, fract(uTime * .8));
           col = vec3(4., .3, .2) * on + vec3(.15, .02, .02);
           glow = on;
         }
         tEnd = ts;
-        mat = ${SHIP}.;
+        mat = part > 4.5 ? (what < 1.5 ? ${SPIRE}. : ${ROCK}.) : ${SHIP}.;
         st = vec3(0.);
       }
     }
@@ -1642,22 +1751,24 @@ const held = k => (keys.has(k) ? 1 : 0);
 const ui = { note: '', msg: '', until: 0, minor: false, help: false, helped: false, chart: false, journal: false, told: false, stats: false, leave: -1, padRow: 1e9 };
 
 // What has been found is kept in the browser, by seed, so a planet you come back to is as you left it:
-// one character for each signal, then the world's name, its kind and the time of the last find, which is
-// what the journal lists. Where the browser gives no storage (a private window) nothing is kept.
+// one character for each signal, a dot, one for each of the other things, then the world's name, its
+// kind and the time of the last find, which is what the journal lists. Where the browser gives no
+// storage (a private window) nothing is kept.
 const kept = Object.create(null);
 const recall = () => { try { Object.assign(kept, JSON.parse(localStorage.getItem('planet.txt') || '{}')); } catch (e) { /* no storage, or not ours */ } };
 recall();
 function keep() {
   recall();   // another tab may have found something on another planet since
-  kept[planet.seed] = [planet.beacons.map(b => (b.got ? 1 : 0)).join(''), planet.name, planet.K.label, Math.floor(Date.now() / 1000)].join('|');
+  const marks = list => list.map(x => (x.got ? 1 : 0)).join('');
+  kept[planet.seed] = [`${marks(planet.beacons)}.${marks(planet.finds)}`, planet.name, planet.K.label, Math.floor(Date.now() / 1000)].join('|');
   try { localStorage.setItem('planet.txt', JSON.stringify(kept)); } catch (e) { /* no storage */ }
 }
 const count = (n, what) => `${n} ${what}${n === 1 ? '' : 's'}`;
 // the worlds where something has been found, the latest first
 function journal() {
   return Object.keys(kept).map(seed => {
-    const [flags, name, kind, at] = String(kept[seed]).split('|');
-    return { seed, name, kind, of: flags.length, found: flags.split('1').length - 1, at: +at || 0 };
+    const [flags, name, kind, at] = String(kept[seed]).split('|'), [sig, fnd = ''] = flags.split('.');
+    return { seed, name, kind, of: sig.length, found: sig.split('1').length - 1, finds: fnd.split('1').length - 1, at: +at || 0 };
   }).filter(w => w.name && w.kind).sort((a, b) => b.at - a.at);
 }
 // one world a day, the same for everyone: its seed is the date
@@ -1765,6 +1876,11 @@ function slopeAt(d) {
   return Math.hypot(across(e, e), across(g, g));
 }
 
+// where stone i of a ring of standing stones stands
+function stoneAt(f, i) {
+  const up = norm(f.pos), e = norm(f.face), g = cross(up, e), a = i / f.n * Math.PI * 2;
+  return add(f.pos, mul(add(mul(e, Math.cos(a)), mul(g, Math.sin(a))), HENGE));
+}
 // How far the point over direction d is from the upright line through at, measured level at the height
 // of at. It does not depend on how high the walker or the ship is, so going up or down a slope, or a
 // jump, moves nobody nearer to a tree.
@@ -1788,6 +1904,11 @@ function walk(dt) {
     // cones the height map holds for them, and the parked ship, which the height map knows nothing of.
     const solid = firs.map(t => [t.pos, t.reach]);
     if (ship.parked) solid.push([ship.pos, 1.9]);
+    for (const f of planet.finds) {
+      if (len(sub(f.pos, here)) > 30) continue;
+      if (f.what === 'stones') for (let i = 0; i < f.n; i++) { if (i !== f.skip) solid.push([stoneAt(f, i), .75]); }
+      else solid.push([f.pos, f.what === 'wreck' ? 2.1 : 1.1]);
+    }
     let wet = false;
     // where a step of that length that way would end, and how much it rises; null if it cannot be taken
     const open = (way, step) => {
@@ -1843,8 +1964,17 @@ function walk(dt) {
     signals++;
     keep();
     chime();
-    say(signals < planet.beacons.length ? `signal ${signals} of ${planet.beacons.length}: ${facts()[signals - 1]}`
+    // each signal read puts one of the planet's other things on the chart
+    const shows = planet.finds[signals - 1] && !planet.finds[signals - 1].got ? '. it marks a place on the chart' : '';
+    say(signals < planet.beacons.length ? `signal ${signals} of ${planet.beacons.length}: ${facts()[signals - 1]}${shows}`
                                         : `survey of ${planet.name} complete. ${touched ? 'tap new' : 'n'} for another world`, 9);
+  }
+  for (const f of planet.finds) {
+    if (f.got || len(sub(cam.pos, f.pos)) > f.near) continue;
+    f.got = true;
+    keep();
+    chime(2);
+    say(f.says, 9);
   }
 }
 
@@ -2109,10 +2239,11 @@ function drone() {
   }
 }
 
-function chime() {
+// the notes of a signal read; the first two of them for anything else found
+function chime(notes = 4) {
   if (!ac) return;
   const root = 220 * 2 ** (planet.key / 12);
-  [0, 7, 12, 19].forEach((semi, i) => {
+  [0, 7, 12, 19].slice(0, notes).forEach((semi, i) => {
     const t = ac.currentTime + i * .13, o = ac.createOscillator(), g = ac.createGain();
     o.type = 'triangle'; o.frequency.value = root * 2 ** (semi / 12);
     g.gain.setValueAtTime(.12, t);
@@ -2186,6 +2317,16 @@ function drawScene() {
   gl.uniform4f(u.uMoon, ...(p.moon ? moonPos() : [0, 0, 0]), p.moon ? p.moon.r : 0);
   gl.uniform4f(u.uShip, ...ship.pos, ship.parked ? 1 : 0);
   gl.uniform3fv(u.uShipFwd, ship.face || [0, 0, 1]);
+  // the things to find, when near enough to make out
+  const finds = new Float32Array(12), findsB = new Float32Array(12);
+  p.finds.forEach((f, i) => {
+    if (len(sub(f.pos, cam.pos)) > 700) return;
+    finds.set([...f.pos, f.what === 'stones' ? 1 : f.what === 'wreck' ? 2 : 3], i * 4);
+    findsB.set([...f.face, f.what === 'stones' ? f.n * 16 + f.skip : 0], i * 4);
+  });
+  gl.uniform4fv(u.uFind, finds);
+  gl.uniform4fv(u.uFindB, findsB);
+  gl.uniform3fv(u.uRock, linear(hex(p.K.rock)));
   // The twelve nearest trees within 40 m are drawn as real shapes. Their detail has faded out by 38 m,
   // or by the distance of the thirteenth tree where the forest is thick, so dropping out of the twelve
   // changes nothing you can see.
@@ -2361,7 +2502,7 @@ function drawText() {
   if (ui.chart && playing) drawChart(cols, bar);
   if (ui.journal && mode !== 'loading') {
     const list = journal(), done = list.filter(w => w.found === w.of).length;
-    const rows = list.slice(0, 9).map((w, i) => [`${i + 1}`, `${w.name.padEnd(14)} ${w.kind.padEnd(10)} ${w.found === w.of ? 'surveyed' : `${w.found} of ${w.of}`}`]);
+    const rows = list.slice(0, 9).map((w, i) => [`${i + 1}`, `${w.name.padEnd(14)} ${w.kind.padEnd(10)} ${w.found === w.of ? 'surveyed' : `${w.found} of ${w.of}`}${w.finds ? `, ${count(w.finds, 'find')}` : ''}`]);
     if (!touched) rows.push(['t', "today's world"]);
     const foot = !list.length ? 'nothing found yet' : `${count(list.length, 'world')}, ${done} surveyed${touched ? '' : '. a number goes back to one'}`;
     const width = Math.max(foot.length - 3, ...rows.map(r => r[1].length)) + 1;
@@ -2418,10 +2559,19 @@ function drawChart(cols, bar) {
     put(c0 + Math.round(dot(t, right) * far * (rx + .5)), r0 - Math.round(dot(t, ahead) * far * (ry + .5)), ch, style);
   };
   for (const b of p.beacons) mark(b.dir, b.got ? 'x' : '!', b.got ? 2 : 5);
+  // the other things: found ones, and as many of the rest as signals have been read
+  const shown = p.finds.filter((f, i) => f.got || i < signals);
+  for (const f of shown) mark(f.dir, f.got ? '*' : '?', f.got ? 2 : 5);
   if (ship.parked) mark(norm(ship.pos), '&', 1);
   put(c0, r0, '@', 1);
-  const key = `@ you${ship.parked ? '   & ship' : ''}   ! signal${signals ? '   x found' : ''}`;
-  put(c0 - key.length / 2 - 1, r0 + ry + 2, ` ${key} `, 2);
+  const key = ['@ you', ship.parked && '& ship', '! signal', signals && 'x read', shown.some(f => !f.got) && '? unknown', shown.some(f => f.got) && '* found'].filter(Boolean);
+  // on one line if it fits, on more if not
+  const lines = [];
+  for (const k of key) {
+    const n = lines.length - 1;
+    if (n >= 0 && lines[n].length + 3 + k.length <= cols - 4) lines[n] += `   ${k}`; else lines.push(k);
+  }
+  lines.forEach((l, i) => put(c0 - l.length / 2 - 1, r0 + ry + 2 + i, ` ${l} `, 2));
 }
 
 function saveText() {
@@ -2473,10 +2623,12 @@ async function newPlanet(seed) {
     }
     highGround();
     placeBeacons();
+    placeFinds();
     uploadPlanet();
-    // signals found here on an earlier visit stay found
-    const was = kept[seed];
-    if (typeof was === 'string') planet.beacons.forEach((b, i) => { b.got = was.split('|')[0][i] === '1'; });
+    // what was found here on an earlier visit stays found
+    const [sig = '', fnd = ''] = typeof kept[seed] === 'string' ? kept[seed].split('|')[0].split('.') : [];
+    planet.beacons.forEach((b, i) => { b.got = sig[i] === '1'; });
+    planet.finds.forEach((f, i) => { f.got = fnd[i] === '1'; });
     signals = planet.beacons.filter(b => b.got).length;
     ship.parked = false;
     ui.until = 0;

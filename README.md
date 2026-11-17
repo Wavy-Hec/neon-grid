@@ -13,8 +13,11 @@ You start in orbit. Every planet has five signals on the ground, visible as beam
 (a world that is almost all ocean may have fewer). Fly down to one, land, and walk into it:
 a signal only counts on foot. Hold `W` and the ship dives, levels out and skims the land.
 The status line at the bottom says how far the next signal is and which way to turn, and names
-the key that does something where you are, such as `f land` once you are low enough. That is
-the whole game; the rest is looking around.
+the key that does something where you are, such as `f land` once you are low enough.
+
+There is a little more to find. Each signal you read marks a place on the chart (`tab`) where
+something else stands: a ring of stones, the wreck of a lander, a cairn on the planet's highest
+ground. They count for nothing; they are there to be walked up to. The rest is looking around.
 
 ![a whole run: down from orbit through the ring, in over fir trees, a walk up to a signal beam, then back out to orbit](shots/run.gif)
 
@@ -131,8 +134,8 @@ Three things keep the picture steady.
   gets lighter characters than near ground, and one character gives way to the next through a
   stipple of the two.
 
-The height map is too coarse for anything small. So the parked lander and the dozen trees nearest
-you are drawn as real shapes, signed distance functions marched in the same shader. Each tree
+The height map is too coarse for anything small. So the parked lander, the things to find and the
+dozen trees nearest you are drawn as real shapes, signed distance functions marched in the same shader. Each tree
 grows out of the terrain's plain cone as you walk up to it.
 
 Matching glyphs by shape rather than brightness comes from Alex Harri's article
