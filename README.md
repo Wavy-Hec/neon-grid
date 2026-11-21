@@ -81,7 +81,8 @@ sea. Meteors cross the night sky on every world with air, now and then a firebal
 land; on some worlds they come in a shower from one point of the sky. Try `?seed=glacier` at night.
 On the wetter worlds mist gathers in the low ground after dark and is thickest at dawn, so hills stand
 out of it, until the sun burns it off. Snow comes in spells: anywhere on a frozen world, and on the
-mountains and polar snow of the others.
+mountains and polar snow of the others. The ice in a frozen world's air rings the sun with a halo, and
+with the sun low puts a bright spot on either side of it.
 
 `P` writes the frame out as plain text. This is `?seed=home` at 80 columns:
 

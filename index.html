@@ -1170,6 +1170,7 @@ uniform vec3 uAuroraLow, uAuroraHigh;   // its colour low in a curtain and high 
 uniform vec4 uMet[2], uMetB[2], uMetC[2];   // up to two meteors: where each started and how far through it is; which way it goes and how far; its colour and the length of its tail
 uniform vec4 uFlash;   // a fireball's light on the ground: where it is in the sky and how bright
 uniform vec2 uMist;   // how thick the mist is at the bottom (0: none) and the height it thins over, metres
+uniform float uHalo;   // 1 where the air holds ice: a ring round the sun, and a bright spot either side of it
 uniform vec3 uBeta, uShallow, uCloudCol, uRingN, uRingCol, uBeaconCol;
 uniform vec4 uSea, uCloud, uRing, uMoon, uShip;
 uniform vec3 uShipFwd, uRock;
@@ -1819,6 +1820,28 @@ vec3 lights(vec3 ro, vec3 rd) {
     col += uSunCol * dark * .5 * streaks / (rho * rho * sqrt(rho));
     glow = max(glow, dark * .5 / (rho * rho));
   }
+  // Ice in the air bends sunlight by 22 degrees at least, more of it at just that angle: a faint ring round
+  // the sun, red on the inside, and with the sun low two bright spots level with it on either side, a
+  // little further out the higher it is
+  if (uHalo > 0.) {
+    float th = acos(clamp(dot(rd, uSun), -1., 1.)), x = (th - .384) / .014;
+    float ring = th > .37 ? exp(-x * x) + .25 * exp(-max(x, 0.) * .35) * step(0., x) * exp(-x * x * .02) : 0.;
+    vec3 up = normalize(ro), sh = normalize(uSun - up * dot(uSun, up));
+    float e = asin(clamp(dot(uSun, up), -1., 1.)), ce = cos(e), low = 1. - smoothstep(.35, .6, e);
+    float daz = acos(clamp((.927 - sin(e) * sin(e)) / max(ce * ce, .01), -1., 1.));
+    float dogs = 0.;
+    for (int k = -1; k <= 1; k += 2) {
+      vec3 side = normalize(cross(up, sh)) * float(k), dog = up * sin(e) + (sh * cos(daz) + side * sin(daz)) * ce;
+      // brightest at the inside, with a tail away from the sun
+      vec3 q = rd - dog;
+      float out_ = dot(q, side), d2 = dot(q, q) - out_ * out_;
+      dogs += exp(-d2 / .0004) * (out_ < 0. ? exp(-out_ * out_ / .0002) : exp(-out_ / .03));
+    }
+    float sunUp = smoothstep(-.02, .05, dot(uSun, up));
+    vec3 tint = mix(vec3(1., .45, .3), vec3(1., .97, .92), smoothstep(-1., 1.5, x));
+    col += uSunCol * tint * (ring * .12 + dogs * .9 * low) * sunUp * uSkyLit;
+    glow = max(glow, dogs * .6 * low * sunUp);
+  }
   vec2 s = sphere(ro - uMoon.xyz, rd, uMoon.w);
   if (uMoon.w > 0. && hits(s)) {
     vec3 n = normalize(ro + rd * s.x - uMoon.xyz);
@@ -1850,6 +1873,11 @@ vec3 atmosphere(vec3 ro, vec3 rd, float tMax, out vec3 trans) {
     // and the moon's: in an eclipse the air overhead goes dark while the air far off round the horizon,
     // out of the shadow, stays lit
     lit *= sunShows(p);
+    // and the ring's, which lies across the sky in bands where the ring is thick
+    if (uRing.z > 0.) {
+      float kr = -dot(p, uRingN) / dot(uSun, uRingN);
+      if (kr > 0.) lit *= 1. - .8 * ringBand(length(p + uSun * kr));
+    }
     if (lit <= 0.) continue;
     float dl = sphere(p, uSun, uR + uAtmo).y / 4., ods = 0.;
     for (int j = 0; j < 4; j++) ods += exp(-max(length(p + uSun * ((float(j) + .5) * dl)) - uR, 0.) / hs) * dl;
@@ -3306,6 +3334,8 @@ function drawScene() {
   // the mist, unless it is broad day all round
   const mist = p.mist && (alt > p.atmo * .5 || dot(norm(cam.pos), sunDir()) < .7);
   gl.uniform2f(u.uMist, mist ? p.mist.thick : 0, mist ? p.mist.deep : 1);
+  // ice optics on the frozen worlds, seen from in the air
+  gl.uniform1f(u.uHalo, p.K.label === 'frozen' && alt < p.atmo ? 1 : 0);
   gl.uniform4f(u.uShip, ...ship.pos, ship.parked ? 1 : 0);
   gl.uniform3fv(u.uShipFwd, ship.face || [0, 0, 1]);
   // the things to find, when near enough to make out
