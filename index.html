@@ -10,9 +10,10 @@
   canvas { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
   #pad { position: fixed; right: 12px; bottom: 44px; display: none; gap: 8px; }
   #pad2 { position: fixed; right: 12px; top: 12px; display: none; gap: 8px; }
+  /* the buttons are only places to press: their labels are drawn in the picture's own text grid */
   #pad button, #pad2 button {
-    width: 56px; height: 56px; padding: 0; border: 1px solid #555; border-radius: 0; background: #000; color: #ccc;
-    font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    width: 56px; height: 56px; padding: 0; border: 0; background: transparent; color: transparent; font-size: 0;
+    -webkit-tap-highlight-color: transparent;
   }
   #pad2 button { width: 48px; height: 36px; }
   #notice { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); }
@@ -20,8 +21,8 @@
 </head>
 <body>
 <canvas id="view"></canvas>
-<div id="pad"><button data-k="c">down</button><button data-k=" ">up</button><button data-k="f">f</button></div>
-<div id="pad2"><button data-k="tab">map</button><button data-k="j">log</button><button data-k="t">today</button><button data-k="m">sound</button><button data-k="n">new</button></div>
+<div id="pad"><button data-k="c" aria-label="down">down</button><button data-k=" " aria-label="up">up</button><button data-k="f" aria-label="f">f</button></div>
+<div id="pad2"><button data-k="tab" aria-label="map">map</button><button data-k="j" aria-label="log">log</button><button data-k="t" aria-label="today">today</button><button data-k="m" aria-label="sound">sound</button><button data-k="n" aria-label="new">new</button></div>
 <div id="notice" hidden>graphics reset, restoring</div>
 
 <script>
@@ -3496,6 +3497,17 @@ function drawText() {
       put(5, top + 1 + i, ` ${what.padEnd(width)}`, 2);
     });
     put(2, top + 1 + rows.length, ` ${foot.padEnd(width + 3)}`, 2);
+  }
+  // The touch buttons: a block of the bar's colour with the label in it, drawn over the place each one is,
+  // in the accent while it is held
+  if (pad.style.display === 'flex') {
+    const k = gl.drawingBufferWidth / innerWidth;
+    for (const b of [...pad.children, ...pad2.children]) {
+      const r = b.getBoundingClientRect(), x0 = Math.round(r.left * k / tgrid.cw), x1 = Math.round(r.right * k / tgrid.cw);
+      const y0 = Math.round(r.top * k / tgrid.ch), y1 = Math.round(r.bottom * k / tgrid.ch), style = keys.has(b.dataset.k) ? 4 : 3;
+      for (let y = y0; y < y1; y++) put(x0, y, ' '.repeat(x1 - x0), style);
+      put(Math.floor((x0 + x1 - b.textContent.length) / 2), Math.floor((y0 + y1 - 1) / 2), b.textContent, style);
+    }
   }
   // a message goes over the chart and the lists, on a line cleared of them
   if (time < ui.until) {
