@@ -82,7 +82,8 @@ land; on some worlds they come in a shower from one point of the sky. Try `?seed
 On the wetter worlds mist gathers in the low ground after dark and is thickest at dawn, so hills stand
 out of it, until the sun burns it off. Snow comes in spells: anywhere on a frozen world, and on the
 mountains and polar snow of the others. The ice in a frozen world's air rings the sun with a halo, and
-with the sun low puts a bright spot on either side of it.
+with the sun low puts a bright spot on either side of it. One world in four has a giant planet in its
+sky, banded, fixed among the stars: walk far enough over the curve and it sets.
 
 `P` writes the frame out as plain text. This is `?seed=home` at 80 columns:
 
