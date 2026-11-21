@@ -64,6 +64,10 @@ The signals you have found are kept in your browser, so a planet you come back t
 
 Also worth a visit: `home` (a cratered moon with a ring) and `reef` (pink and violet, with glowing trees).
 
+On some worlds the moon's path crosses the sun's, and every half hour or so it passes in front of it.
+Its shadow crosses the planet; where it is total the sky goes dark, the stars come out and the
+horizon glows all the way round. `?seed=coral` and `?seed=dust` are two of them.
+
 `P` writes the frame out as plain text. This is `?seed=home` at 80 columns:
 
 ````

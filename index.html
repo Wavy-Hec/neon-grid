@@ -325,6 +325,15 @@ function design(seed) {
     moon: rnd() < .6 && { dist: R * rf(9, 11), r: R * rf(.2, .34), speed: rf(.006, .015), phase: rf(0, 6), incl: rf(-.4, .4) },
     craters: Array.from({ length: Math.round((K.craters || 0) * k) }, () => ({ d: onSphere(), r: rf(.03, .16) / Math.sqrt(k) })),
   });
+  // On half the worlds with a moon its path runs along the sun's: it passes in front of the sun every 25
+  // to 35 minutes, and its shadow crosses the planet. A random stream of its own, so nothing else moves.
+  const ec = mulberry(hashStr(seed + ' eclipse'));
+  if (planet.moon && ec() < .5) {
+    // big enough in the sky to cover the sun for some seconds
+    planet.moon.r = Math.max(planet.moon.r, planet.R * .3);
+    planet.moon.incl = planet.tilt + (ec() - .5) * .03;
+    planet.moon.speed = Math.PI * 2 / planet.dayLen + (ec() < .5 ? -1 : 1) * Math.PI * 2 / (60 * (25 + 10 * ec()));
+  }
 }
 
 function terrain(x, y, z, craters) {
@@ -781,6 +790,7 @@ uniform sampler3D uNoise;
 uniform vec3 uPos, uFwd, uRight, uUp, uSun, uSunCol;
 uniform vec2 uFov;
 uniform float uTime, uR, uTop, uPix, uTexel, uBlock, uAtmo, uAdapt, uEmit;
+uniform float uEclipse, uSkyLit;   // whether the moon is near the sun at all; how much of the sun the eye sees
 uniform vec3 uBeta, uShallow, uCloudCol, uRingN, uRingCol, uBeaconCol;
 uniform vec4 uSea, uCloud, uRing, uMoon, uShip;
 uniform vec3 uShipFwd, uRock;
@@ -1059,8 +1069,23 @@ float shadow(vec3 p) {
 float cloudAt(vec3 d);
 float ringBand(float r);
 // what dims the sun at p besides the terrain: cloud, the ring's shadow, the parked ship
+// How much of the sun's disc the moon leaves showing from p. The two discs are taken as flat circles in the
+// sky; the part of the sun's that the moon's covers is the area where they overlap.
+const float SUN_R = .02;   // the sun's radius in the sky, radians
+float sunShows(vec3 p) {
+  if (uEclipse <= 0.) return 1.;
+  vec3 m = uMoon.xyz - p;
+  float dm = length(m), pS = SUN_R, pO = asin(clamp(uMoon.w / dm, 0., 1.)), d = atan(length(cross(uSun, m)), dot(uSun, m));
+  if (d >= pS + pO) return 1.;
+  if (d <= abs(pO - pS)) return pO >= pS ? 0. : 1. - pO * pO / (pS * pS);
+  float d1 = (pS * pS - pO * pO + d * d) / (2. * d), d2 = d - d1;
+  float A = pS * pS * acos(clamp(d1 / pS, -1., 1.)) - d1 * sqrt(max(pS * pS - d1 * d1, 0.))
+          + pO * pO * acos(clamp(d2 / pO, -1., 1.)) - d2 * sqrt(max(pO * pO - d2 * d2, 0.));
+  return clamp(1. - A / (3.14159265 * pS * pS), 0., 1.);
+}
+
 float skyShade(vec3 p) {
-  float v = 1.;
+  float v = sunShows(p);
   if (uCloud.w > 0. && length(p) < uR + uCloud.y) {
     vec2 s = sphere(p, uSun, uR + uCloud.y);
     v *= 1. - .75 * uCloud.w * cloudAt(normalize(p + uSun * s.y));
@@ -1090,7 +1115,7 @@ float cloudAt(vec3 d) {
   return smoothstep(uCloud.x, uCloud.x + .2, fbm(q + w * 1.4));
 }
 vec3 sunTint(float mu, float k) { return exp(-uBeta * uAtmo * .25 * k / max(mu + .15, .05)); }
-vec3 skyCol() { return uBeta / max(max(uBeta.r, uBeta.g), max(uBeta.b, 1e-6)); }
+vec3 skyCol() { return uBeta / max(max(uBeta.r, uBeta.g), max(uBeta.b, 1e-6)) * uSkyLit; }
 
 // Needles: the sun; the sky from above, in its colour; light thrown up from the ground; and with the sun
 // behind them, light coming through the thin outer part of a bough in the needles' own colour. tips is 1
@@ -1109,7 +1134,7 @@ vec3 needles(vec3 alb, vec3 n, vec3 up, float mu, vec3 sun, vec3 thru, float tip
 vec3 cloudLit(vec3 d) {
   float mu = dot(d, uSun);
   float thick = cloudAt(normalize(d + uSun * .025));
-  return uCloudCol * (uSunCol * sunTint(mu, .7) * smoothstep(-.12, .2, mu) * mix(1., .4, thick)
+  return uCloudCol * (uSunCol * sunTint(mu, .7) * smoothstep(-.12, .2, mu) * mix(1., .4, thick) * sunShows(d * (uR + uCloud.y))
                       + skyCol() * smoothstep(-.3, .2, mu) * .15 + .01);
 }
 
@@ -1244,9 +1269,17 @@ vec3 stars(vec3 rd) {
 
 // sun and moon; they stay visible through a daytime sky, the stars do not
 vec3 lights(vec3 ro, vec3 rd) {
-  float sd = max(dot(rd, uSun), 0.);
-  vec3 col = uSunCol * (smoothstep(.99965, .9999, sd) * 60. + pow(sd, 900.) * 4. + pow(sd, 50.) * .2);
-  glow = smoothstep(.9992, .9999, sd);
+  float sd = max(dot(rd, uSun), 0.), shows = sunShows(ro);
+  vec3 col = uSunCol * (smoothstep(.99965, .9999, sd) * 60. + pow(sd, 900.) * 4. + pow(sd, 50.) * .2) * shows;
+  glow = smoothstep(.9992, .9999, sd) * shows;
+  // With the sun nearly all behind the moon its corona shows: a pale glow round the dark disc, fading
+  // outward, a little streaked
+  if (shows < .5 && sd > .99) {
+    float rho = max(length(cross(rd, uSun)) / SUN_R, 1.), dark = 1. - shows * 2.;
+    float streaks = .7 + .5 * n3(normalize(rd - uSun * dot(rd, uSun) + 1e-6) * 4.);
+    col += uSunCol * dark * .5 * streaks / (rho * rho * sqrt(rho));
+    glow = max(glow, dark * .5 / (rho * rho));
+  }
   vec2 s = sphere(ro - uMoon.xyz, rd, uMoon.w);
   if (uMoon.w > 0. && hits(s)) {
     vec3 n = normalize(ro + rd * s.x - uMoon.xyz);
@@ -1275,6 +1308,9 @@ vec3 atmosphere(vec3 ro, vec3 rd, float tMax, out vec3 trans) {
     // the dusk sky
     float pb = dot(p, uSun), wide = .5 * ds * length(rd - uSun * dot(rd, uSun)) + .01;
     float lit = pb > 0. ? 1. : smoothstep(uR * .99 - wide, uR * .99 + wide, sqrt(max(dot(p, p) - pb * pb, 0.)));
+    // and the moon's: in an eclipse the air overhead goes dark while the air far off round the horizon,
+    // out of the shadow, stays lit
+    lit *= sunShows(p);
     if (lit <= 0.) continue;
     float dl = sphere(p, uSun, uR + uAtmo).y / 4., ods = 0.;
     for (int j = 0; j < 4; j++) ods += exp(-max(length(p + uSun * ((float(j) + .5) * dl)) - uR, 0.) / hs) * dl;
@@ -1893,6 +1929,19 @@ function say(msg, secs = 5, minor = false) {
 function sunDir() {
   const a = time / planet.dayLen * Math.PI * 2 + 1, c = Math.cos(planet.tilt);
   return [Math.cos(a) * c, Math.sin(planet.tilt), Math.sin(a) * c];
+}
+// How much of the sun's disc the moon leaves showing from p, as the shader works it out (sunShows there)
+const SUN_R = .02;   // the sun's radius in the sky, radians
+function sunShows(p) {
+  if (!planet.moon) return 1;
+  const v = sub(moonPos(), p), dm = len(v), s = sunDir(), pS = SUN_R;
+  const pO = Math.asin(clamp(planet.moon.r / dm, 0, 1)), d = Math.atan2(len(cross(s, v)), dot(s, v));
+  if (d >= pS + pO) return 1;
+  if (d <= Math.abs(pO - pS)) return pO >= pS ? 0 : 1 - pO * pO / (pS * pS);
+  const d1 = (pS * pS - pO * pO + d * d) / (2 * d), d2 = d - d1;
+  const A = pS * pS * Math.acos(clamp(d1 / pS, -1, 1)) - d1 * Math.sqrt(Math.max(pS * pS - d1 * d1, 0))
+          + pO * pO * Math.acos(clamp(d2 / pO, -1, 1)) - d2 * Math.sqrt(Math.max(pO * pO - d2 * d2, 0));
+  return clamp(1 - A / (Math.PI * pS * pS), 0, 1);
 }
 function moonPos() {
   const m = planet.moon, a = time * m.speed + m.phase, c = Math.cos(m.incl);
@@ -2521,6 +2570,10 @@ function drawScene() {
   gl.uniform3fv(u.uRingN, ring ? ring.n : [0, 1, 0]);
   gl.uniform3fv(u.uRingCol, ring ? ring.col : [0, 0, 0]);
   gl.uniform4f(u.uMoon, ...(p.moon ? moonPos() : [0, 0, 0]), p.moon ? p.moon.r : 0);
+  // an eclipse is worked out only while the moon is near enough the sun to hide some of it from somewhere
+  const eclipse = p.moon && Math.acos(clamp(dot(norm(moonPos()), sunDir()), -1, 1)) < .25;
+  gl.uniform1f(u.uEclipse, eclipse ? 1 : 0);
+  gl.uniform1f(u.uSkyLit, eclipse ? sunShows(cam.pos) : 1);
   gl.uniform4f(u.uShip, ...ship.pos, ship.parked ? 1 : 0);
   gl.uniform3fv(u.uShipFwd, ship.face || [0, 0, 1]);
   // the things to find, when near enough to make out
