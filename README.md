@@ -17,6 +17,10 @@ the key that does something where you are, such as `f land` once you are low eno
 sound on, the signals you have not read call out from a few hundred metres, louder as you come
 closer and in the ear on their side.
 
+Every planet also has one landform of its own kind: an atoll in the open sea, a lake in a ring of
+hills, a canyon through the desert, a rift in the ice that glows from inside, a volcano with a lake
+of lava, a grove of giant trees, or a great basin on an airless moon.
+
 There is a little more to find. The first signals you read each mark a place on the chart (`tab`)
 where something else stands, three at most: a ring of stones, the wreck of a lander, a cairn on the
 planet's highest ground. They count for nothing; they are there to be walked up to. The rest is

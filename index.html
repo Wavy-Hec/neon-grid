@@ -524,8 +524,10 @@ function placeFinds() {
   planet.finds = list;
 }
 
-// trees, spires and crystals are bumps stamped into the height map
-function scatter() {
+// The highest ground, and how much of the surface is sea. The planet is measured before its landmark is
+// made: colours, snow and the props all go by the peak, and a volcano taller than that would drag every
+// one of them down the mountains.
+function measure() {
   let top = 0, low = 0;
   const land = [];
   for (const H of planet.height) for (let i = 0; i < H.length; i++) {
@@ -538,22 +540,339 @@ function scatter() {
   // the heights that half and nine tenths of the land lie below: lowland, hills and mountains on the chart
   land.sort((a, b) => a - b);
   planet.shelf = [land[land.length >> 1] || 0, land[Math.floor(land.length * .9)] || 0];
+}
+
+// ---- landmarks
+//
+// Every planet has one landform of its own, by its kind. It is a function of direction, like the terrain,
+// and is laid over the finished height map, so it crosses the seams of the cube as the terrain does. Its
+// place is chosen from the seed by a random stream of its own, after the planet has been measured, so
+// nothing else about the planet depends on it.
+//
+// Each kind says what it is (what), how far from its middle it changes the ground (r, and wide for a long
+// one, in metres), how well a place suits it (fit: higher is better) and its shape: the height at a point
+// u metres along it and v metres across, where the terrain's own height is h. fit and settle are handed
+// at(u, v), the terrain's height at such a point. span(a, b) is a number between a and b from the
+// landform's own random stream. wob(p, m) is the planet's noise at direction p in features about m metres
+// across, which is what keeps the edges from being drawn with a ruler.
+
+const mean = a => a.reduce((x, y) => x + y) / a.length;
+// eight heights on a circle m metres round a place
+const around = (at, m) => Array.from({ length: 8 }, (_, i) => at(m * Math.cos(i * .785), m * Math.sin(i * .785)));
+// An outline that is no circle: round it the radius swells and shrinks in two, three and five lobes, sized
+// and turned by the seed, by no more than .28 either way. Returns what to multiply a distance from the
+// middle by.
+const lobes = span => {
+  const k = [.06, .05, .03].flatMap(a => { const s = span(a, 2 * a), t = span(0, 6.2832); return [s * Math.cos(t), s * Math.sin(t)]; });
+  return (u, v, rho) => {
+    const c = u / (rho || 1), s = v / (rho || 1), c2 = c * c - s * s, s2 = 2 * c * s, c3 = c * c2 - s * s2, s3 = s * c2 + c * s2;
+    return 1 + k[0] * c2 + k[1] * s2 + k[2] * c3 + k[3] * s3 + k[4] * (c2 * c3 - s2 * s3) + k[5] * (s2 * c3 + c2 * s3);
+  };
+};
+// The course of a long landform: for every 4 m along it, whatever line(p, end) says of the point p on its
+// straight middle line, where end runs from 0 at the middle to 1 at either tip. Returns a function of u
+// that reads it back.
+const course = (M, half, line) => {
+  const R = planet.R, n = Math.ceil(half / 4), L = [];
+  for (let i = -n - 1; i <= n + 1; i++) L.push(line(add(mul(M.d, Math.cos(i * 4 / R)), mul(M.e, Math.sin(i * 4 / R))), Math.min(1, Math.abs(i * 4) / half)));
+  return u => {
+    const x = u / 4 + n + 1, i = Math.floor(x), a = L[i], b = L[i + 1];
+    return a.map((y, k) => lerp(y, b[k], x - i));
+  };
+};
+
+const LANDFORMS = {
+  // an atoll: a ring of low islands round a shallow lagoon, on a reef that rises from the open sea
+  ocean(span, wob) {
+    const r = span(60, 90), out = lobes(span);
+    return {
+      what: 'atoll', r: (r + 68) / .72,
+      // open sea: the shallowest sounding for 250 m around is as deep as it can be
+      fit: at => -Math.max(at(0, 0), ...[.7, 1.4, 2.1, 2.9].flatMap(k => around(at, k * r))),
+      shape(u, v, h, p) {
+        const rho = Math.hypot(u, v);
+        let t = rho * out(u, v, rho) - r;   // metres outside the crest of the ring
+        // off the reef the bed falls away steeply: nothing to do where that is already under the sea bed
+        if (-1.2 - (t - 30) * 1.3 < h) return h;
+        t += 5 * wob(p, 24, 7);
+        if (t > 25) return Math.max(h, -1.2 - (t - 25) * 1.3);
+        if (t < -18) return Math.max(h, -1.8 + 2.4 * t / r + .5 * wob(p, 30, 5));
+        // the ring is a chain of islands, with passes between them that can be waded
+        const crest = -.8 + 5.8 * smooth(-.4, .05, wob(p, 70, 3));
+        return Math.max(h, t > 0 ? lerp(crest, -1.2, smooth(0, 16, t)) : lerp(-1.8 + 2.4 * t / r, crest, smooth(-18, 0, t)));
+      },
+    };
+  },
+  // a crater lake: a ring of hills round a lake at sea level, with an island off its middle
+  temperate(span, wob) {
+    const a = span(50, 66), b = a + span(26, 32), up = span(14, 19), deep = span(7, 10), out = lobes(span);
+    const turn = span(0, 6.2832), far = span(.3, .45) * a, iu = Math.cos(turn) * far, iv = Math.sin(turn) * far, ir = span(14, 20), ih = span(5, 8);
+    let ref = 0;
+    return {
+      what: 'crater lake', r: (1.7 * b + 5) / .72,
+      // low land, and no sea inside the ring of hills
+      fit(at) {
+        const near = [at(0, 0), ...around(at, .6 * b), ...around(at, 1.1 * b)];
+        return (Math.min(...near) < 1 ? -100 : 0) - mean([...near, ...around(at, 1.6 * b)]);
+      },
+      settle(at) { ref = clamp(mean(around(at, 1.4 * b)), 3, 9); },
+      shape(u, v, h, p) {
+        let rho = Math.hypot(u, v) * out(u, v, Math.hypot(u, v));
+        if (rho > 1.7 * b + 5) return h;
+        rho += 5 * wob(p, 30, 7);
+        const k = (rho / b - 1) / .7;
+        if (k >= 1) return h;
+        if (rho < a) {
+          const isle = ih - (ih + 5) * (Math.hypot(u - iu, v - iv) * (1 + .3 * wob(p, 22, 11)) / ir) ** 1.3;
+          return Math.max(-deep * (1 - (rho / a) ** 2), isle);
+        }
+        // the rim has summits and saddles. The ground the crater was made in shows through it, all of it by
+        // the foot of the rim and a third of it at the crest and down to the water
+        const lift = up * clamp(1 + 1.3 * wob(p, 85, 3), .35, 1.6);
+        if (k > 0) return ref + (h - ref) * lerp(.35, 1, k) + lift * (1 - k) * (1 - k);
+        return (ref + (h - ref) * .35 + lift) * ((rho - a) / (b - a)) ** 1.4;
+      },
+    };
+  },
+  // a canyon: a winding gorge with a level floor, cut down through the terraces
+  arid(span, wob) {
+    const half = span(320, 390), depth = span(22, 28), step = planet.K.terrace;
+    let floor = 0, way;
+    return {
+      what: 'canyon', r: half, wide: 170,
+      // high ground all the way along: the height that seven tenths of the middle of its course lies above
+      fit(at) {
+        const hs = [];
+        for (let u = -.7; u <= .7; u += .14) for (const v of [-35, 0, 35]) hs.push(at(u * half, v));
+        hs.sort((x, y) => x - y);
+        return hs[Math.floor(hs.length * .3)];
+      },
+      settle(at, M) {
+        floor = Math.round((this.fit(at) - depth) / step) * step;   // the floor lies on one of the planet's terraces
+        // where the middle of the floor runs and how wide it is; it narrows to nothing at either end
+        way = course(M, half, (p, end) => [85 * wob(p, 210) + 25 * wob(p, 80, 5), (11 + 5 * wob(p, 90, 3)) * (1 - .8 * smooth(.7, 1, end))]);
+      },
+      shape(u, v, h, p) {
+        const end = Math.abs(u) / half;
+        if (end >= 1) return h;
+        const [mid, width] = way(u);
+        let w = Math.abs(v - mid) - width;   // metres outside the foot of the wall
+        if (floor + (w - 5) * 1.4 > h) return h;
+        w += 5 * wob(p, 30, 7);
+        const s = (floor + Math.max(w, 0) * 1.4) / step, f = Math.floor(s);
+        // the walls are stepped at the heights the terraces have everywhere else, and the floor climbs out at either end
+        return Math.min(h, Math.max((f + smooth(.3, .7, s - f)) * step, lerp(floor, planet.peak + 1, smooth(.7, 1, end))));
+      },
+    };
+  },
+  // a rift: a long crack in the ice, widest and deepest in the middle, that glows from within
+  frozen(span, wob, lit) {
+    const half = span(290, 360), depth = span(20, 26), top = span(7, 10), ice = hex(planet.K.ramp[1][1]), glow = hex(planet.K.props[0].col);
+    let way;
+    return {
+      what: 'rift', r: half, wide: 90,
+      // low and level ice
+      fit(at) {
+        const hs = [];
+        for (let u = -1; u <= 1; u += .1) hs.push(at(u * half, 0));
+        return -mean(hs) - 2 * (Math.max(...hs) - Math.min(...hs));
+      },
+      // the crack wanders, with a kink here and there, and gapes more in some places than in others
+      settle(at, M) { way = course(M, half, (p, end) => [45 * wob(p, 320) + 14 * Math.abs(wob(p, 45, 5)), Math.sqrt(1 - end * end) * (1 + .35 * wob(p, 55, 9))]); },
+      shape(u, v, h, p) {
+        if (Math.abs(u) >= half) return h;
+        const [mid, open] = way(u), w = Math.abs(v - mid) / open;   // metres from the middle of the crack, as if it were open all the way
+        if (w >= top + 4) return h;
+        // the ice is pushed up a little along both edges
+        if (w >= top) return h + 1.3 * open * (1 - (w - top) / 4) ** 2;
+        const cut = Math.min(1, (top - w) / (top - 1.6));
+        lit(.4 * open * cut * cut, mix3(ice, glow, cut));
+        return h + 1.3 * open - (depth + 1.3) * open * cut;
+      },
+    };
+  },
+  // a volcano: a cone higher than anything else on the planet, with a lake of lava in its crater that
+  // spills over the rim on one side
+  molten(span, wob, lit) {
+    const r = span(110, 140), rc = span(24, 30), rim = planet.peak * 1.55, lake = rim - span(9, 12), out = lobes(span);
+    const lava = hex(planet.K.veins), rock = hex(planet.K.rock), t1 = span(0, 6.2832), t2 = span(0, 6.2832), [ox, oy, oz] = planet.off;
+    let base = 0, up = 0, cool = 0;
+    return {
+      what: 'volcano', r: (r + 4) / .72,
+      // low land, with land most of the way round
+      fit(at) {
+        const hs = [...around(at, .35 * r), ...around(at, .7 * r), ...around(at, r)];
+        return (at(0, 0) < 2 ? -1e3 : 0) - (hs.filter(h => h > 0).length < 14 ? 500 : 0) - Math.max(...hs);
+      },
+      settle(at) {
+        base = at(0, 0); up = (rim - base) / (1 - rc / r) ** 1.7;
+        // how far down the cone, from 0 at the rim to 1 at the foot, the ground is still above the heights the planet's veins keep to
+        cool = (r * (1 - (Math.max(0, planet.peak * .55 - base) / up) ** (1 / 1.7)) - rc) / (r - rc);
+      },
+      shape(u, v, h, p) {
+        const rho0 = Math.hypot(u, v);
+        let rho = rho0 * out(u, v, rho0);
+        if (rho > r + 4) return h;
+        rho += 4 * wob(p, 28, 7);
+        if (rho >= r) return h;
+        // The stream of lava runs down the side the volcano faces, swinging from side to side, wider and
+        // cooler lower down. bed is how far a point is from its middle, in half widths of the stream.
+        const x = Math.max(0, (rho - rc) / (r - rc)), sway = smooth(rc, 2.5 * rc, u) * (9 * Math.sin(u / 21 + t1) + 4 * Math.sin(u / 8 + t2));
+        const bed = u > 0 ? Math.abs(v - sway) / (1.5 + 3 * x) : 9, hot = smooth(1, .4, bed) * smooth(cool + .2, cool - .2, x);
+        // Inside the rim, the wall of the crater. Outside it, the cone: it stands on the terrain, which is
+        // levelled toward the top so the rim comes out even, and gullies run down it, deepest half way.
+        let top = rho < rc ? rim - (rc - rho)
+          : lerp(base, h, smooth(rc, 2.5 * rc, rho)) + up * (1 - rho / r) ** 1.7 * (1 + 1.2 * noise(u / rho0 * 2.2 + ox, v / rho0 * 2.2 + oy, oz) * x * (1 - x));
+        // the stream has cut a breach in the rim, down to the level of the lake, and a bed for itself below that
+        top -= Math.max(0, top - lake - 1) * smooth(7, 1, bed) + 1.2 * smooth(1.6, .8, bed);
+        if (rho < rc && top <= lake) {
+          // the lake: dark plates of crust with bright cracks between them
+          const crack = .3 + .7 * smooth(.25, 0, Math.abs(wob(p, 9, 5)));
+          lit(crack, mix3(rock, lava, .25 + .75 * crack), LAVA);
+          return lake;
+        }
+        if (hot > .02) lit(hot * .86, mix3(rock, lava, hot), hot > .5 ? LAVA : 0);
+        return top;
+      },
+    };
+  },
+  // a grove: a handful of trees many times the height of the rest, in a glade they have drunk dry
+  overgrown(span, wob, lit, dry) {
+    const r = span(48, 64), out = lobes(span), P = planet.K.props[0], tree = hex(P.col), giants = [];
+    // the giants stand anywhere in the middle of the glade, no two closer than 15 m
+    for (let n = 0; n < 60 && giants.length < 7; n++) {
+      const a = span(0, 6.2832), m = 34 * Math.sqrt(span(0, 1)), t = [m * Math.cos(a), m * Math.sin(a), span(3.6, 5), span(28, 40)];
+      if (giants.every(g => Math.hypot(g[0] - t[0], g[1] - t[1]) > 15)) giants.push(t);
+    }
+    return {
+      what: 'grove', r: (r + 22) / .72, giants,
+      // forest: ground at the heights the trees keep to and as wet as they want it, all of it in the middle
+      // and as much as there is for 100 m around
+      fit(at, damp) {
+        const wood = (u, v) => { const hn = at(u, v) / planet.peak; return hn > P.hn[0] && hn < P.hn[1] && damp(u, v) > P.wet + .05 ? 1 : 0; };
+        return 3 * (wood(0, 0) + mean(around(wood, 18)) + mean(around(wood, 36))) + mean(around(wood, 65)) + mean(around(wood, 100))
+          - (Math.max(...around(at, 36)) - Math.min(...around(at, 36))) / 20;
+      },
+      shape(u, v, h, p) {
+        const rho = Math.hypot(u, v), t = rho * out(u, v, rho) - r;
+        if (t < 22) dry(smooth(14, -4, t + 8 * wob(p, 30, 7)));
+        // the giants light the ground round their feet
+        let s = 0;
+        for (const g of giants) s += 1 / (1 + ((u - g[0]) ** 2 + (v - g[1]) ** 2) / 140);
+        if (s > .05) {
+          const q = (clamp(h / planet.peak, 0, 1) * 255 | 0) * 3;
+          lit(Math.min(.12, .1 * s), mix3([planet.dry[q], planet.dry[q + 1], planet.dry[q + 2]], tree, Math.min(.5, .5 * s)));
+        }
+        return h;
+      },
+    };
+  },
+  // a great basin: one crater far bigger than the rest, with a stepped wall and peaks in the middle
+  airless(span, wob) {
+    const a = span(150, 185), depth = span(24, 30), rise = span(7, 10), peak = depth * span(.4, .5), out = lobes(span);
+    let ref = 0;
+    return {
+      what: 'basin', r: (1.6 * a + 6) / .72,
+      // the most level ground
+      fit(at) {
+        const hs = [at(0, 0), ...[.3, .6, 1, 1.4].flatMap(k => around(at, k * a))];
+        return Math.min(...hs) - Math.max(...hs);
+      },
+      settle(at) { ref = mean(around(at, 1.25 * a)); },
+      shape(u, v, h, p) {
+        const rho = Math.hypot(u, v);
+        let q = rho * out(u, v, rho) / a;
+        if (q > 1.6 + 6 / a) return h;
+        if (q > .4) q += 6 * wob(p, 40, 7) / a;
+        if (q >= 1.6) return h;
+        // what was there shows through faintly inside, and more and more toward the edge of what the impact threw out
+        const old = (h - ref) * lerp(.15, 1, smooth(.45, 1.6, q));
+        if (q >= 1) return ref + old + rise * (1 + .5 * wob(p, 90, 3)) * ((1.6 - q) / .6) ** 2;
+        if (q < .5) return ref + old - depth + peak * Math.exp(-((rho / (.11 * a)) ** 2)) * (.5 + 1.6 * Math.abs(wob(p, 24, 9)));
+        // the wall comes down in steps, three in most places, that run into one another here and there
+        // (a part of a step is left at the foot of the wall, never under the rim)
+        const steps = x => Math.floor(x) + smooth(.2, .8, x - Math.floor(x)), n = 2.6 + 1.6 * wob(p, 130, 5), part = Math.ceil(n) - n, x = (q - .5) / .5;
+        return ref + old - depth + (depth + rise * (1 + .5 * wob(p, 90, 3)))
+          * (steps((x + .4 * wob(p, 55, 11) * x * (1 - x)) * n + part) - steps(part)) / (Math.ceil(n) - steps(part));
+      },
+    };
+  },
+};
+
+function landmark() {
+  const { R } = planet, [ox, oy, oz] = planet.off, rm = mulberry(hashStr(planet.seed + ' mark'));
+  const span = (a, b) => a + rm() * (b - a);
+  const wob = (p, m, k = 0) => noise(p[0] * R / m + ox + k, p[1] * R / m + oy, p[2] * R / m + oz);
+  // what a landform does to a point besides moving it up or down. It may glow: how much, in what colour, with
+  // what material if it has one of its own. It may be dried out: by how much of the wetness it had.
+  let hot = 0, col, mat, arid = 0;
+  const F = LANDFORMS[planet.K.label](span, wob, (x, c, m = 0) => { hot = x; col = c; mat = m; }, x => { arid = x; });
+  // the direction u metres along and v metres across from a place d that faces e, with g to its side
+  const spot = (d, e, g, u, v) => add(mul(add(mul(d, Math.cos(u / R)), mul(e, Math.sin(u / R))), Math.cos(v / R)), mul(g, Math.sin(v / R)));
+  const wetAt = q => { const [f, u, v] = cubeUV(q); return wet[f * S * S + clamp(Math.round(v), 0, S - 1) * S + clamp(Math.round(u), 0, S - 1)] / 255; };
+  // Places are tried in the band of latitudes the title's orbit passes over, facing any way, and the one
+  // that suits the landform best is taken.
+  let best = -Infinity, M;
+  for (let n = 0; n < 300; n++) {
+    const y = span(-.6, .6), a = span(0, 6.2832), s = Math.sqrt(1 - y * y), d = [s * Math.cos(a), y, s * Math.sin(a)];
+    const east = norm(cross([0, 1, 0], d)), t = span(0, 6.2832), e = add(mul(east, Math.cos(t)), mul(cross(d, east), Math.sin(t))), g = cross(d, e);
+    const score = F.fit((u, v) => heightAt(spot(d, e, g, u, v)), (u, v) => wetAt(spot(d, e, g, u, v)));
+    if (score > best) { best = score; M = { what: F.what, d, e, g, r: F.r, top: 0 }; }
+  }
+  planet.mark = M;
+  const { d, e, g } = M;
+  if (F.settle) F.settle((u, v) => heightAt(spot(d, e, g, u, v)), M);
+  if (F.giants) M.giants = F.giants.map(([u, v, r, h]) => [spot(d, e, g, u, v), r, h]);
+  // only blocks of texels the landform can reach are looked at: no corner of a block is further than
+  // .05 radians from its middle
+  const B = 32, c = [0, 0, 0], p = [0, 0, 0], reach = F.r / R, wide = (F.wide || F.r) / R, cos = Math.cos(reach), sin = Math.sin(wide);
+  for (let f = 0; f < 6; f++) {
+    const H = planet.height[f], A = planet.albedo[f];
+    for (let bj = 0; bj < S; bj += B) for (let bi = 0; bi < S; bi += B) {
+      faceDir(f, bi + B / 2 - .5, bj + B / 2 - .5, c);
+      if (Math.acos(clamp(dot(c, d), -1, 1)) > reach + .05 || Math.abs(Math.asin(clamp(dot(c, g), -1, 1))) > wide + .05) continue;
+      for (let j = bj; j < bj + B; j++) for (let i = bi, k = j * S + bi; i < bi + B; i++, k++) {
+        faceDir(f, i, j, p);
+        const ahead = p[0] * d[0] + p[1] * d[1] + p[2] * d[2], aside = p[0] * g[0] + p[1] * g[1] + p[2] * g[2];
+        if (ahead < cos || Math.abs(aside) > sin) continue;
+        hot = arid = 0;
+        const h = F.shape(Math.atan2(p[0] * e[0] + p[1] * e[1] + p[2] * e[2], ahead) * R, Math.asin(aside) * R, H[k], p);
+        if (h !== H[k]) {
+          H[k] = h;
+          if (h > M.top) M.top = h;
+        }
+        if (hot > 0) {
+          A[k * 4] = col[0] * 255; A[k * 4 + 1] = col[1] * 255; A[k * 4 + 2] = col[2] * 255; A[k * 4 + 3] = Math.max(1, hot * 255);
+          planet.mat[f][k] = mat;
+        }
+        if (arid > 0) wet[f * S * S + k] *= 1 - arid;
+      }
+    }
+  }
+}
+
+// trees, spires and crystals are bumps stamped into the height map
+function scatter() {
+  const top = planet.peak, M = planet.mark;
+  let tip = 0;
   planet.trees = [];   // the nearest of these are drawn as real shapes
   planet.treeCol = [0, 0, 0]; planet.treeGlow = 0;
   const dq = [0, 0, 0];
   for (const P of planet.K.props) {
     const c = hex(P.col), count = Math.round(P.n * planet.k * planet.k);   // as many per square metre on any size of planet
-    for (let n = 0; n < count; n++) {
+    // the giants of a grove come first, each where the grove has it, and the rest keep clear of them
+    const giants = P.mat === TREE && M.giants || [];
+    for (let n = -giants.length; n < count; n++) {
       // centres are uniform over the sphere: cube texels shrink toward the edges, so picking
       // texels uniformly would crowd the props there
-      const [f, cu, cv] = cubeUV(onSphere()), ci = Math.round(cu), cj = Math.round(cv);
-      const r = rf(P.r[0], P.r[1]), hh = rf(P.h[0], P.h[1]);
+      const [d, r, hh] = n < 0 ? giants[-n - 1] : [onSphere(), rf(P.r[0], P.r[1]), rf(P.h[0], P.h[1])];
+      const [f, cu, cv] = cubeUV(d), ci = Math.round(cu), cj = Math.round(cv);
       if (ci < 1 || cj < 1 || ci > S - 2 || cj > S - 2) continue;
       const d0 = faceDir(f, ci, cj), texel = planet.R * len(sub(faceDir(f, ci + 1, cj, dq), d0));   // texel size here, metres
       const w = Math.ceil(r / texel) + 1;
       if (ci - w < 0 || cj - w < 0 || ci + w > S - 1 || cj + w > S - 1) continue;   // the whole stamp stays on one face
       const k = cj * S + ci, H = planet.height[f], A = planet.albedo[f], h0 = H[k], hn = h0 / top;
-      if (hn < P.hn[0] || hn > P.hn[1] || h0 < .3 || A[k * 4 + 3] || wet[f * S * S + k] / 255 < P.wet) continue;   // not on top of another
+      if (hn < P.hn[0] || hn > P.hn[1] || h0 < .3 || (n >= 0 && (A[k * 4 + 3] || wet[f * S * S + k] / 255 < P.wet))) continue;   // not on top of another
       if ((Math.abs(H[k + 1] - H[k - 1]) + Math.abs(H[k + S] - H[k - S])) / (2 * texel) > 1.4) continue;   // too steep
       for (let j = cj - w; j <= cj + w; j++) for (let i = ci - w; i <= ci + w; i++) {
         const q = j * S + i, dist = len(sub(faceDir(f, i, j, dq), d0)) * planet.R / r;
@@ -575,6 +894,7 @@ function scatter() {
         planet.mat[f][q] = P.mat;
       }
       if (P.mat === TREE) planet.trees.push({ pos: mul(d0, planet.R + h0), h: hh, r, seed: (n * 7.31) % 97 });
+      if (n < 0) tip = Math.max(tip, h0 + hh);
     }
     if (P.mat === TREE) { planet.treeCol = linear(c); planet.treeGlow = P.glow || 0; }
   }
@@ -591,7 +911,7 @@ function scatter() {
       if (gap < .5) t.reach = Math.min(t.reach, t.r * 1.2 + 1.1 - Math.min(.65, (.5 - gap) / 2));
     }
   });
-  planet.top = top + 22;   // tallest prop on the highest ground
+  planet.top = Math.max(Math.max(top, M.top) + 22, tip + 2);   // tallest prop on the highest ground, or the tip of the tallest giant
 }
 
 // The ray march reads a small pyramid of maps to know how far it can go without looking. Each holds, for
@@ -719,7 +1039,7 @@ function placeBeacons() {
   const list = [];
   for (let i = 0; i < 6000 && list.length < 5; i++) {
     const d = onSphere(), h = heightAt(d), side = norm(cross(d, [.3, .9, .2]));
-    if (h < 1.5 || h > planet.peak * (i < 3000 ? .5 : 1)) continue;
+    if (h < 1.5 || h > planet.peak * (i < 3000 ? .5 : 1) || deep(d)) continue;
     if (Math.abs(heightAt(norm(add(d, mul(side, 2.7 / planet.R)))) - h) > 1.5) continue;
     if (list.some(b => dot(b.dir, d) > (i < 2000 ? .5 : i < 4000 ? .8 : .96))) continue;
     list.push({ dir: d, base: mul(d, planet.R + h), got: false });
@@ -2026,6 +2346,10 @@ function fly(dt) {
 }
 
 const floorAt = d => Math.max(heightAt(d), planet.sea ? -.9 : -1e9);
+// No ground to stand on: sea or lava more than a metre deep, and the lava of a volcano, in its crater and
+// running down from it. That is all the lava there is on the upper half of a planet's heights; the veins
+// lower down are narrow enough to step over.
+const deep = d => (planet.sea && heightAt(d) < -1) || (matAt(d) === LAVA && heightAt(d) > planet.peak * .5);
 // steepest rise per metre of the ground at d, measured over a metre
 function slopeAt(d) {
   const e = norm(cross(d, Math.abs(d[1]) < .9 ? [0, 1, 0] : [1, 0, 0])), g = cross(d, e), k = .5 / planet.R;
@@ -2074,7 +2398,7 @@ function walk(dt) {
       // steeper than about 60 degrees is a wall
       const rise = floorAt(norm(add(here, mul(way, .75)))) - base;
       if (rise >= .75 * 1.7) return null;
-      if (planet.sea && heightAt(to) < -1) { wet = true; return null; }   // water or lava deeper than a metre
+      if (deep(to)) { wet = true; return null; }
       // No step goes in under a tree or the ship. Someone already under one (set down there by the ship)
       // walks freely until they are out, or two trees close together would hold them where they stand.
       if (solid.some(([at, reach]) => aside(to, at) < reach && aside(m.dir, at) >= reach)) return null;
@@ -2142,7 +2466,7 @@ function facts() {
     `radius ${p.R} m, ${Math.round(2 * Math.PI * p.R)} m around`,
     `one day lasts ${Math.floor(Math.round(p.dayLen) / 60)} min ${Math.round(p.dayLen) % 60} s`,
     p.sea === 1 ? `${flat}% of the surface is water` : p.sea ? `${flat}% of the surface is molten` : 'no liquid on the surface',
-    `highest ground ${Math.round(p.peak)} m above the datum`,
+    `highest ground ${Math.round(Math.max(p.peak, p.mark.top))} m above the datum`,
   ];
 }
 
@@ -2150,7 +2474,7 @@ function facts() {
 function landing() {
   const d = norm(ship.pos);
   return len(ship.pos) - planet.R - groundAt(d) > 40 ? 'too high to land: come below 40 m'
-       : planet.sea && heightAt(d) < -1 ? 'no ground to stand on here' : '';
+       : deep(d) ? 'no ground to stand on here' : '';
 }
 
 // f in the air: if this is a place to land, the ship starts down (fly() does the rest, 4 s at most)
@@ -2888,6 +3212,8 @@ async function newPlanet(seed) {
     await nextFrame();
     await buildFaces(n => { ui.note = `charting ${planet.name}  ${n}/6`; });
     for (let f = 0; f < 6; f++) { planet.mat[f].fill(0); planet.albedo[f].fill(0); }
+    measure();
+    landmark();
     scatter();
     for (let f = 0; f < 6; f++) {
       ui.note = `colouring ${planet.name}  ${f + 1}/6`;
