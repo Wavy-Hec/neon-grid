@@ -313,7 +313,8 @@ const NOUNS = ['basalt', 'flint', 'shale', 'scree', 'tor', 'esker', 'moraine', '
   'squall', 'sleet', 'gale', 'haar', 'rime', 'hail', 'thaw', 'cirrus', 'nimbus', 'shoal', 'skerry', 'firth',
   'sound', 'brine', 'swell', 'strand', 'ebb', 'neap', 'wrack', 'delta'];
 function worldName(seed) {
-  const m = /^([a-z]+)(?:-(\d+))?$/.exec(seed), r = mulberry(hashStr(seed + ' name'));
+  // (at most 15 characters, the journal's column: a longer word or number takes the catalogue's way)
+  const m = /^([a-z]{1,10})(?:-(\d{1,4}))?$/.exec(seed), r = mulberry(hashStr(seed + ' name'));
   const [word, num] = m ? [m[1], m[2]] : [NOUNS[Math.floor(r() * NOUNS.length)], String(1 + Math.floor(r() * 999))];
   return word[0].toUpperCase() + word.slice(1) + (num ? ' ' + num : '');
 }
@@ -1180,6 +1181,7 @@ uniform float uTime, uR, uTop, uPix, uTexel, uBlock, uAtmo, uAdapt, uEmit;
 uniform float uEclipse, uSkyLit;   // whether the moon is near the sun at all; how much of the sun the eye sees
 uniform vec4 uAurora, uAuroraB;   // the magnetic axis and how bright the aurora is now (0: none); the oval's angle from the pole, the curtains' foot and top heights, and how far they have moved
 uniform vec3 uAuroraLow, uAuroraHigh;   // its colour low in a curtain and high up
+uniform vec2 uWave[18];   // cos and sin of the phase of each of the three waves of each of the six curtains, this frame
 uniform vec4 uMet[2], uMetB[2], uMetC[2];   // up to two meteors: where each started and how far through it is; which way it goes and how far; its colour and the length of its tail
 uniform vec4 uFlash;   // a fireball's light on the ground: where it is in the sky and how bright
 uniform vec2 uMist;   // how thick the mist is at the bottom (0: none) and the height it thins over, metres
@@ -1196,11 +1198,13 @@ uniform int uTreeN;
 uniform vec2 uTreeFade;
 uniform vec3 uTreeCol, uTreeGlowCol;   // the trees' colour, and the colour they glow if they glow
 uniform float uTreeGlow, uTreeNight;   // how much they glow; 1 if only at night
+uniform vec4 uMark;   // where the giants of a grove light the ground round them: its middle, and the cosine of its reach
 uniform vec4 uBeacon[5];
 in vec2 vUv;
 layout(location = 0) out vec4 o;
 layout(location = 1) out vec4 info;
 float glow;   // how much of this pixel is a light source, 0..1
+vec3 icy;     // light the ice in the air throws round the sun: in front of the ring, behind the clouds
 float mat;    // which set of characters it gets, an index into RAMPS
 
 uint ih(uint x) { x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16; return x; }
@@ -1545,11 +1549,15 @@ float ringBand(float r) {
 }
 
 // The aurora. A curtain of it is a sheet hanging straight down round a magnetic pole: the points at one
-// angle from the axis, a cone with its tip at the planet's centre, the angle wavering along the way
-// round. A ray meets a cone at most twice (one equation holds both poles' cones), so each crossing is
-// found exactly and there are no layers to show between steps. A sheet seen from the side is brighter
-// than one seen face on, by as much as the ray's path through it is longer; up to four times.
+// angle from the pole, the angle wavering along the way round. Along the ray, while it is between the
+// curtains' foot and top, the difference between its angle from the nearer pole and each curtain's angle
+// there is looked at in even steps; where the difference changes sign the ray goes through that curtain,
+// at the point where the line between the two looks crosses zero. Nothing is solved for, so nothing can
+// fail to settle: a fold narrower than a step is passed over whole, which shows as no more than its tip
+// drawn a little short. A sheet seen from the side is brighter than one seen face on, by as much as the
+// ray's path through it is longer: up to four times, fading out just before exactly edge on.
 float h1(float i) { return float(ih(uint(i) * 747796405U + 2891336453U) >> 8) / 16777216.; }
+vec2 cmul(vec2 a, vec2 b) { return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
 // smooth noise round a loop of n cells, x in cells
 float loop1(float x, float n) {
   float i = floor(x), f = fract(x);
@@ -1575,7 +1583,9 @@ bool cone(float A, float B, float C, float D, float th, out vec2 t) {
   t = vec2(q / (abs(qa) < 1e-9 ? 1e-9 : qa), qc / q);
   return true;
 }
-vec3 aurora(vec3 ro, vec3 rd, float tEnd) {
+// What lies beyond tCut along the ray (the cloud deck) goes into far, for the caller to cover.
+vec3 aurora(vec3 ro, vec3 rd, float tEnd, float tCut, out vec3 far) {
+  far = vec3(0.);
   if (uAurora.w <= 0.) return vec3(0.);
   float lo = uR + uAuroraB.y * .93, hi = uR + uAuroraB.z;   // .93: the lowest the foot wavers down to
   vec2 top = sphere(ro, rd, hi);
@@ -1594,50 +1604,69 @@ vec3 aurora(vec3 ro, vec3 rd, float tEnd) {
     float ang = acos(clamp(abs(dot(normalize(ro + rd * start), a)), 0., 1.));
     if (ang < a0 || ang > a1) return vec3(0.);
   }
-  vec3 sum = vec3(0.);
-  for (int k = 0; k < 3; k++) {
-    float fk = float(k);
-    vec2 t0;
-    // the crossings of the cone at the curtain's mean angle, then each again at the angle the curtain
-    // has at the longitude of the last one: twice is enough for all but where a fold is seen edge on
-    if (!cone(A, B, C, D, uAuroraB.x + fk * .06, t0)) continue;
-    for (int s = 0; s < 2; s++) {
-      float t = clamp(s == 0 ? t0.x : t0.y, -1e4, 1e4), gap = abs(t0.y - t0.x), side = fk, phi = 0.;
-      bool ok = true;
-      for (int it = 0; it < 2; it++) {
-        vec3 p = ro + rd * t;
-        side = fk + (dot(p, a) < 0. ? 3. : 0.);
-        phi = atan(dot(p, e2), dot(p, e1));
-        vec2 r;
-        if (!cone(A, B, C, D, veil(phi, side).x, r)) { ok = false; break; }
-        t = abs(r.x - t) < abs(r.y - t) ? r.x : r.y;
-        gap = abs(r.y - r.x);
-      }
-      if (!ok || t < start || t > end) continue;
-      vec3 p = ro + rd * t, pn = normalize(p);
-      // the foot wavers along the way round, the curtain breaks into arcs, and it is drawn in rays
-      float x = phi * .159155, h = length(p) - uR;
-      float foot = uAuroraB.y * (1. + .14 * (loop1(x * 20. + side * 5.3, 20.) - .5));
-      float u = (h - foot) / (uAuroraB.z - foot);
-      if (u < 0. || u > 1.) continue;
-      float arcs = smoothstep(.25, .65, loop1(x * 6. + side * 2.7 + uAuroraB.w * .004, 6.));
-      float r1 = loop1(x * 300. + side * 31. + uAuroraB.w * .6, 300.), r2 = loop1(x * 70. - uAuroraB.w * .25 + side * 7., 70.);
-      float rays = .12 + .88 * r1 * r1 * (.4 + .6 * r2);
-      // Green low down, brightest in a thin rim along the foot, and red far fainter higher up: the two
-      // colours of the oxygen that glows, at the heights where each is given off
-      float green = smoothstep(0., .03, u) * (exp(-u * 4.5) + .7 * exp(-u * 28.));
-      float red = .08 * smoothstep(.2, .55, u) * (1. - smoothstep(.7, 1., u));
-      // how edge-on the sheet is seen: its normal is across it, tilted by how fast the angle changes along it.
-      // Where a fold is seen exactly edge on the two crossings meet, and it fades rather than ending sharp.
-      vec3 pole = dot(p, a) < 0. ? -a : a;
-      float ca = dot(pn, pole), sa = sqrt(max(1. - ca * ca, 1e-6));
-      float slope = veil(phi, side).y;
-      vec3 ns = normalize((ca * pn - pole) / sa - slope / sa * cross(a, pn) / sa);
-      float c = abs(dot(rd, ns)), seen = min(1. / max(c, .25), 4.) * smoothstep(0., 6., gap);
-      float night = smoothstep(-.15, .35, -dot(pn, uSun));
-      sum += (uAuroraLow * green + uAuroraHigh * red) * mix(rays, 1., u * .5) * arcs * seen * night * (1. - fk * .3);
+  vec3 sum = vec3(0.), g0 = vec3(0.);
+  // Each look compares cosines rather than angles, so it needs no acos: the cosine of a curtain's angle,
+  // which wavers by at most .063 rad about its mean, is taken to first order about the mean's (good to a
+  // metre). Nor does it need the longitude itself: its waves come from powers of e^(i longitude), turned
+  // by phases worked out once a frame (uWave: the waves' movement and each curtain's offset).
+  vec3 cm = cos(uAuroraB.x + vec3(0., .06, .12)), sm = sin(uAuroraB.x + vec3(0., .06, .12));
+  vec2 hit[6];   // the crossings found: how far along the ray, and which curtain
+  int n = 0;
+  const int N = 16;
+  float ds = (end - start) / float(N);
+  for (int i = 0; i <= N; i++) {
+    float t = start + ds * float(i);
+    vec3 pn = normalize(ro + rd * t);
+    float ca = dot(pn, a);
+    vec2 z = vec2(dot(pn, e1), dot(pn, e2));
+    z *= inversesqrt(max(dot(z, z), 1e-12));
+    vec2 z3 = cmul(cmul(z, z), z), z7 = cmul(cmul(z3, z3), z), z17 = cmul(cmul(z7, z7), z3);
+    int side = ca < 0. ? 9 : 0;   // the other pole's three curtains, in uWave
+    vec3 wave;
+    for (int k = 0; k < 3; k++) {
+      // sin(n longitude + phase) = Im(z^n e^(i phase))
+      vec2 w0 = uWave[side + k * 3], w1 = uWave[side + k * 3 + 1], w2 = uWave[side + k * 3 + 2];
+      wave[k] = .035 * (z3.y * w0.x + z3.x * w0.y) + .02 * (z7.y * w1.x + z7.x * w1.y) + .008 * (z17.y * w2.x + z17.x * w2.y);
     }
+    vec3 g = abs(ca) - (cm - sm * wave);
+    // where a difference changes sign the ray goes through that curtain: note where, for shading after
+    if (i > 0) for (int k = 0; k < 3; k++) {
+      if ((g0[k] < 0.) == (g[k] < 0.) || n >= 6) continue;
+      hit[n] = vec2(t - ds * g[k] / (g[k] - g0[k]), float(k));
+      n++;
+    }
+    g0 = g;
   }
+  // Shading the crossings is the costly part, so it is done once for each, after the search: inside the
+  // search every look would pay for it whenever any pixel run alongside this one had a crossing there
+  for (int j = 0; j < 6; j++) {
+    if (j >= n) break;
+    float tc = hit[j].x;
+    int k = int(hit[j].y);
+    vec3 p = ro + rd * tc, q = normalize(p);
+    float cq = dot(q, a), sk = (cq < 0. ? 3. : 0.) + float(k);
+    // the foot wavers along the way round, the curtain breaks into arcs, and it is drawn in rays
+    float ph = atan(dot(q, e2), dot(q, e1)), x = ph * .159155, h = length(p) - uR;
+    float foot = uAuroraB.y * (1. + .14 * (loop1(x * 20. + sk * 5.3, 20.) - .5));
+    float u = (h - foot) / (uAuroraB.z - foot);
+    if (u < 0. || u > 1.) continue;
+    float arcs = smoothstep(.25, .65, loop1(x * 6. + sk * 2.7 + uAuroraB.w * .004, 6.));
+    float r1 = loop1(x * 300. + sk * 31. + uAuroraB.w * .6, 300.), r2 = loop1(x * 70. - uAuroraB.w * .25 + sk * 7., 70.);
+    float rays = .12 + .88 * r1 * r1 * (.4 + .6 * r2);
+    // Green low down, brightest in a thin rim along the foot, and red far fainter higher up: the two
+    // colours of the oxygen that glows, at the heights where each is given off
+    float green = smoothstep(0., .03, u) * (exp(-u * 4.5) + .7 * exp(-u * 28.));
+    float red = .08 * smoothstep(.2, .55, u) * (1. - smoothstep(.7, 1., u));
+    // how edge-on the sheet is seen: its normal is across it, tilted by how fast the angle changes along it
+    vec3 pole = cq < 0. ? -a : a;
+    float cp = dot(q, pole), sa = sqrt(max(1. - cp * cp, 1e-6));
+    vec3 ns = normalize((cp * q - pole) / sa - veil(ph, sk).y / sa * cross(a, q) / sa);
+    float c = abs(dot(rd, ns)), seen = min(1. / max(c, .25), 4.) * smoothstep(.03, .15, c);
+    float night = smoothstep(-.15, .35, -dot(q, uSun));
+    vec3 e = (uAuroraLow * green + uAuroraHigh * red) * mix(rays, 1., u * .5) * arcs * seen * night * (1. - float(k) * .3);
+    if (tc > tCut) far += e; else sum += e;
+  }
+  far *= uAurora.w;
   return sum * uAurora.w;
 }
 // its light on the ground: a little green round under the curtains, on the night side
@@ -1672,7 +1701,7 @@ vec4 mist(vec3 ro, vec3 rd, float tEnd) {
     inside += max(min(q.y, tEnd) - max(q.x, 0.), 0.) * (k == 0 ? .5 : k == 1 ? .3 : .2);
   }
   float T = exp(-uMist.x * when * lie * inside), day = smoothstep(-.25, .25, mu);
-  vec3 L = uSunCol * sunTint(mu, 1.5) * smoothstep(-.05, .1, mu) * (.45 + 1.4 * pow(max(dot(rd, uSun), 0.), 8.))
+  vec3 L = uSunCol * sunTint(mu, 1.5) * smoothstep(-.05, .1, mu) * skyShade(ro + rd * (a + b) * .5) * (.45 + 1.4 * pow(max(dot(rd, uSun), 0.), 8.))
          + skyCol() * smoothstep(-.3, .2, mu) * .3 + .01 + vec3(.1, .1, .09) * (1. - day) / (1. + a * a / 40.);
   return vec4(L * vec3(.92, .94, .97) * (1. - T), T);
 }
@@ -1791,8 +1820,11 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
     glow = em;
     // trees are lit as the near ones are, so a tree does not change as it comes close and is drawn in full
     vec3 lit = mat == ${TREE}. ? needles(alb, n, d, mu, sun, vec3(0.), tips, rd) + alb * (light - sun * ndl - amb) : alb * light;
-    // what glows only in the dark glows in the trees' glow colour, the ground round the giants of a grove too
-    return lit + (uTreeNight > .5 ? uTreeGlowCol * .5 : alb) * em * uEmit;
+    // What glows only in the dark glows in the trees' glow colour: the trees, and the ground the giants of a
+    // grove light. Not the rest of the ground: a tree's glow is blurred onto the ground at its foot by the
+    // filtering of the maps, and there it would draw a glowing skirt round every tree.
+    bool fox = uTreeNight > .5 && (mat == ${TREE}. || dot(d, uMark.xyz) > uMark.w);
+    return lit + (fox ? uTreeGlowCol * .5 : alb) * em * uEmit;
   }
   if (uSea.a > 1.5) {
     float crust = smoothstep(.38, .6, mix(.5, n3(p * .22 + vec3(0., uTime * .02, 0.)), fine(F, 4.5)) * .6 + mix(.5, n3(p * .9), fine(F, 1.1)) * .4);
@@ -1811,7 +1843,16 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
   float glint = pow(sp, mix(90., 34., calm)) * mix(4., 1.1, calm);
   glow = min(glint * .06, 1.) * vis;
   // at night the water mirrors the aurora
-  vec3 sky = skyCol() * day * .3 + .008 + (uAurora.w > 0. && fres > .03 && day < 1. ? aurora(p + d * .05, reflect(rd, wn), 1e5) * (1. - day) : vec3(0.));
+  vec3 sky = skyCol() * day * .3 + .008;
+  if (uAurora.w > 0. && fres > .03 && mu < -.2) {
+    // at night the water mirrors the aurora, as much of it as the clouds over the water let through, and
+    // only once the sky is dark enough for it to show at all
+    vec3 r = reflect(rd, wn), beyond;
+    vec2 cs = sphere(p, r, uR + uCloud.y);
+    bool deck = uCloud.w > 0. && cs.y > 0.;
+    vec3 seen = aurora(p + d * .05, r, 1e5, deck ? cs.y : 1e9, beyond);
+    sky += (seen + beyond * (deck ? 1. - cloudAt(normalize(p + r * cs.y)) * uCloud.w : 1.)) * smoothstep(-.2, -.45, mu);
+  }
   return wc * light * (1. - fres) + sky * fres + sun * (glint + pow(sp, 10.) * .2);
 }
 
@@ -1856,7 +1897,7 @@ vec3 lights(vec3 ro, vec3 rd) {
     }
     float sunUp = smoothstep(-.02, .05, dot(uSun, up));
     vec3 tint = mix(vec3(1., .45, .3), vec3(1., .97, .92), smoothstep(-1., 1.5, x));
-    col += uSunCol * tint * (ring * .12 + dogs * .9 * low) * sunUp * uSkyLit;
+    icy = uSunCol * tint * (ring * .12 + dogs * .9 * low) * sunUp * uSkyLit;
     glow = max(glow, dogs * .6 * low * sunUp);
   }
   // The giant: a sphere too far off to have any parallax, so the point of it a ray meets depends only on
@@ -1873,7 +1914,7 @@ vec3 lights(vec3 ro, vec3 rd) {
       float b = sin(lat * 11. + 2.2 * sin(lat * 23. + uGiantB.w) + 1.6 * fbm(vec3(lat * 9., cos(lon) * 1.3, sin(lon) * 1.3) + uGiantB.w));
       vec3 alb = mix(mix(uGiantCol[1], uGiantCol[0], smoothstep(-.2, .6, b)), uGiantCol[2], smoothstep(.55, .95, abs(sin(lat * 5. + uGiantB.w))) * .5);
       float lit = smoothstep(-.08, .25, dot(n, uSun));
-      col = alb * (uSunCol * lit * (.55 + .45 * mu) + .006) * uSkyLit;
+      col = alb * (uSunCol * lit * (.55 + .45 * mu) + .006);   // the moon's shadow here does not reach it
       glow = 0.;
       mat = ${CLOUD}.;
     }
@@ -1991,6 +2032,7 @@ void main() {
   float t = march(ro, rd), tEnd = t > 0. ? t : 1e5;
   vec3 col, st = vec3(0.), mt = vec3(0.);   // st: starlight; mt: a meteor's
   glow = 0.;
+  icy = vec3(0.);
   mat = ${VOID}.;
   if (trees(ro, rd, tEnd, col)) {}
   else if (t > 0.) col = surface(ro, rd, t);
@@ -2120,7 +2162,6 @@ void main() {
     float deep = 1. - smoothstep(.5, 1., (length(ro) - uR) / airTop);
     col = mix(col, ringC * mix(1., 2.4, deep), ringA);
     st *= 1. - ringA;
-    mt *= 1. - ringA;
     glow *= 1. - ringA;
     if (ringA > .3) mat = ${RING}.;
   }
@@ -2147,11 +2188,17 @@ void main() {
     if (band > 0.) col = mix(col, cloudLit(normalize(ro)), cloudAt(normalize(ro)) * uCloud.w * band * .9);
   }
 
+  // the ice's halo, in the air above the clouds
+  col += icy * clear;
   if (!high) { col = col * ms.a + ms.rgb; st *= ms.a; mt *= ms.a; glow *= ms.a; }
   if (ms.a < .4) mat = ${CLOUD}.;
 
-  // the aurora is above the clouds: from under them it is behind them, and behind the mist; from over them in front
-  vec3 au = aurora(ro, rd, tEnd) * (high ? 1. : clear * ms.a);
+  // The aurora is above the clouds: what of it lies beyond where the ray last crosses the cloud deck is
+  // behind the clouds, which from under them is all of it; and from under them the mist is in front of it
+  vec3 auFar;
+  vec2 deck = sphere(ro, rd, uR + uCloud.y);
+  vec3 au = aurora(ro, rd, tEnd, uCloud.w > 0. && deck.y > 0. ? deck.y : 1e9, auFar);
+  au = (au + auFar * clear) * (high ? 1. : ms.a);
 
   vec3 tr;
   float halo = dot(col, vec3(1.));   // the sun's glow, where the ray is in open space
@@ -2554,7 +2601,8 @@ const count = (n, what) => `${n} ${what}${n === 1 ? '' : 's'}`;
 function journal() {
   return Object.keys(kept).filter(seed => typeof kept[seed] === 'string').map(seed => {
     const [flags, name, kind, at] = kept[seed].split('|'), [sig, fnd = ''] = flags.split('.');
-    return { seed, name, kind, of: sig.length, found: sig.split('1').length - 1, finds: fnd.split('1').length - 1, at: +at || 0 };
+    // the name its world has now: names were once made differently, and a stored one may be the old one
+    return { seed, name: name && worldName(seed), kind, of: sig.length, found: sig.split('1').length - 1, finds: fnd.split('1').length - 1, at: +at || 0 };
   }).filter(w => w.name && w.kind).sort((a, b) => b.at - a.at);
 }
 // one world a day, the same for everyone: its seed is the date
@@ -2640,7 +2688,7 @@ function snowCells() {
   if (snow.tex.length !== n) snow.tex = new Uint8Array(n);
   snow.tex.fill(0);
   snow.drawn = count > 0;
-  const up = cross(cam.right, cam.fwd), day = smooth(-.25, .25, dot(norm(cam.pos), sunDir()));
+  const up = cross(cam.right, cam.fwd), day = smooth(-.25, .25, dot(norm(cam.pos), sunDir())) * sunShows(cam.pos);
   for (let i = 0; i < count; i++) {
     const r = [flakes[i * 3] - cam.pos[0], flakes[i * 3 + 1] - cam.pos[1], flakes[i * 3 + 2] - cam.pos[2]];
     const z = dot(r, cam.fwd);
@@ -3358,13 +3406,22 @@ function drawScene() {
   gl.uniform4f(u.uAurora, ...(au ? au.axis : [0, 1, 0]), dim ? auroraNow() : 0);
   gl.uniform4f(u.uAuroraB, au ? au.theta : 0, au ? au.foot : 0, au ? au.top : 0, au ? auroraClock() : 0);
   gl.uniform3fv(u.uAuroraLow, au ? au.low : [0, 0, 0]);
+  // the phases of the curtains' waves this frame, as veil() has them: how far each wave has moved, and
+  // each curtain's own offset
+  const wv = new Float32Array(36);
+  if (au) {
+    const w = auroraClock(), moved = [.08 * w, -.12 * w, .25 * w], offset = [2.1, 1.3, 4];
+    for (let k = 0; k < 6; k++) for (let j = 0; j < 3; j++) { const ph = moved[j] + k * offset[j]; wv[(k * 3 + j) * 2] = Math.cos(ph); wv[(k * 3 + j) * 2 + 1] = Math.sin(ph); }
+  }
+  gl.uniform2fv(u.uWave, wv);
   gl.uniform3fv(u.uAuroraHigh, au ? au.high : [0, 0, 0]);
   // the meteors now, and a fireball's light
   const mA = new Float32Array(8), mB = new Float32Array(8), mC = new Float32Array(8);
   let flash = [0, 1, 0, 0];
   meteorsNow().slice(0, 2).forEach((m, i) => {
     mA.set([...m.A, m.u], i * 4); mB.set([...m.d, m.L], i * 4); mC.set([...m.col, m.tail], i * 4);
-    if (m.fire) flash = [...add(mul(m.A, Math.cos(m.L * m.u)), mul(m.d, Math.sin(m.L * m.u))), .035 * len(m.col) * m.life];
+    // its light on the land only once the sky is dark enough for the fireball itself to show
+    if (m.fire) flash = [...add(mul(m.A, Math.cos(m.L * m.u)), mul(m.d, Math.sin(m.L * m.u))), .035 * len(m.col) * m.life * smooth(-.25, -.45, dot(norm(cam.pos), sunDir()))];
   });
   gl.uniform4fv(u.uMet, mA); gl.uniform4fv(u.uMetB, mB); gl.uniform4fv(u.uMetC, mC);
   gl.uniform4fv(u.uFlash, flash);
@@ -3414,6 +3471,7 @@ function drawScene() {
   gl.uniform1f(u.uTreeGlow, p.treeGlow);
   gl.uniform3fv(u.uTreeGlowCol, p.treeGlowCol);
   gl.uniform1f(u.uTreeNight, p.treeNight);
+  gl.uniform4f(u.uMark, ...(p.mark && p.mark.what === 'grove' ? [...p.mark.d, Math.cos(p.mark.r / p.R)] : [0, 1, 0, 2]));
   gl.uniform3fv(u.uBeaconCol, p.signal);
   // A read signal's beam burns low and grey. Once all are read they come back up in the world's colour,
   // reach higher and pulse together, as the drone's chord completes.
