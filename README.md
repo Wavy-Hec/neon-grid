@@ -72,6 +72,11 @@ On some worlds the moon's path crosses the sun's, and every half hour or so it p
 Its shadow crosses the planet; where it is total the sky goes dark, the stars come out and the
 horizon glows all the way round. `?seed=coral` and `?seed=dust` are two of them.
 
+Every frozen world and some others have an aurora: curtains of green light round both magnetic poles,
+red higher up, drawn in vertical strokes, that brighten and fade over a few minutes and show in the
+sea. Meteors cross the night sky on every world with air, now and then a fireball that lights the
+land; on some worlds they come in a shower from one point of the sky. Try `?seed=glacier` at night.
+
 `P` writes the frame out as plain text. This is `?seed=home` at 80 columns:
 
 ````
