@@ -76,6 +76,8 @@ Every frozen world and some others have an aurora: curtains of green light round
 red higher up, drawn in vertical strokes, that brighten and fade over a few minutes and show in the
 sea. Meteors cross the night sky on every world with air, now and then a fireball that lights the
 land; on some worlds they come in a shower from one point of the sky. Try `?seed=glacier` at night.
+On the wetter worlds mist gathers in the low ground after dark and is thickest at dawn, so hills stand
+out of it, until the sun burns it off.
 
 `P` writes the frame out as plain text. This is `?seed=home` at 80 columns:
 

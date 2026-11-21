@@ -353,6 +353,10 @@ function design(seed) {
   // point of the night sky.
   const me = mulberry(hashStr(seed + ' meteors'));
   planet.meteors = K.atmo > 0 && { every: 4, chance: .45, shower: me() < .3 && { every: 1.3, chance: .6, tilt: .3 + me() * .6, pole: me() < .5 ? 1 : -1 } };
+  // Mist on the wetter worlds, more on some than others: how thick it is, and how high its top is on
+  // the whole, by the height of the plains
+  const mi = mulberry(hashStr(seed + ' mist')), wet = { temperate: 1, ocean: .8, overgrown: 1.2, frozen: .35 }[K.label] || 0;
+  planet.mist = wet ? { thick: .1 * wet * (.6 + .8 * mi()), deep: K.low * (.5 + .4 * mi()) } : null;
 }
 
 function terrain(x, y, z, craters) {
@@ -1134,6 +1138,7 @@ uniform vec4 uAurora, uAuroraB;   // the magnetic axis and how bright the aurora
 uniform vec3 uAuroraLow, uAuroraHigh;   // its colour low in a curtain and high up
 uniform vec4 uMet[2], uMetB[2], uMetC[2];   // up to two meteors: where each started and how far through it is; which way it goes and how far; its colour and the length of its tail
 uniform vec4 uFlash;   // a fireball's light on the ground: where it is in the sky and how bright
+uniform vec2 uMist;   // how thick the mist is at the bottom (0: none) and the height it thins over, metres
 uniform vec3 uBeta, uShallow, uCloudCol, uRingN, uRingCol, uBeaconCol;
 uniform vec4 uSea, uCloud, uRing, uMoon, uShip;
 uniform vec3 uShipFwd, uRock;
@@ -1594,6 +1599,36 @@ vec3 auroraGlow(vec3 d) {
   return uAuroraLow * .035 * uAurora.w * exp(-x * x) * smoothstep(.05, .4, -dot(d, uSun));
 }
 
+// Mist: it fills the low ground up to a top a few metres over the sea or the plain, as still air does on a
+// cold night, so hills stand out of it and from above it is a sea of its own. The top wavers from place to
+// place and it lies in patches. It forms after dark, is thickest at dawn and burns off as the sun climbs, so
+// at any moment it is on the night side of the planet and the morning side. How much of the ray is in it
+// comes from where the ray crosses three spheres, thick under the lowest and thinner up to the highest, so
+// it has no steps to show; the rest is read once, halfway along that part of the ray. The light it adds:
+// the sun's where it is up, brightest looking toward it, the sky's, and at night the headlamp's.
+vec4 mist(vec3 ro, vec3 rd, float tEnd) {
+  if (uMist.x <= 0.) return vec4(0., 0., 0., 1.);
+  vec2 s = sphere(ro, rd, uR + uMist.y * 1.6 + 1.);   // over the highest the top can be
+  float a = max(s.x, 0.), b = min(s.y, tEnd);
+  if (b <= a) return vec4(0., 0., 0., 1.);
+  vec3 m = normalize(ro + rd * (a + b) * .5);
+  float mu = dot(m, uSun);
+  vec3 sunV = normalize(cross(uSun, vec3(0., 1., 0.)));   // the way the sun is moving
+  float late = smoothstep(-.1, .1, dot(m, sunV));   // after midnight, or in the morning
+  float when = max(smoothstep(0., -.35, mu) * mix(.45, 1., late), late * (1. - smoothstep(-.05, .45, mu)));
+  float lie = smoothstep(.25, .6, n3(m * uR * .03 + vec3(uTime * .01, 0., uTime * .007)));   // in patches
+  if (when * lie <= 0.) return vec4(0., 0., 0., 1.);
+  float top = uMist.y * (.4 + 1.2 * n3(m * uR * .012 + 40.)), inside = 0.;
+  for (int k = 0; k < 3; k++) {
+    vec2 q = sphere(ro, rd, uR + top + float(k - 1));
+    inside += max(min(q.y, tEnd) - max(q.x, 0.), 0.) * (k == 0 ? .5 : k == 1 ? .3 : .2);
+  }
+  float T = exp(-uMist.x * when * lie * inside), day = smoothstep(-.25, .25, mu);
+  vec3 L = uSunCol * sunTint(mu, 1.5) * smoothstep(-.05, .1, mu) * (.45 + 1.4 * pow(max(dot(rd, uSun), 0.), 8.))
+         + skyCol() * smoothstep(-.3, .2, mu) * .3 + .01 + vec3(.1, .1, .09) * (1. - day) / (1. + a * a / 40.);
+  return vec4(L * vec3(.92, .94, .97) * (1. - T), T);
+}
+
 // Meteors: a bright head and a tail behind it that fades out, at least a sample wide however far off,
 // so the cells along it see a line and draw one.
 vec3 meteors(vec3 rd) {
@@ -1958,6 +1993,12 @@ void main() {
     }
   }
 
+  // The mist lies low. From over the clouds it is under them and goes in now; from under them it is in
+  // front of them, and goes in after them.
+  vec4 ms = mist(ro, rd, tEnd);
+  bool high = length(ro) > uR + uCloud.y;
+  if (high) { col = col * ms.a + ms.rgb; st *= ms.a; mt *= ms.a; glow *= ms.a; }
+
   // The ring has its place in depth. From the ground it is the farthest thing in the sky, so it goes in
   // before the clouds and the air, which then tint and fade it like anything else far away; from orbit
   // the near half of it is in front of the planet's air, and goes in after.
@@ -2008,8 +2049,11 @@ void main() {
     if (band > 0.) col = mix(col, cloudLit(normalize(ro)), cloudAt(normalize(ro)) * uCloud.w * band * .9);
   }
 
-  // the aurora is above the clouds: from under them it is behind them, from over them in front
-  vec3 au = aurora(ro, rd, tEnd) * (length(ro) < uR + uCloud.y ? clear : 1.);
+  if (!high) { col = col * ms.a + ms.rgb; st *= ms.a; mt *= ms.a; glow *= ms.a; }
+  if (ms.a < .4) mat = ${CLOUD}.;
+
+  // the aurora is above the clouds: from under them it is behind them, and behind the mist; from over them in front
+  vec3 au = aurora(ro, rd, tEnd) * (high ? 1. : clear * ms.a);
 
   vec3 tr;
   float halo = dot(col, vec3(1.));   // the sun's glow, where the ray is in open space
@@ -3125,6 +3169,9 @@ function drawScene() {
   });
   gl.uniform4fv(u.uMet, mA); gl.uniform4fv(u.uMetB, mB); gl.uniform4fv(u.uMetC, mC);
   gl.uniform4fv(u.uFlash, flash);
+  // the mist, unless it is broad day all round
+  const mist = p.mist && (alt > p.atmo * .5 || dot(norm(cam.pos), sunDir()) < .7);
+  gl.uniform2f(u.uMist, mist ? p.mist.thick : 0, mist ? p.mist.deep : 1);
   gl.uniform4f(u.uShip, ...ship.pos, ship.parked ? 1 : 0);
   gl.uniform3fv(u.uShipFwd, ship.face || [0, 0, 1]);
   // the things to find, when near enough to make out
