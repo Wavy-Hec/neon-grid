@@ -13,7 +13,9 @@ You start in orbit. Every planet has five signals on the ground, visible as beam
 (a world that is almost all ocean may have fewer). Fly down to one, land, and walk into it:
 a signal only counts on foot. Hold `W` and the ship dives, levels out and skims the land.
 The status line at the bottom says how far the next signal is and which way to turn, and names
-the key that does something where you are, such as `f land` once you are low enough.
+the key that does something where you are, such as `f land` once you are low enough. With the
+sound on, the signals you have not read call out from a few hundred metres, louder as you come
+closer and in the ear on their side.
 
 There is a little more to find. The first signals you read each mark a place on the chart (`tab`)
 where something else stands, three at most: a ring of stones, the wreck of a lander, a cairn on the

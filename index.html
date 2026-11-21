@@ -2056,6 +2056,7 @@ function walk(dt) {
   m.h += m.vr * dt;
   if (m.h <= floor) {
     m.h = floor;
+    tread(stride, dt, -m.vr);   // a footstep, or the thud of landing
     // you can only jump off ground you could walk on, so held space does not climb walls
     m.vr = held(' ') && slopeAt(m.dir) < 1.7 ? 4.6 : 0;
   }
@@ -2299,7 +2300,8 @@ for (const b of [...pad.children, ...pad2.children]) {
 
 // ---- sound
 
-let ac, master, wind, windBand, hum, muted = false;
+let ac, master, wind, windBand, hum, hiss, muted = false;
+const due = [0, 0, 0, 0, 0];   // when each signal calls next
 
 function startAudio() {
   if (ac) return;
@@ -2309,10 +2311,11 @@ function startAudio() {
   master.gain.setTargetAtTime(muted ? 0 : .6, ac.currentTime, 1.5);
   master.connect(ac.destination);
 
-  const buf = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate), data = buf.getChannelData(0);
+  hiss = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
+  const data = hiss.getChannelData(0);
   for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
   const src = ac.createBufferSource();
-  src.buffer = buf; src.loop = true;
+  src.buffer = hiss; src.loop = true;
   windBand = ac.createBiquadFilter();
   windBand.type = 'bandpass'; windBand.Q.value = .7;
   wind = ac.createGain();
@@ -2368,6 +2371,82 @@ function chime(notes = 4) {
   });
 }
 
+// the loudness of one struck sound: from nothing up to vol in `rise` seconds, then dying away, gone by `secs`
+function swell(vol, rise, secs) {
+  const t = ac.currentTime, g = ac.createGain();
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(vol, t + rise);
+  g.gain.setTargetAtTime(0, t + rise, (secs - rise) / 7);
+  return g;
+}
+
+// The call of signal i: one soft bell note, placed left or right. Each signal has its own note of the
+// planet's key, between a seventh and a twelfth above the chime's root: higher than anything the drone
+// plays, and no two of the five a semitone apart, so signals heard together are in tune. A higher note
+// is played more quietly, which makes all five as loud to the ear. Over the note sits its octave, gone
+// in a third of the time; `lit` is how much of it there is.
+function ping(i, vol, pan, lit) {
+  const f = 220 * 2 ** ((planet.key + [10, 12, 15, 17, 19][i]) / 12), p = ac.createStereoPanner();
+  p.pan.value = pan;
+  p.connect(master);
+  for (const [k, part, secs] of [[1, 1, 1.6], [2, lit * .3, .5]]) {
+    const o = ac.createOscillator();
+    o.frequency.value = f * k;
+    o.connect(swell(vol * part * .075 * Math.sqrt(440 / f), .01, secs)).connect(p);
+    o.start(); o.stop(ac.currentTime + secs);
+  }
+}
+
+// one puff of the wind's noise, played at a fifth of its speed so there is nothing sharp in it, through a band
+function puff(hz, q, vol, rise, secs) {
+  const s = ac.createBufferSource(), f = ac.createBiquadFilter();
+  s.buffer = hiss; s.playbackRate.value = .2;
+  f.type = 'bandpass'; f.frequency.value = hz; f.Q.value = q;
+  s.connect(f).connect(swell(vol, rise, secs)).connect(master);
+  s.start(0, Math.random() * 1.9); s.stop(ac.currentTime + secs);
+}
+
+// A footstep on each kind of ground: the middle of its band in Hz, how narrow the band is, how loud,
+// seconds to its loudest and seconds it lasts. Loose ground hisses, packed ground thuds, hard ground
+// ticks, and what gives under you comes on slowly.
+const STEPS = {
+  [SAND]: [1800, .6, .05, .02, .16],
+  [GRASS]: [650, .7, .09, .01, .11],
+  [DRY]: [420, 1, .18, .004, .07],
+  [ROCK]: [1100, 1.4, .11, .002, .05],
+  [SNOW]: [1300, 1.4, .055, .03, .26],
+  [ICE]: [1900, 1.6, .09, .002, .04],
+  [LAVA]: [260, 1.5, .2, .012, .16],
+  [WATER]: [400, .9, .07, .06, .38],
+};
+
+// Footsteps. walk() calls this for every frame that ends on the ground, with the metres walked in it and
+// the speed you came down at. A step sounds each time a stride has gone by, and a stride is longer the
+// faster you go: two steps a second walking, three running, one every two seconds edging along a rock.
+// Coming down at more than 1.5 m/s is a landing: a heavier step with a low thud under it, the harder
+// the faster you fell.
+let strode = 0, foot = 1;
+function tread(walked, dt, fell) {
+  const speed = walked / dt || 0, hard = smooth(1.5, 9, fell);
+  // from a standstill the first step is half a stride away
+  strode = walked ? strode + walked / (1.5 + .2 * speed) : .5;
+  if (strode < 1 && !hard) return;
+  // no stride is quite as long as the last, no two steps sound the same, and the left foot is not the right
+  strode = Math.random() * .06; foot = -foot;
+  // a sound context that is held up would keep every step and let them all go at once
+  if (!ac || ac.state !== 'running' || !document.hasFocus()) return;
+  const any = () => 1 + (Math.random() - .5) * .3, weight = .8 + speed / 25;
+  // the sound of the ground needs air to reach you
+  if (planet.atmo) {
+    const under = planet.sea && heightAt(me.dir) < 0 ? (planet.sea > 1 ? LAVA : WATER) : matAt(me.dir);
+    const [hz, q, vol, rise, secs] = STEPS[under] || STEPS[ROCK];
+    puff(hz * (1 + foot * .04) * any(), q, vol * (weight + hard * .7) * any(), rise, secs * any());
+  }
+  // the thud comes up through your boots: under a landing, and with no air it is all there is of a step
+  const thud = (planet.atmo ? hard : hard + weight * .35) * .3;
+  if (thud) puff(170 * (1 + foot * .04), .7, thud * any(), .004, .15);
+}
+
 function mute() {
   muted = !muted;
   if (ac) master.gain.setTargetAtTime(muted ? 0 : .6, ac.currentTime, .2);
@@ -2382,6 +2461,18 @@ function soundTick() {
   wind.gain.setTargetAtTime(air * (.03 + Math.min(speed / 150, 1) * .3), t, .3);
   windBand.frequency.setTargetAtTime(350 + speed * 9, t, .3);
   hum.gain.setTargetAtTime(mode === 'fly' ? (.1 + Math.min(speed / 200, 1) * .25) * quiet : 0, t, .4);
+  // Signals not yet found call out, from 400 m: the nearer, the louder and the sooner again. A call is
+  // placed by where its signal lies, and one behind you is fainter and duller than one ahead, so you can
+  // turn to face it by ear. The ship's hull takes half of it.
+  for (let i = 0; i < planet.beacons.length; i++) {
+    const b = planet.beacons[i];
+    if (b.got || t < due[i]) continue;
+    const near = 1 - len(sub(cam.pos, b.base)) / 400;
+    due[i] = t + (near > 0 ? 3.8 - near * 1.6 : 1);
+    if (near <= 0 || !quiet) continue;
+    const a = bearing(b.base), ahead = .5 + .5 * Math.cos(a);
+    ping(i, near ** 1.5 * lerp(.6, 1, ahead) * (mode === 'fly' ? .5 : 1), Math.sin(a) * .8, near * ahead);
+  }
 }
 
 // ---- screen
@@ -2534,22 +2625,28 @@ const HELP = [
   ['i', 'frame rate'],
 ];
 
-// How far the nearest signal still out there is, over the ground, and which way to turn. The bearing is
-// taken in the plane of the ground under you, so it is right from orbit too, where every signal on the
-// planet is "ahead" of a camera that looks at the planet.
-function nextSignal() {
+// Which way a point lies from the way you face: radians to the right of straight ahead. It is taken in the
+// plane of the ground under you, so it is right from orbit too, where every signal on the planet is
+// "ahead" of a camera that looks at the planet.
+function bearing(at) {
   const out = norm(cam.pos), flat = v => sub(v, mul(out, dot(v, out)));
+  // looking straight down, ahead is the top of the screen
+  let f = flat(cam.fwd);
+  if (len(f) < .3) f = mul(flat(cross(cam.right, cam.fwd)), dot(cam.fwd, out) < 0 ? 1 : -1);
+  const to = flat(sub(at, cam.pos));
+  return Math.atan2(dot(to, cross(f, out)), dot(to, f));
+}
+
+// how far the nearest signal still out there is, over the ground, and which way to turn
+function nextSignal() {
+  const out = norm(cam.pos);
   let near = null, best = 1e9;
   for (const b of planet.beacons) {
     const d = Math.acos(clamp(dot(b.dir, out), -1, 1)) * planet.R;
     if (!b.got && d < best) { best = d; near = b; }
   }
   if (!near) return '';
-  // looking straight down, ahead is the top of the screen
-  let f = flat(cam.fwd);
-  if (len(f) < .3) f = mul(flat(cross(cam.right, cam.fwd)), dot(cam.fwd, out) < 0 ? 1 : -1);
-  const to = flat(sub(near.base, cam.pos)), a = Math.atan2(dot(to, cross(f, out)), dot(to, f)) * 180 / Math.PI;
-  const alt = len(cam.pos) - planet.R - groundAt(out);
+  const a = bearing(near.base) * 180 / Math.PI, alt = len(cam.pos) - planet.R - groundAt(out);
   const way = mode === 'fly' && best < alt * .5 ? 'below' : Math.abs(a) < 25 ? 'ahead' : Math.abs(a) > 140 ? 'behind' : a > 0 ? 'right' : 'left';
   return `next signal ${Math.round(best)}m ${way}`;
 }
