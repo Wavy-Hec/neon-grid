@@ -15,7 +15,8 @@ a signal only counts on foot. Hold `W` and the ship dives, levels out and skims 
 The status line at the bottom says how far the next signal is and which way to turn, and names
 the key that does something where you are, such as `f land` once you are low enough. With the
 sound on, the signals you have not read call out from a few hundred metres, louder as you come
-closer and in the ear on their side.
+closer and in the ear on their side; each one read rings its note and then holds it in the planet's
+drone, so the chord fills out as you go and the fifth completes it.
 
 Every planet also has one landform of its own kind: an atoll in the open sea, a lake in a ring of
 hills, a canyon through the desert, a rift in the ice that glows from inside, a volcano with a lake

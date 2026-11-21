@@ -2817,7 +2817,7 @@ function walk(dt) {
     b.got = true;
     signals++;
     keep();
-    chime();
+    sing(planet.beacons.indexOf(b));
     // each signal read puts one of the planet's other things on the chart
     const shows = planet.finds[signals - 1] && !planet.finds[signals - 1].got ? '. it marks a place on the chart' : '';
     say(signals < planet.beacons.length ? `signal ${signals} of ${planet.beacons.length}: ${facts()[signals - 1]}${shows}`
@@ -2827,7 +2827,7 @@ function walk(dt) {
     if (f.got || len(sub(cam.pos, f.pos)) > f.near) continue;
     f.got = true;
     keep();
-    chime(2);
+    found();
     say(f.says, 9);
   }
 }
@@ -3085,35 +3085,53 @@ document.addEventListener('visibilitychange', () => {
   if (ac) document.hidden ? ac.suspend() : ac.resume();
 });
 
-// a slow chord that keeps re-voicing itself in the planet's key
+// A slow chord that keeps re-voicing itself in the planet's key, with a note of its own for each signal
+// read: the five together are the pentatonic scale of the key, so the chord fills out as the survey goes
+// on and the fifth signal completes it.
 function drone() {
   setTimeout(drone, 9000);
   if (document.hidden) return;
   const t = ac.currentTime, root = 55 * 2 ** (planet.key / 12);
   const upper = [12, 14, 15, 19, 22, 24, 26, 27, 31];
-  for (const semi of [0, 7, upper[Math.floor(Math.random() * 4)], upper[4 + Math.floor(Math.random() * 5)]]) {
-    const o = ac.createOscillator(), g = ac.createGain();
-    o.frequency.value = root * 2 ** (semi / 12) * (1 + (Math.random() - .5) * .004);
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(.045, t + 5);
-    g.gain.linearRampToValueAtTime(0, t + 16);
-    o.connect(g).connect(master);
-    o.start(t); o.stop(t + 16.5);
-  }
+  for (const semi of [0, 7, upper[Math.floor(Math.random() * 4)], upper[4 + Math.floor(Math.random() * 5)]]) hold(root * 2 ** (semi / 12), t, .045);
+  planet.beacons.forEach((b, i) => { if (b.got) hold(note(i) / 2, t, .02); });
 }
+// one held note of the drone from t: in over 5 s, out by 16 s, the next one in before it has gone
+function hold(f, t, vol) {
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.frequency.value = f * (1 + (Math.random() - .5) * .004);
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(vol, t + 5);
+  g.gain.linearRampToValueAtTime(0, t + 16);
+  o.connect(g).connect(master);
+  o.start(t); o.stop(t + 16.5);
+}
+// the note of signal i, the one it calls with
+const note = i => 220 * 2 ** ((planet.key + [10, 12, 15, 17, 19][i]) / 12);
 
-// the notes of a signal read; the first two of them for anything else found
-function chime(notes = 4) {
+// A signal read rings out its own note, with the octave over it and under it, and from then on that note
+// is held in the drone, an octave down
+function sing(i) {
   if (!ac) return;
-  const root = 220 * 2 ** (planet.key / 12);
-  [0, 7, 12, 19].slice(0, notes).forEach((semi, i) => {
-    const t = ac.currentTime + i * .13, o = ac.createOscillator(), g = ac.createGain();
-    o.type = 'triangle'; o.frequency.value = root * 2 ** (semi / 12);
-    g.gain.setValueAtTime(.12, t);
-    g.gain.exponentialRampToValueAtTime(.001, t + 1.4);
-    o.connect(g).connect(master);
-    o.start(t); o.stop(t + 1.5);
-  });
+  const f = note(i);
+  for (const [k, part, secs] of [[1, 1, 4], [2, .25, 1.2], [.5, .45, 6]]) {
+    const o = ac.createOscillator();
+    o.frequency.value = f * k;
+    o.connect(swell(.1 * part * Math.sqrt(440 / f), .01, secs)).connect(master);
+    o.start(); o.stop(ac.currentTime + secs);
+  }
+  hold(f / 2, ac.currentTime + 1, .02);
+}
+// anything else found: one low struck note, the fifth of the key
+function found() {
+  if (!ac) return;
+  const f = 110 * 2 ** ((planet.key + 7) / 12);
+  for (const [k, part, secs] of [[1, 1, 3], [2, .3, 1]]) {
+    const o = ac.createOscillator();
+    o.frequency.value = f * k;
+    o.connect(swell(.09 * part, .01, secs)).connect(master);
+    o.start(); o.stop(ac.currentTime + secs);
+  }
 }
 
 // the loudness of one struck sound: from nothing up to vol in `rise` seconds, then dying away, gone by `secs`
@@ -3126,12 +3144,12 @@ function swell(vol, rise, secs) {
 }
 
 // The call of signal i: one soft bell note, placed left or right. Each signal has its own note of the
-// planet's key, between a seventh and a twelfth above the chime's root: higher than anything the drone
+// planet's key, between a seventh and a twelfth above 220 Hz in it: higher than anything the drone
 // plays, and no two of the five a semitone apart, so signals heard together are in tune. A higher note
 // is played more quietly, which makes all five as loud to the ear. Over the note sits its octave, gone
 // in a third of the time; `lit` is how much of it there is.
 function ping(i, vol, pan, lit) {
-  const f = 220 * 2 ** ((planet.key + [10, 12, 15, 17, 19][i]) / 12), p = ac.createStereoPanner();
+  const f = note(i), p = ac.createStereoPanner();
   p.pan.value = pan;
   p.connect(master);
   for (const [k, part, secs] of [[1, 1, 1.6], [2, lit * .3, .5]]) {
