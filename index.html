@@ -164,6 +164,7 @@ const KINDS = [
     sea: 1, deepCol: '#051d44', shallow: '#1b8088',
     tau: [.05, .12, .3], atmo: .36, cover: [.45, .6], cloudCol: '#ffffff',
     props: [{ mat: TREE, n: 7000, col: '#356b30', r: [1.3, 2.1], h: [4, 9], hn: [.03, .42], wet: .42 }],
+    signal: '#ff6a3d',
   },
   {
     label: 'ocean', cf: 1.7, bias: [-.3, -.18], low: 7, mount: 24, deep: 18, rough: 1.2,
@@ -173,6 +174,7 @@ const KINDS = [
     sea: 1, deepCol: '#03254f', shallow: '#22b8b0',
     tau: [.045, .11, .28], atmo: .36, cover: [.38, .5], cloudCol: '#ffffff',
     props: [{ mat: TREE, n: 5000, col: '#3a8538', r: [1.3, 2], h: [5, 10], hn: [.04, .6], wet: .3 }],
+    signal: '#ffa53a',
   },
   {
     label: 'arid', cf: 1.4, bias: [.22, .4], low: 9, mount: 26, deep: 0, rough: 1.1, terrace: 5,
@@ -182,6 +184,7 @@ const KINDS = [
     sea: 0, deepCol: '#000000', shallow: '#000000',
     tau: [.17, .11, .06], atmo: .33, cover: [.64, .76], cloudCol: '#f3dcc4',
     props: [{ mat: SPIRE, n: 2200, col: '#8a4f33', r: [2.5, 5], h: [8, 20], hn: [.02, .5], wet: 0, flat: 1 }],
+    signal: '#7cc8ff',
   },
   {
     label: 'frozen', cf: 1.3, bias: [.02, .22], low: 6, mount: 30, deep: 0, rough: 1,
@@ -191,6 +194,7 @@ const KINDS = [
     sea: 0, deepCol: '#000000', shallow: '#000000',
     tau: [.03, .07, .14], atmo: .34, cover: [.5, .66], cloudCol: '#eef6ff',
     props: [{ mat: CRYSTAL, n: 3200, col: '#7ff2ff', r: [.9, 1.6], h: [4, 13], hn: [0, .5], wet: .5, glow: .8 }],
+    signal: '#ff4f6a',
   },
   {
     label: 'molten', cf: 1.5, bias: [-.04, .12], low: 6, mount: 32, deep: 6, rough: 2.2,
@@ -200,15 +204,19 @@ const KINDS = [
     sea: 2, deepCol: '#000000', shallow: '#000000',
     tau: [.1, .05, .03], atmo: .36, cover: [.5, .62], cloudCol: '#40302c',
     props: [{ mat: SPIRE, n: 1500, col: '#231c1c', r: [2, 4], h: [6, 16], hn: [.03, .5], wet: 0 }],
+    signal: '#a6dcff',
   },
   {
+    // a moor: heather low down, bracken on the dry slopes, lichen on the heights, under a lavender sky.
+    // Its firs are dark by day and at night glow with foxfire
     label: 'overgrown', cf: 1.25, bias: [-.05, .12], low: 8, mount: 30, deep: 14, rough: 1.6,
-    ramp: [[0, '#e8c6f0'], [.05, '#b04fd0'], [.3, '#7a2fa8'], [.6, '#4a3a6a'], [1, '#6a5a80']],
-    dry: [[0, '#f0d0c8'], [.06, '#d86aa0'], [.35, '#a04080'], [.65, '#5a4070'], [1, '#6a5a80']],
-    rock: '#3d3350', ice: '#f6e8ff', snow: .68, polar: 1, bed: '#c8a0d8', ground: [SAND, GRASS, DRY],
-    sea: 1, deepCol: '#04292e', shallow: '#2fd6c0',
-    tau: [.15, .07, .2], atmo: .38, cover: [.45, .6], cloudCol: '#ffe8f4',
-    props: [{ mat: TREE, n: 7000, col: '#35e0c8', r: [1.2, 2], h: [3, 8], hn: [.03, .45], wet: .45, glow: .3 }],
+    ramp: [[0, '#cbbda2'], [.05, '#6d5866'], [.3, '#584456'], [.6, '#5a5a4e'], [1, '#8b877a']],
+    dry: [[0, '#d2c3a4'], [.06, '#8c5e40'], [.35, '#6e4a3a'], [.65, '#5b5049'], [1, '#8b877a']],
+    rock: '#433b48', ice: '#efe9f0', snow: .68, polar: 1, bed: '#a89a84', ground: [SAND, GRASS, DRY],
+    sea: 1, deepCol: '#062a2b', shallow: '#3f8a7e',
+    tau: [.1, .085, .16], atmo: .38, cover: [.45, .6], cloudCol: '#f2ecf2',
+    props: [{ mat: TREE, n: 7000, col: '#2c4a3c', r: [1.2, 2], h: [3, 8], hn: [.03, .45], wet: .45, glow: .35, glowCol: '#9ef07c', night: true }],
+    signal: '#ffd23f',
   },
   {
     label: 'airless', cf: 1.6, bias: [.3, .5], low: 5, mount: 22, deep: 0, rough: 1, craters: 90,
@@ -218,6 +226,7 @@ const KINDS = [
     sea: 0, deepCol: '#000000', shallow: '#000000',
     tau: [0, 0, 0], atmo: 0, cover: [1, 1], cloudCol: '#000000',
     props: [{ mat: CRYSTAL, n: 500, col: '#ffb040', r: [.9, 1.5], h: [3, 9], hn: [0, .6], wet: .55, glow: .9 }],
+    signal: '#ff3a2a',
   },
 ];
 const SUNS = [[1.3, 1.24, 1.14], [1.3, 1.24, 1.14], [1.4, 1.08, .8], [1.14, 1.22, 1.38]];
@@ -296,9 +305,17 @@ function rampTable(stops) {
   return t;
 }
 
-const NAME_A = ['Ve', 'Ko', 'Tha', 'Ori', 'Su', 'Mar', 'El', 'Zy', 'Nu', 'Ar', 'Xe', 'Ky', 'Bel', 'Dra', 'Io', 'Ty'];
-const NAME_B = ['la', 'ron', 'ris', 'mea', 'tov', 'ne', 'dax', 'lun', 'phi', 'ra', 'sei', 'bes', 'kar', 'th', 'via', 'nix'];
-const NAME_C = ['', '', ' II', ' III', ' IV', ' VI', ' Prime', '-7', '-9b', ' Minor'];
+// Worlds are named with plain words from rock, weather and the sea, and a number from a catalogue. A seed
+// that is such a word already (glacier, kelp-412) names its world itself; any other gets one of these.
+const NOUNS = ['basalt', 'flint', 'shale', 'scree', 'tor', 'esker', 'moraine', 'drumlin', 'tarn', 'fell', 'loess', 'marl',
+  'chert', 'gneiss', 'karst', 'tuff', 'slate', 'schist', 'gabbro', 'butte', 'talus', 'ochre', 'cinder', 'pumice',
+  'squall', 'sleet', 'gale', 'haar', 'rime', 'hail', 'thaw', 'cirrus', 'nimbus', 'shoal', 'skerry', 'firth',
+  'sound', 'brine', 'swell', 'strand', 'ebb', 'neap', 'wrack', 'delta'];
+function worldName(seed) {
+  const m = /^([a-z]+)(?:-(\d+))?$/.exec(seed), r = mulberry(hashStr(seed + ' name'));
+  const [word, num] = m ? [m[1], m[2]] : [NOUNS[Math.floor(r() * NOUNS.length)], String(1 + Math.floor(r() * 999))];
+  return word[0].toUpperCase() + word.slice(1) + (num ? ' ' + num : '');
+}
 const onSphere = () => {
   const z = rf(-1, 1), a = rf(0, Math.PI * 2), r = Math.sqrt(1 - z * z);
   return [r * Math.cos(a), z, r * Math.sin(a)];
@@ -314,7 +331,9 @@ function design(seed) {
   const k = R / 285;
   Object.assign(planet, {
     seed, K, R, k, kc: k ** .6, perm, sea: K.sea,
-    name: pick(NAME_A) + pick(NAME_B) + (rnd() < .35 ? pick(NAME_B) : '') + pick(NAME_C),
+    // names used to be drawn from this stream here, four or five numbers: they are still taken, so every
+    // world after them stays as it was
+    name: (rnd(), rnd(), rnd() < .35 && rnd(), rnd(), worldName(seed)),
     lush: rampTable(K.ramp), dry: rampTable(K.dry),
     atmo: K.atmo * R, cover: rf(K.cover[0], K.cover[1]), cloudAlt: R * rf(.085, .11), cloudF: rf(2.6, 3.6),
     bias: rf(K.bias[0], K.bias[1]),
@@ -361,6 +380,13 @@ function design(seed) {
   // ground is snow or ice, on their mountains and round their poles
   const sn = mulberry(hashStr(seed + ' snow'));
   planet.snow = wet ? { all: K.label === 'frozen', every: 240 + 180 * sn(), ph: sn() * 6.283, heavy: .6 + .4 * sn(), wind: sn() * 6.283, gust: .4 + 1.6 * sn() } : null;
+  // The signals have a colour no ground of the world has, and the interface takes its inks from the
+  // world: that colour for what needs seeing, a bar the colour of its darkest ground, and for the rest a
+  // grey that leans toward its land
+  const sg = hex(K.signal), rock = hex(K.rock), tint = mix3([.5, .5, .5], hex(K.ramp[2][1]), .3);
+  const lum = tint[0] * .299 + tint[1] * .587 + tint[2] * .114;
+  planet.signal = linear(sg);
+  planet.ink = { accent: sg, bar: rock.map(v => .025 + v * .15), dim: tint.map(v => v * .46 / lum) };
 }
 
 function terrain(x, y, z, craters) {
@@ -765,7 +791,7 @@ const LANDFORMS = {
   },
   // a grove: a handful of trees many times the height of the rest, in a glade they have drunk dry
   overgrown(span, wob, lit, dry) {
-    const r = span(48, 64), out = lobes(span), P = planet.K.props[0], tree = hex(P.col), giants = [];
+    const r = span(48, 64), out = lobes(span), P = planet.K.props[0], tree = hex(P.glowCol || P.col), giants = [];
     // the giants stand anywhere in the middle of the glade, no two closer than 15 m
     for (let n = 0; n < 60 && giants.length < 7; n++) {
       const a = span(0, 6.2832), m = 34 * Math.sqrt(span(0, 1)), t = [m * Math.cos(a), m * Math.sin(a), span(3.6, 5), span(28, 40)];
@@ -883,7 +909,7 @@ function scatter() {
   const top = planet.peak, M = planet.mark;
   let tip = 0;
   planet.trees = [];   // the nearest of these are drawn as real shapes
-  planet.treeCol = [0, 0, 0]; planet.treeGlow = 0;
+  planet.treeCol = [0, 0, 0]; planet.treeGlow = 0; planet.treeGlowCol = [0, 0, 0]; planet.treeNight = 0;
   const dq = [0, 0, 0];
   for (const P of planet.K.props) {
     const c = hex(P.col), count = Math.round(P.n * planet.k * planet.k);   // as many per square metre on any size of planet
@@ -923,7 +949,7 @@ function scatter() {
       if (P.mat === TREE) planet.trees.push({ pos: mul(d0, planet.R + h0), h: hh, r, seed: (n * 7.31) % 97 });
       if (n < 0) tip = Math.max(tip, h0 + hh);
     }
-    if (P.mat === TREE) { planet.treeCol = linear(c); planet.treeGlow = P.glow || 0; }
+    if (P.mat === TREE) { planet.treeCol = linear(c); planet.treeGlow = P.glow || 0; planet.treeGlowCol = linear(hex(P.glowCol || P.col)); planet.treeNight = P.night ? 1 : 0; }
   }
   // A fir's boughs spread wider than its cone, and nobody walks in under them: each tree has a reach,
   // 1.1 m beyond its boughs. Where two reaches would meet, both are drawn in, as far as 0.45 m from the
@@ -1150,8 +1176,8 @@ uniform vec4 uFind[3], uFindB[3];   // the things to find: where and what (0 non
 uniform vec4 uTree[12], uTreeB[12];   // the nearest trees: base position and height; radius and a seed
 uniform int uTreeN;
 uniform vec2 uTreeFade;
-uniform vec3 uTreeCol;
-uniform float uTreeGlow;
+uniform vec3 uTreeCol, uTreeGlowCol;   // the trees' colour, and the colour they glow if they glow
+uniform float uTreeGlow, uTreeNight;   // how much they glow; 1 if only at night
 uniform vec4 uBeacon[5];
 in vec2 vUv;
 layout(location = 0) out vec4 o;
@@ -1740,12 +1766,14 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
     float det = mix(n3(p * sc + i * 7.3), n3(p * sc * .5 + i * 7.3 + 7.3), l - i);
     alb *= mix(1., .55 + .9 * det, (1. - smoothstep(3., 6., l)) * fine(F, 1.5 * Fd));
     float em = step(.01, al.a) * (al.a - .004);
+    // on a world whose trees glow only at night, so does everything lit by them
+    if (uTreeNight > .5) em *= 1. - day;
     // each crystal facet glows at its own brightness
     if (mat == ${CRYSTAL}.) em *= mix(1., .35 + .9 * abs(dot(n, normalize(vec3(.4, .8, .45)))), fine(F, 1.5));
     glow = em;
     // trees are lit as the near ones are, so a tree does not change as it comes close and is drawn in full
     vec3 lit = mat == ${TREE}. ? needles(alb, n, d, mu, sun, vec3(0.), tips, rd) + alb * (light - sun * ndl - amb) : alb * light;
-    return lit + alb * em * uEmit;
+    return lit + (mat == ${TREE}. && uTreeNight > .5 ? uTreeGlowCol * .5 : alb) * em * uEmit;
   }
   if (uSea.a > 1.5) {
     float crust = smoothstep(.38, .6, mix(.5, n3(p * .22 + vec3(0., uTime * .02, 0.)), fine(F, 4.5)) * .6 + mix(.5, n3(p * .9), fine(F, 1.1)) * .4);
@@ -1882,8 +1910,9 @@ bool trees(vec3 ro, vec3 rd, inout float tEnd, out vec3 col) {
              * mix(.35, 2., tips) * mix(vec3(1.), vec3(1.15, 1.1, .75), tips) * mix(1., .7 + .6 * n3(q * 2.2 + seed), fine(F, .45));
     col = needles(alb, n, up, mu, sun, sun, tips, rd)
         + alb * vec3(1.5, 1.4, 1.15) * (1. - day) * max(dot(n, -rd), 0.) / (1. + ts * ts / 250.)   // headlamp
-        + alb * uTreeGlow * 3.2 * (.25 + 1.5 * tips);   // a glowing tree glows most at the ends of its branches
-    glow = uTreeGlow * (.25 + .75 * tips);
+        // a glowing tree glows most at the ends of its branches; some glow only at night, in a colour of their own
+        + (uTreeNight > .5 ? uTreeGlowCol * (1. - day) * (.4 + .6 * tips) : alb) * uTreeGlow * 3.2 * (.25 + 1.5 * tips);
+    glow = uTreeGlow * (.25 + .75 * tips) * (uTreeNight > .5 ? 1. - day : 1.);
     tEnd = ts;
     mat = ${TREE}.;
     found = true;
@@ -2218,6 +2247,7 @@ precision highp sampler2D;
 uniform sampler2D uScene, uC0, uC1, uGlow, uAtlas, uText, uFont;
 uniform vec2 uRes, uCell, uGrid, uAtlasGrid, uTextCell;
 uniform float uRaw;
+uniform vec3 uAccent, uBar, uDim;   // the interface's inks, from the world: its signal's colour, its darkest ground, a grey leaning to its land
 out vec4 o;
 
 float ink(sampler2D atlas, int g, vec2 f) { return textureLod(atlas, (vec2(float(g % 16), float(g / 16)) + f) / uAtlasGrid, 0.).r; }
@@ -2232,9 +2262,8 @@ void main() {
   vec2 tf = px / uTextCell;
   ivec2 tx = ivec2(texelFetch(uText, ivec2(tf), 0).rg * 255. + .5);
   if (tx.y > 0) {
-    const vec3 accent = vec3(.36, 1., .84);
-    vec3 fg = tx.y == 8 ? vec3(.2) : tx.y == 2 || tx.y == 6 ? vec3(.46) : tx.y == 4 ? vec3(0.) : tx.y == 5 || tx.y == 7 ? accent : vec3(.9);
-    vec3 bg = tx.y == 4 ? accent : tx.y == 3 || tx.y >= 6 ? vec3(.085) : vec3(0.);
+    vec3 fg = tx.y == 8 ? vec3(.2) : tx.y == 2 || tx.y == 6 ? uDim : tx.y == 4 ? vec3(0.) : tx.y == 5 || tx.y == 7 ? uAccent : vec3(.9);
+    vec3 bg = tx.y == 4 ? uAccent : tx.y == 3 || tx.y >= 6 ? uBar : vec3(0.);
     o = vec4(mix(bg, fg, ink(uFont, tx.x, fract(tf))), 1.);
     return;
   }
@@ -3293,7 +3322,9 @@ function drawScene() {
   gl.uniform1i(u.uTreeN, nt);
   gl.uniform3fv(u.uTreeCol, p.treeCol);
   gl.uniform1f(u.uTreeGlow, p.treeGlow);
-  gl.uniform3f(u.uBeaconCol, .2, 1, .9);
+  gl.uniform3fv(u.uTreeGlowCol, p.treeGlowCol);
+  gl.uniform1f(u.uTreeNight, p.treeNight);
+  gl.uniform3fv(u.uBeaconCol, p.signal);
   const beams = new Float32Array(20);
   p.beacons.forEach((b, i) => beams.set([...b.base, b.got ? .25 : 1], i * 4));
   gl.uniform4fv(u.uBeacon, beams);
@@ -3333,6 +3364,8 @@ function drawScreen() {
   gl.uniform2f(u.uGrid, cols, rows);
   gl.uniform2f(u.uAtlasGrid, 16, 6);
   gl.uniform1f(u.uRaw, view.raw ? 1 : 0);
+  const ink = planet.ink || { accent: [.85, .85, .8], bar: [.085, .085, .085], dim: [.46, .46, .46] };
+  gl.uniform3fv(u.uAccent, ink.accent); gl.uniform3fv(u.uBar, ink.bar); gl.uniform3fv(u.uDim, ink.dim);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
 
@@ -3555,7 +3588,7 @@ function saveText() {
 
 // ---- boot
 
-const randomSeed = () => (NAME_A[Math.floor(Math.random() * 16)] + NAME_B[Math.floor(Math.random() * 16)]).toLowerCase() + '-' + Math.floor(Math.random() * 900 + 100);
+const randomSeed = () => NOUNS[Math.floor(Math.random() * NOUNS.length)] + '-' + Math.floor(Math.random() * 900 + 100);
 const nextFrame = () => new Promise(r => requestAnimationFrame(() => setTimeout(r)));
 
 // One planet is built at a time: the generator works on the one planet object, in steps spread over

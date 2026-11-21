@@ -9,8 +9,8 @@ or play it at <https://wavy-hec.github.io/planet.txt/>.
 
 ## Playing
 
-You start in orbit. Every planet has five signals on the ground, visible as beams of light
-(a world that is almost all ocean may have fewer). Fly down to one, land, and walk into it:
+You start in orbit. Every planet has five signals on the ground, visible as beams of light in a
+colour none of its ground has (a world that is almost all ocean may have fewer). Fly down to one, land, and walk into it:
 a signal only counts on foot. Hold `W` and the ship dives, levels out and skims the land.
 The status line at the bottom says how far the next signal is and which way to turn, and names
 the key that does something where you are, such as `f land` once you are low enough. With the
@@ -66,7 +66,9 @@ The signals you have found are kept in your browser, so a planet you come back t
 | ![a lava sea glowing at sunset, the ring standing up from the horizon](shots/lava.jpg) | ![a ringed ocean planet seen from orbit, drawn in characters, with signal beams rising from it](shots/orbit.jpg) |
 | `?seed=kelp`: a lava sea at sunset | `?seed=amber` from orbit |
 
-Also worth a visit: `home` (a cratered moon with a ring) and `reef` (pink and violet, with glowing trees).
+Also worth a visit: `home` (a cratered moon with a ring) and `reef` (heather moors whose firs glow at night).
+A seed that is a plain word names its world; any other gets a word from rock, weather or the sea and a
+number, such as Haar 412.
 
 On some worlds the moon's path crosses the sun's, and every half hour or so it passes in front of it.
 Its shadow crosses the planet; where it is total the sky goes dark, the stars come out and the
