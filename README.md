@@ -60,12 +60,14 @@ The signals you have found are kept in your browser, so a planet you come back t
 
 | | |
 |---|---|
-| ![sunset over the sea, with the planet's ring arching across the sky](shots/sunset.jpg) | ![the parked lander in a valley of fir trees](shots/lander.jpg) |
+| ![sunset over the sea, the planet's ring rising behind the sun](shots/sunset.jpg) | ![the parked lander on a meadow among fir trees](shots/lander.jpg) |
 | `?seed=amber`: sunset over the sea under a ring | `?seed=coral`: the lander parked among firs |
-| ![a desert at dawn with layered rock spires and a signal beam](shots/desert.jpg) | ![glowing crystals and a signal beam on a frozen plain](shots/crystals.jpg) |
+| ![a desert at dawn, rock spires against the rising sun](shots/desert.jpg) | ![glowing crystals on a frozen plain, the planet's ring across the sky](shots/crystals.jpg) |
 | `?seed=dust`: a desert at dawn | `?seed=glacier`: a crystal field on a frozen world |
 | ![a lava sea glowing at sunset, the ring standing up from the horizon](shots/lava.jpg) | ![a ringed ocean planet seen from orbit, drawn in characters, with signal beams rising from it](shots/orbit.jpg) |
 | `?seed=kelp`: a lava sea at sunset | `?seed=amber` from orbit |
+| ![green curtains of aurora over a frozen plain at night, crystals glowing under them](shots/aurora.jpg) | ![a banded giant planet rising behind volcanic spires, a lava river in front](shots/giant.jpg) |
+| `?seed=glacier` at night: an aurora | `?seed=nova`: a giant planet over a molten world |
 
 Also worth a visit: `home` (a cratered moon with a ring) and `reef` (heather moors whose firs glow at night).
 A seed that is a plain word names its world; any other gets a word from rock, weather or the sea and a
@@ -88,37 +90,37 @@ sky, banded, fixed among the stars: walk far enough over the curve and it sets.
 `P` writes the frame out as plain text. This is `?seed=home` at 80 columns:
 
 ````
-   .   .    .        .        .      . .    . .        .        .        .
-.      . .        .      . .      .        .        .      . .        .        .
-      .      .        .        .        .        .      . .    .   .        .
- .        .    .   .        .      . .      . .        .        .           . .
-       .        .    .   .      . .      . .      . .      .    ..``'',::;;;;;;;
-    .        .        .      . .      ....     .        ...``,:;;;;;;;;;;;=;;;;;
- .        .    . . .... . .      `,:::=^====,`     ..',:;;;;;;;;::,,,''''':;=;,.
- .            .      '''. . . ..:::======+======,:;;;;;;::,''',::;;;;;;;;`::'.
-  .        .        .  '+*```:^;^^====++++=========::'',:;;;;;;;;==;;;;:.'   .
-    .  ..        .    ..`^\_;;::^^==================;;;::|'''. . ';;:,'       .
-     .        .      . .. .='::^=========++=========^'   .     .,:..       .
-. .        .      .    . .^==========================;'    ....`        ..
-  . . `        .    ..':;======;=========^+++=====+++^; ..``.        .        .
-   .        .    `':;;;;;==^==============++=++====+==;` .      .        .
-.        .  ..':;;;;::'::====;===++++===++===+==+==;===;     .        .        .
-      .  .`:;;;;:,',:;;;;;^^;;;=;==;==^=+++==+===^;::===. .        .        .
-   .  `,;;;;;:',:;;;;,' .::;;:;=;^^===^=++===++===;^^+==      . .        .
-   `:;;;;|,',;;;;:'. . ..::=;:^==:::^=::^++++=+++=;====:   . .      . .  .   .
-`:;;;;:,',;;;=:'    ..`'_:,=^;:==^^;^:;::===+++====;===.. .      .        .
-;;;;:`:;;;;==`   ..``:|^'.::=^:^==^=^;::^^======;;;===`     . .        .
-;=;: :=;;;:;;:,''' . . .. .,^=^^===;;;::=========;;==' . . .        .     .  .
-;;;::....'`.        .    . .:^^:===;;:^;============*+'`.        .        .
-      . .        .      . . .;;::^;==;;;===========`.'*|'.. . .      . .      .
-     .        .      . .      ',;;;:^=========^=^'   ..`'|,       .    .   .
-  .        .      . .      . .  .'::^:^^^====::`  . . .  ...   .        .
-        .      .        .        .    .'`...     . .        .        .        .
-   .        .        .    .   .        .      . .      . .        .
-.        .        .  .     .      . .      . .    . . .      .        .        .
-      .        .      . .      . .      . .      .        .        .        .
-   .        .        .      .  .     .        .        .        .        .
-     .          .        .        .      . .        .        .        .        .
+                                 .
+            .
+                 `
+
+                                   .`
+                                    .                                   .
+                                  .`'...::....                  .`.`'':::''``.`
+                               ....:::::::::,,:.`        ..::::*'''''':::;;;;;::
+                             ..,..::::::,::::::,::` .`:':::::::;;;;;;:;;:`:;;;;:
+                           ...:,.:,,,::,,,:^::::,:,:.`..        .:;;;;;:;;`.;;;;
+                           .,:::.,.,:,:::::::::::::::.            :;;;;;;;; :;;;
+ .                    .   .:::::::,:,:,,.:::::::,:,,,..           .;;;;:;;; :;;;
+                         .::,:::::::::,,:::::,,::,,::,.          .;;;;;;;;'.;;;;
+                         .,,::::,,:,::,,:::::,,:::::::,          :;;;;:;;:.:;;;;
+                        ..:,:::::,::::,,,:::,::::::::,:.        ;;;;;;;;:.:;;;;:
+                        ..::::::::::::::::,:,:::::::::.`      `;;;;;;;;: :;;;;;;
+                        ..::,,::::::::,:::,,:,:::::::,:.    .;;;;;;;;;: :;;;;;;;
+                         .::,,,:::::::,:,,,:::::::.,.:.   .:;;;;;:;;;``;;;;;;;;;
+                       ::.,:,,,::::::::,,:::::::::,:::. .:;;;;;;;;;:.:;;;;;;;;:`
+                     .::  ..:::,,,,,,,::,,:,:::,:::::.`:;;;;;:;;;:.`;;;;;;;;;:.
+       .           .;:.   ..::::::,,,,,::,,,:::,:,:::;;;;;;:;;;:.`:;;;;:;;;:'
+                 `;;:      .,.:,,,:::,,:::::::::,:;;;;;;;;;;;:.`:;;;;;;:;;'`
+                :;;.       `...::::....::::::::^;;;;;;;:;;;:.`:;;;;;;;;;:`
+              .::;`            ...::,:,,:::::;;;;;;;;;;;;` `;;;;;;;;;;:`
+            .;';;;               .....:::;;;:;;;::;;;;:..:;;;;;;;;;;:`.
+           `;';;;;                  `::;;;;;;;;::;;:```:;;;;;;;;;;:`
+          .;`;;;;;:`         ..`';;;;;;;;;::;:;;:`.`:;;;;;;;;;;;:`.
+         :;;.;;;;;;;;::::::;;;;;;;;;;;;:;:;;;:`.`:;;;;;;;;;;;;'.            .
+        `;;':;:;;;;;;;;;;;;;;;;;:;:;;;;;;:.```:;;;;;;;:;;;;:`
+       .;;;'.;;:;:;;;;;;;:;::::;;;;;;::``':;;;;;;;;;;;;;:'`
+       :;;;:..;;;;;;;:;;:;;;;;;;::````:;;;;;;;;;;;;;;:'..
 ````
 
 ## How it works
