@@ -805,7 +805,7 @@ const LANDFORMS = {
   },
   // a grove: a handful of trees many times the height of the rest, in a glade they have drunk dry
   overgrown(span, wob, lit, dry) {
-    const r = span(48, 64), out = lobes(span), P = planet.K.props[0], tree = hex(P.glowCol || P.col), giants = [];
+    const r = span(48, 64), out = lobes(span), P = planet.K.props[0], tree = hex(P.col), giants = [];
     // the giants stand anywhere in the middle of the glade, no two closer than 15 m
     for (let n = 0; n < 60 && giants.length < 7; n++) {
       const a = span(0, 6.2832), m = 34 * Math.sqrt(span(0, 1)), t = [m * Math.cos(a), m * Math.sin(a), span(3.6, 5), span(28, 40)];
@@ -1577,7 +1577,7 @@ bool cone(float A, float B, float C, float D, float th, out vec2 t) {
 }
 vec3 aurora(vec3 ro, vec3 rd, float tEnd) {
   if (uAurora.w <= 0.) return vec3(0.);
-  float lo = uR + uAuroraB.y, hi = uR + uAuroraB.z;
+  float lo = uR + uAuroraB.y * .93, hi = uR + uAuroraB.z;   // .93: the lowest the foot wavers down to
   vec2 top = sphere(ro, rd, hi);
   // where the ray first gets between the curtains' foot and top: nothing to do if it hits something before
   float start = length(ro) < lo ? sphere(ro, rd, lo).y : max(top.x, 0.), end = min(top.y, tEnd);
@@ -1684,8 +1684,8 @@ vec3 meteors(vec3 rd) {
   for (int i = 0; i < 2; i++) {
     vec4 a = uMet[i], b = uMetB[i], c = uMetC[i];
     if (c.r + c.g + c.b <= 0.) continue;
-    float run = b.w * a.w;   // how far the head has gone, radians
-    vec3 H = normalize(a.xyz + b.xyz * run), way = normalize(b.xyz - H * dot(b.xyz, H)), q = rd - H;
+    float run = b.w * a.w;   // how far the head has gone round its great circle, radians
+    vec3 H = a.xyz * cos(run) + b.xyz * sin(run), way = b.xyz * cos(run) - a.xyz * sin(run), q = rd - H;
     // measured round the great circle it follows: a straight line would leave a long tail behind
     float along = atan(-dot(rd, way), dot(rd, H)), across = abs(dot(rd, normalize(cross(H, way)))), w = max(uPix, .0015);
     if (along < -6. * w || along > run + 6. * w || across > 6. * w) continue;
@@ -1791,7 +1791,8 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
     glow = em;
     // trees are lit as the near ones are, so a tree does not change as it comes close and is drawn in full
     vec3 lit = mat == ${TREE}. ? needles(alb, n, d, mu, sun, vec3(0.), tips, rd) + alb * (light - sun * ndl - amb) : alb * light;
-    return lit + (mat == ${TREE}. && uTreeNight > .5 ? uTreeGlowCol * .5 : alb) * em * uEmit;
+    // what glows only in the dark glows in the trees' glow colour, the ground round the giants of a grove too
+    return lit + (uTreeNight > .5 ? uTreeGlowCol * .5 : alb) * em * uEmit;
   }
   if (uSea.a > 1.5) {
     float crust = smoothstep(.38, .6, mix(.5, n3(p * .22 + vec3(0., uTime * .02, 0.)), fine(F, 4.5)) * .6 + mix(.5, n3(p * .9), fine(F, 1.1)) * .4);
@@ -3157,7 +3158,8 @@ function drone() {
   const t = ac.currentTime, root = 55 * 2 ** (planet.key / 12);
   const upper = [12, 14, 15, 19, 22, 24, 26, 27, 31];
   for (const semi of [0, 7, upper[Math.floor(Math.random() * 4)], upper[4 + Math.floor(Math.random() * 5)]]) hold(root * 2 ** (semi / 12), t, .045);
-  planet.beacons.forEach((b, i) => { if (b.got) hold(note(i) / 2, t, .02); });
+  // (not while a new world is being built: its key is set, but the signals are still the last world's)
+  if (mode !== 'loading') planet.beacons.forEach((b, i) => { if (b.got) hold(note(i) / 2, t, .02); });
 }
 // one held note of the drone from t: in over 5 s, out by 16 s, the next one in before it has gone
 function hold(f, t, vol) {
@@ -3362,7 +3364,7 @@ function drawScene() {
   let flash = [0, 1, 0, 0];
   meteorsNow().slice(0, 2).forEach((m, i) => {
     mA.set([...m.A, m.u], i * 4); mB.set([...m.d, m.L], i * 4); mC.set([...m.col, m.tail], i * 4);
-    if (m.fire) flash = [...norm(add(m.A, mul(m.d, m.L * m.u))), .035 * len(m.col) * m.life];
+    if (m.fire) flash = [...add(mul(m.A, Math.cos(m.L * m.u)), mul(m.d, Math.sin(m.L * m.u))), .035 * len(m.col) * m.life];
   });
   gl.uniform4fv(u.uMet, mA); gl.uniform4fv(u.uMetB, mB); gl.uniform4fv(u.uMetC, mC);
   gl.uniform4fv(u.uFlash, flash);
@@ -3705,6 +3707,7 @@ async function newPlanet(seed) {
     ui.leave = -1;
     ui.chart = ui.journal = false;
     if (document.pointerLockElement) document.exitPointerLock();
+    Object.assign(snow, { now: 0, cold: 0, at: null });   // nothing of the last world's snow comes along
     design(seed);
     ui.note = `charting ${planet.name}`;
     await nextFrame();
