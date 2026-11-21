@@ -142,10 +142,13 @@ const RAMPS = [
 ];
 // how much of the surface colour fills the cell behind the character. high values read as
 // solid shapes with a light texture, low values as loose characters on black
-const BACKING = [.9, .92, .9, .75, .8, .8, .8, .78, .85, .6, .5, .8, .5, .6, .6, .9];
+const BACKING = [.9, .92, .9, .75, .8, .8, .8, .78, .85, .82, .5, .8, .5, .6, .78, .9];
 // how much brighter than the scene the characters are drawn on a flat surface. low on sky and
 // cloud, so their dots read as a fine grain over the colour rather than a pattern of their own
 const GAIN = [1.45, 1.12, 1.15, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.15];
+// how far a material's middle tones are lifted toward its heavier characters (1 for none). Firs are
+// dark, and without it the lit ends of their branches would get the same dots as their shade
+const LIFT = [1, 1, 1, 1, 1, 1, 1, 1, 1, .72, 1, 1, 1, 1, 1, 1];
 
 // heights are metres, colour stops run from the shore (0) to the highest peak (1),
 // tau is how much red/green/blue light the air scatters straight overhead,
@@ -158,7 +161,7 @@ const KINDS = [
     rock: '#59544c', ice: '#f1f5fa', snow: .6, polar: 1.3, bed: '#c9b783', ground: [SAND, GRASS, DRY],
     sea: 1, deepCol: '#051d44', shallow: '#1b8088',
     tau: [.05, .12, .3], atmo: .36, cover: [.45, .6], cloudCol: '#ffffff',
-    props: [{ mat: TREE, n: 7000, col: '#2a5527', r: [1.3, 2.1], h: [4, 9], hn: [.03, .42], wet: .42 }],
+    props: [{ mat: TREE, n: 7000, col: '#356b30', r: [1.3, 2.1], h: [4, 9], hn: [.03, .42], wet: .42 }],
   },
   {
     label: 'ocean', cf: 1.7, bias: [-.3, -.18], low: 7, mount: 24, deep: 18, rough: 1.2,
@@ -167,7 +170,7 @@ const KINDS = [
     rock: '#5e5a50', ice: '#f1f5fa', snow: .9, polar: .8, bed: '#e6d6a0', ground: [SAND, GRASS, GRASS],
     sea: 1, deepCol: '#03254f', shallow: '#22b8b0',
     tau: [.045, .11, .28], atmo: .36, cover: [.38, .5], cloudCol: '#ffffff',
-    props: [{ mat: TREE, n: 5000, col: '#2f7030', r: [1.3, 2], h: [5, 10], hn: [.04, .6], wet: .3 }],
+    props: [{ mat: TREE, n: 5000, col: '#3a8538', r: [1.3, 2], h: [5, 10], hn: [.04, .6], wet: .3 }],
   },
   {
     label: 'arid', cf: 1.4, bias: [.22, .4], low: 9, mount: 26, deep: 0, rough: 1.1, terrace: 5,
@@ -902,19 +905,39 @@ float march(vec3 ro, vec3 rd) {
 }
 
 // The parked lander, in its own frame: y away from the planet, z forward, origin at ship.pos (about
-// 1.4 m above the ground). part says which piece is nearest: 0 hull, 1 canopy, 2 engine ring, 3 legs, 4 lamp.
+// 1.4 m above the ground). part says which piece is nearest: 0 hull, 1 canopy, 2 engine ring, 3 legs and
+// the other bare metal (braces, the engine's bell, the ladder, the mast), 4 lamps.
 float sdEllipsoid(vec3 p, vec3 r) { float k0 = length(p / r), k1 = length(p / (r * r)); return k0 * (k0 - 1.) / max(k1, 1e-6); }
 float sdCapsule(vec3 p, vec3 a, vec3 b, float r) {
   vec3 pa = p - a, ba = b - a;
   return length(pa - ba * clamp(dot(pa, ba) / dot(ba, ba), 0., 1.)) - r;
 }
+// a capped cone from y = -h (radius r1) to y = +h (radius r2)
+float sdCappedCone(vec3 p, float h, float r1, float r2) {
+  vec2 q = vec2(length(p.xz), p.y), k1 = vec2(r2, h), k2 = vec2(r2 - r1, 2. * h);
+  vec2 ca = vec2(q.x - min(q.x, q.y < 0. ? r1 : r2), abs(q.y) - h);
+  vec2 cb = q - k1 + k2 * clamp(dot(k1 - q, k2) / dot(k2, k2), 0., 1.);
+  float s = cb.x < 0. && ca.y < 0. ? -1. : 1.;
+  return s * sqrt(min(dot(ca, ca), dot(cb, cb)));
+}
 float lander(vec3 q, out float part) {
   float hull = min(sdEllipsoid(q - vec3(0., .05, 0.), vec3(1.35, .45, 1.35)), sdEllipsoid(q - vec3(0., .38, -.12), vec3(.85, .38, .85)));
   float canopy = length(q - vec3(0., .5, .45)) - .4;
   float ring = length(vec2(length(q.xz) - 1.27, q.y + .02)) - .085;
-  vec3 a = vec3(abs(q.x), q.y, abs(q.z));   // four legs by symmetry
-  float legs = min(sdCapsule(a, vec3(.68, -.15, .68), vec3(1.08, -1.24, 1.08), .065), sdEllipsoid(a - vec3(1.08, -1.3, 1.08), vec3(.22, .06, .22)));
-  float lamp = length(q - vec3(0., .78, -.22)) - .07;
+  vec3 a = vec3(abs(q.x), q.y, abs(q.z));   // four legs by symmetry, each braced from the hull to its knee
+  float legs = min(min(sdCapsule(a, vec3(.68, -.15, .68), vec3(1.08, -1.24, 1.08), .065),
+                       sdCapsule(a, vec3(.34, -.3, .34), vec3(.93, -.83, .93), .035)),
+                   sdEllipsoid(a - vec3(1.08, -1.3, 1.08), vec3(.24, .05, .24)));
+  // the descent engine's bell under the middle
+  legs = min(legs, sdCappedCone(q - vec3(0., -.5, 0.), .14, .3, .2));
+  // a ladder from the hatch at the front to the ground: two rails and a rung every 23 cm
+  vec3 l = vec3(abs(q.x) - .16, q.y + .8, q.z - 1.16);
+  float rungs = max(length(vec2(mod(q.y + 1.37, .23) - .115, l.z)) - .018, abs(q.x) - .16);
+  legs = min(legs, max(min(length(l.xz) - .022, rungs), abs(l.y) - .58));
+  // the mast
+  legs = min(legs, sdCapsule(q, vec3(.36, .55, -.42), vec3(.42, 1.08, -.48), .018));
+  // the lamps: a beacon on top, and a red and a green at the rim
+  float lamp = min(length(q - vec3(0., .78, -.22)) - .07, length(vec3(abs(q.x) - 1.37, q.y - .04, q.z)) - .05);
   float d = hull; part = 0.;
   if (canopy < d) { d = canopy; part = 1.; }
   if (ring < d) { d = ring; part = 2.; }
@@ -955,27 +978,35 @@ float thing(vec3 q, float what, float more, out float part) {
   return lander(q, part);
 }
 
-// a capped cone from y = -h (radius r1) to y = +h (radius r2)
-float sdCappedCone(vec3 p, float h, float r1, float r2) {
-  vec2 q = vec2(length(p.xz), p.y), k1 = vec2(r2, h), k2 = vec2(r2 - r1, 2. * h);
-  vec2 ca = vec2(q.x - min(q.x, q.y < 0. ? r1 : r2), abs(q.y) - h);
-  vec2 cb = q - k1 + k2 * clamp(dot(k1 - q, k2) / dot(k2, k2), 0., 1.);
-  float s = cb.x < 0. && ca.y < 0. ? -1. : 1.;
-  return s * sqrt(min(dot(ca, ca), dot(cb, cb)));
-}
-// A fir in its own frame (y up, origin at the base): a trunk and three overlapping tiers of boughs with
-// bushy edges. At fade 0 it is a small cone hidden inside the one the terrain already holds, so what
-// shows there is the terrain's own tree, and a tree grows out of that as the fade rises.
+// A fir in its own frame (y up, origin at the base): a trunk, a dense middle, and tiers of boughs from a
+// little above the ground to near the top. Each tier is a skirt whose edge goes in and out round the tree
+// where the branches reach, and droops at their tips. The edges stand evenly spaced under a straight
+// outline, and only the tiers either side of a point's height are worked out, so more tiers cost nothing.
+// The middle is a little wider than the cone the terrain holds for the tree, so that cone never shows
+// between the tiers. At fade 0 the fir is a small cone hidden inside it, so what shows there is the
+// terrain's own tree, and a tree grows out of it as the fade rises.
+const float FIR_OUT = 1.2, FIR_PAD = .45;   // the widest the boughs reach: FIR_OUT r + FIR_PAD metres
+float firTiers(float h) { return clamp(floor(h / 1.25), 4., 7.); }
 float fir(vec3 q, float r, float h, float fade, float seed) {
+  float outline = r * FIR_OUT + FIR_PAD, rho = length(q.xz);
   // outside the widest tier the distance to it is a safe step, so the exact shape is only worked out close by
-  float wide = length(q.xz) - (r * 1.2 + .45);
-  if (wide > .6) return wide;
-  float d = sdCapsule(q, vec3(0.), vec3(0., h * .5, 0.), r * .09);
-  for (int k = 0; k < 3; k++) {
-    float fk = float(k), y0 = h * .25 * fk, th = h * (.48 + .02 * fk), R = r * (1.2 - .3 * fk) + .45;
-    d = min(d, sdCappedCone(q - vec3(0., y0 + th * .5, 0.), th * .5, R, R * .06));
+  if (rho - outline > .6) return rho - outline;
+  float n = firTiers(h), low = .3 + h * .06, gap = (h * .86 - low) / n, a = rho > 1e-4 ? atan(q.x, q.z) : 0., d = 1e3;
+  float i0 = clamp(floor((q.y - low) / gap), 0., n - 1.), arms = 7. + floor(mod(seed, 3.));
+  for (int j = -1; j <= 1; j++) {
+    float i = i0 + float(j);
+    if (i < 0. || i > n - 1.) continue;
+    float yb = low + gap * i, E = outline * (1. - yb / h), tall = max(E * .9, gap * 1.7);
+    float tip = .5 + .5 * cos(a * arms + i * 2.4 + seed);
+    tip *= tip * tip;   // the branches reach out to points, with room between them
+    float R = E * (.8 + .2 * tip), y = q.y - yb + .18 * tip * smoothstep(.5, 1., rho / E);
+    d = min(d, sdCappedCone(vec3(q.x, y - tall * .5, q.z), tall * .5, R, R * .05));
   }
-  if (fade > .5) d += (n3(q * 2.6 + seed) - .5) * .11 * r;
+  // the middle and the trunk, where they can be nearer than the tiers
+  float core = r * .95 + .25;
+  if (rho - core < d) d = min(d, sdCappedCone(q - vec3(0., h * .5, 0.), h * .5, core, .05));
+  if (rho - r * .08 < d) d = min(d, sdCapsule(q, vec3(0.), vec3(0., h * .8, 0.), r * .08));
+  if (fade > .5) d += (n3(q * 2.6 + seed) - .5) * .08 * r;
   return mix(sdCappedCone(q - vec3(0., h * .3, 0.), h * .3, r * .7, 0.), d, fade);
 }
 
@@ -1061,6 +1092,20 @@ float cloudAt(vec3 d) {
 vec3 sunTint(float mu, float k) { return exp(-uBeta * uAtmo * .25 * k / max(mu + .15, .05)); }
 vec3 skyCol() { return uBeta / max(max(uBeta.r, uBeta.g), max(uBeta.b, 1e-6)); }
 
+// Needles: the sun; the sky from above, in its colour; light thrown up from the ground; and with the sun
+// behind them, light coming through the thin outer part of a bough in the needles' own colour. tips is 1
+// out at the end of a branch and 0 in the dark middle of the tree; sun is the sunlight that reaches the
+// point, and thru the sunlight that reaches the bough it shines through.
+vec3 needles(vec3 alb, vec3 n, vec3 up, float mu, vec3 sun, vec3 thru, float tips, vec3 rd) {
+  float day = smoothstep(-.25, .25, mu), facing = dot(n, up) * .5 + .5;
+  vec3 sky = mix(skyCol(), vec3(1.), .3) * uSunCol * day;
+  vec3 light = sun * max(dot(n, uSun), 0.)
+             + sky * (.05 + .3 * facing * facing) * (.5 + .5 * tips)
+             + uSunCol * sunTint(mu, 1.5) * max(mu, 0.) * (1. - facing) * .06
+             + vec3(.03, .035, .05);
+  return alb * light + sqrt(alb) * thru * pow(max(dot(rd, uSun), 0.), 3.) * tips * .3;
+}
+
 vec3 cloudLit(vec3 d) {
   float mu = dot(d, uSun);
   float thick = cloudAt(normalize(d + uSun * .025));
@@ -1110,7 +1155,7 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
 
   // Props get the structure the height map is too coarse to hold (it has about a metre per point).
   // Only their sides get it: the top of a spire and the ground round a foot are flat and stay plain.
-  float side = 1. - smoothstep(.8, .97, dot(n, d)), alt = length(p) - uR;
+  float side = 1. - smoothstep(.8, .97, dot(n, d)), alt = length(p) - uR, tips = .6;
   if (!sea && F < 7. && side > 0.) {
     vec3 g = (vec3(n3(p * 2.4), n3(p * 2.4 + 17.), n3(p * 2.4 + 31.)) - .5) * fine(F, .42) * side;
     if (mat == ${TREE}.) {
@@ -1120,6 +1165,7 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
       float tier = fract(alt * .62 + n3(p * .35) * .5);
       n = normalize(n + g * 1.3);
       float boughs = .25 + 1.05 * smoothstep(.05, .5, tier) + .3 * smoothstep(.8, 1., tier);
+      tips = mix(tips, smoothstep(.05, .9, tier), fine(F, 1.6) * side);
       alb *= mix(1., boughs, fine(F, 1.6) * side) * mix(1., .6 + .8 * n3(p * 3.1), fine(F, .32) * side) * (.8 + .4 * n3(p * .2));
     } else if (mat == ${SPIRE}.) {
       // thick rock strata, light and dark, with cracks
@@ -1164,7 +1210,9 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
     // each crystal facet glows at its own brightness
     if (mat == ${CRYSTAL}.) em *= mix(1., .35 + .9 * abs(dot(n, normalize(vec3(.4, .8, .45)))), fine(F, 1.5));
     glow = em;
-    return alb * light + alb * em * uEmit;
+    // trees are lit as the near ones are, so a tree does not change as it comes close and is drawn in full
+    vec3 lit = mat == ${TREE}. ? needles(alb, n, d, mu, sun, vec3(0.), tips, rd) + alb * (light - sun * ndl - amb) : alb * light;
+    return lit + alb * em * uEmit;
   }
   if (uSea.a > 1.5) {
     float crust = smoothstep(.38, .6, mix(.5, n3(p * .22 + vec3(0., uTime * .02, 0.)), fine(F, 4.5)) * .6 + mix(.5, n3(p * .9), fine(F, 1.1)) * .4);
@@ -1264,7 +1312,7 @@ bool trees(vec3 ro, vec3 rd, inout float tEnd, out vec3 col) {
     for (int k = 0; k < 36; k++) {
       float dd = fir(lo + ld * ts, r, h, fade, seed);
       if (dd < .004 * (1. + ts)) { hit = true; break; }
-      ts += dd * .9;
+      ts += dd * .85;
       if (ts > b.y || ts > tEnd) break;
     }
     if (!hit || ts >= tEnd) continue;
@@ -1273,15 +1321,23 @@ bool trees(vec3 ro, vec3 rd, inout float tEnd, out vec3 col) {
     vec3 nl = normalize(e.xyy * fir(q + e.xyy, r, h, fade, seed) + e.yyx * fir(q + e.yyx, r, h, fade, seed)
                       + e.yxy * fir(q + e.yxy, r, h, fade, seed) + e.xxx * fir(q + e.xxx, r, h, fade, seed));
     vec3 n = nl.x * ax + nl.y * up + nl.z * az;
-    float mu = dot(up, uSun), day = smoothstep(-.25, .25, mu), ndl = max(dot(n, uSun), 0.);
-    float vis = ndl > 0. ? shadow(p + n * .3) * skyShade(p) : 1.;
-    // darker toward the trunk and under each tier, clumps of needles
-    float occ = .4 + .6 * clamp(length(q.xz) / (r * 1.1), 0., 1.);
-    vec3 alb = uTreeCol * occ * (.65 + .7 * n3(q * 4. + seed));
-    vec3 light = uSunCol * sunTint(mu, 1.5) * vis * ndl + skyCol() * day * .1 + vec3(.03, .035, .05)
-               + vec3(1.5, 1.4, 1.15) * (1. - day) * max(dot(n, -rd), 0.) / (1. + ts * ts / 250.);
-    col = alb * light + alb * uTreeGlow * 3.2;
-    glow = uTreeGlow;
+    float mu = dot(up, uSun), day = smoothstep(-.25, .25, mu);
+    // how far out on its tier the point is: 1 at the ends of the branches, 0 in the dark middle of the tree
+    float tips = smoothstep(.72, .97, length(q.xz) / ((r * FIR_OUT + FIR_PAD) * max(1. - q.y / h, .05)));
+    vec3 sunC = uSunCol * sunTint(mu, 1.5) * skyShade(p);
+    // The sun on a bough, and the sun that comes through one: the light that shines through is seen at the
+    // edges of the tree against the sun, where the boughs are turned sideways to it and their shadow test
+    // is the same one.
+    vec3 sun = dot(n, uSun) > 0. ? sunC * shadow(p + n * .3) : vec3(0.);
+    // A little variety from tree to tree; the ends of the branches lighter and yellower; clumps of needles,
+    // which fade out as the tree gets further off before they are as small as a character.
+    float F = ts * uPix * 8.;
+    vec3 alb = uTreeCol * mix(vec3(.85, .95, 1.1), vec3(1.15, 1.08, .8), fract(seed * .618)) * (.85 + .3 * fract(seed * .37))
+             * mix(.35, 2., tips) * mix(vec3(1.), vec3(1.15, 1.1, .75), tips) * mix(1., .7 + .6 * n3(q * 2.2 + seed), fine(F, .45));
+    col = needles(alb, n, up, mu, sun, sun, tips, rd)
+        + alb * vec3(1.5, 1.4, 1.15) * (1. - day) * max(dot(n, -rd), 0.) / (1. + ts * ts / 250.)   // headlamp
+        + alb * uTreeGlow * 3.2 * (.25 + 1.5 * tips);   // a glowing tree glows most at the ends of its branches
+    glow = uTreeGlow * (.25 + .75 * tips);
     tEnd = ts;
     mat = ${TREE}.;
     found = true;
@@ -1336,7 +1392,15 @@ void main() {
         // of shade it throws itself)
         vec3 sunL = uSunCol * sunTint(dot(up, uSun), 1.) * (1. - .75 * under) * smoothstep(-.1, .1, dot(up, uSun))
                   * shadow(at.xyz + up * .6) * skyShade(at.xyz + up * (what > 1.5 ? 3. : 0.));
-        vec3 amb = skyCol() * .12 * smoothstep(-.25, .25, dot(up, uSun)) + vec3(.04, .045, .055);
+        float day = smoothstep(-.25, .25, dot(up, uSun)), facing = dot(n, up) * .5 + .5;
+        vec3 amb = skyCol() * .12 * day + vec3(.04, .045, .055);
+        // What metal and glass mirror: the sky above the horizon, in its colour; below it the ground round
+        // the ship, lit by the sun. The sky fills the tops of things and the lit ground their undersides.
+        vec3 ground = pow(textureLod(uAlbedo, up, 5.).rgb, vec3(2.2)) * uSunCol * sunTint(dot(up, uSun), 1.5) * max(dot(up, uSun), 0.);
+        vec3 skyL = skyCol() * uSunCol * day * .7 + vec3(.008, .01, .016);
+        vec3 env = mix(ground * .6, skyL, smoothstep(-.2, .25, dot(reflect(rd, n), up)));
+        float fres = pow(1. - max(dot(n, -rd), 0.), 4.);
+        amb += skyL * .3 * facing * facing + ground * .35 * (1. - facing);
         // the things to find are lit by the headlamp once it is dark, like the ground; the ship has lights of its own
         if (what > .5) amb += vec3(1.5, 1.4, 1.15) * (1. - smoothstep(-.25, .25, dot(up, uSun))) * max(dot(n, -rd), 0.) / (1. + ts * ts / 250.);
         // a wreck is the ship's shape gone dull: dust on the hull, no light in the ring or the lamp
@@ -1346,22 +1410,39 @@ void main() {
           // stone: the planet's own rock, streaked down its faces
           col = uRock * (1.1 + .9 * n3(vec3(q.x * 2.5, q.y * .5, q.z * 2.5))) * (sunL * ndl + amb);
         } else if (part < .5) {
-          // hull: light panels with darker seams, and a dark band above the engine ring
+          // Hull: painted panels with darker seams, a band of colour round the saucer and a seam where the
+          // dome sits on it; the underside is bare metal. Round the dome, a row of portholes: dark glass by
+          // day, lit from inside once it gets dark.
           float f = fract(atan(q.z, q.x) * 1.2732), seam = 1. - smoothstep(0., .03, min(f, 1. - f));
-          vec3 base = mix(vec3(.62, .64, .68), vec3(.28, .3, .33), max(seam * .7, (1. - smoothstep(0., .05, abs(q.y - .2))) * .8));
-          col = mix(base, uRock * 1.6 + .05, dead * .6) * (sunL * ndl + amb) + sunL * spec * .35 * (1. - dead);
+          seam = max(seam * .7, 1. - smoothstep(.008, .025, abs(q.y - .27)));
+          float band = smoothstep(.12, .13, q.y) * (1. - smoothstep(.17, .18, q.y));
+          vec3 base = mix(vec3(.3, .31, .33), mix(vec3(.7, .69, .65), vec3(.46, .2, .13), band), smoothstep(-.08, -.04, q.y));
+          base = mix(base * (1. - .55 * seam), uRock * 1.6 + .05, dead * .6);
+          float arc = (fract(atan(q.z + .12, q.x) * 1.5915) - .5) * .53;
+          float port = (1. - smoothstep(.045, .06, length(vec2(arc, q.y - .46)))) * step(.3, q.y);
+          col = mix(base * (sunL * ndl + amb) + env * (.06 + .5 * fres) * (1. - dead) + sunL * spec * .35 * (1. - dead),
+                    vec3(.02, .025, .03) * amb + env * (.2 + .7 * fres) + vec3(1., .66, .36) * 1.4 * (1. - day) * (1. - dead), port);
+          glow = port * (1. - day) * (1. - dead) * .6;
         } else if (part < 1.5) {
-          // canopy: dark glass that reflects the sky
-          col = vec3(.03, .05, .07) * (sunL * ndl + amb) + (skyCol() * .3 * pow(clamp(1. - dot(n, -rd), 0., 1.), 3.) + sunL * spec * 1.6) * (1. - .8 * dead);
+          // canopy: dark glass that mirrors the sky and the ground
+          col = vec3(.02, .03, .04) * (sunL * ndl + amb) + (env * (.15 + .8 * fres) + sunL * spec * 1.6) * (1. - .8 * dead);
         } else if (part < 2.5 && dead < .5) {
-          col = uBeaconCol * 2.2;
-          glow = .9;
+          // the engine ring: a row of small lamps that stay lit while the ship waits, bright once it is dark
+          float f = fract(atan(q.z, q.x) * 3.8197), lit = mix(.7, 2.2, 1. - day);
+          float on = 1. - smoothstep(.035, .05, length(vec2((f - .5) * .33, q.y + .02)));
+          col = mix(vec3(.12, .12, .13) * (sunL * ndl + amb) + env * .3 * fres, vec3(1., .64, .32) * lit, on);
+          glow = on * mix(.25, .7, 1. - day);
         } else if (part < 3.5 || dead > .5) {
-          col = vec3(.22, .23, .25) * (sunL * ndl + amb) + sunL * spec * .2;
-        } else {
+          col = vec3(.2, .21, .23) * (sunL * ndl + amb) + env * (.05 + .4 * fres) * (1. - dead) + sunL * spec * .2;
+        } else if (q.y > .5) {
+          // the beacon on top blinks
           float on = step(.5, fract(uTime * .8));
           col = vec3(4., .3, .2) * on + vec3(.15, .02, .02);
           glow = on;
+        } else {
+          // a red lamp on the left, a green one on the right
+          col = q.x > 0. ? vec3(3., .25, .15) : vec3(.3, 2.6, .8);
+          glow = .8;
         }
         tEnd = ts;
         mat = part > 4.5 ? (what < 1.5 ? ${SPIRE}. : ${ROCK}.) : ${SHIP}.;
@@ -1461,7 +1542,7 @@ uniform sampler2D uScene, uInfo, uTables;   // uTables: rows 0-1 glyph shapes; r
 uniform vec2 uGrid;
 uniform int uCount;
 uniform float uInk;
-uniform float uBack[${RAMPS.length}], uGain[${RAMPS.length}];
+uniform float uBack[${RAMPS.length}], uGain[${RAMPS.length}], uLift[${RAMPS.length}];
 const float DITHER = .06, FAR_TONE = .6, EDGE_FAR = .75;
 layout(location = 0) out vec4 o0;
 layout(location = 1) out vec4 o1;
@@ -1512,7 +1593,7 @@ void main() {
   // Distance thins the picture out: far ground is drawn with lighter characters and far outlines are
   // left to the colour behind them, so what is near you is what has texture and hard edges.
   edge *= 1. - EDGE_FAR * nearest;
-  float tone01 = mean / uInk * (air ? 1. : mix(1., FAR_TONE, centre.b));
+  float tone01 = pow(clamp(mean / uInk, 0., 1.), uLift[m]) * (air ? 1. : mix(1., FAR_TONE, centre.b));
   // the noise spans a whole step between characters, so one character gives way to the next through a
   // stipple of the two, not along a line
   int level = int(clamp(tone01 + dither * (air ? .08 : DITHER) * smoothstep(0., .05, tone01), 0., 1.) * 15. + .5);
@@ -2401,6 +2482,7 @@ function drawScene() {
   gl.uniform1f(u.uInk, view.ink);
   gl.uniform1fv(u.uBack, BACKING);
   gl.uniform1fv(u.uGain, GAIN);
+  gl.uniform1fv(u.uLift, LIFT);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
   gl.activeTexture(gl.TEXTURE8);
   gl.generateMipmap(gl.TEXTURE_2D);
