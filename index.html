@@ -207,14 +207,14 @@ const KINDS = [
     signal: '#a6dcff',
   },
   {
-    // a moor: heather low down, bracken on the dry slopes, lichen on the heights, under a lavender sky.
-    // Its firs are dark by day and at night glow with foxfire
+    // a moor: moor grass by the water, heather in flower above it, copper bracken on the dry slopes, lichen
+    // on the heights, under a periwinkle sky. Its firs are dark by day and at night glow with foxfire
     label: 'overgrown', cf: 1.25, bias: [-.05, .12], low: 8, mount: 30, deep: 14, rough: 1.6,
-    ramp: [[0, '#cbbda2'], [.05, '#6d5866'], [.3, '#584456'], [.6, '#5a5a4e'], [1, '#8b877a']],
-    dry: [[0, '#d2c3a4'], [.06, '#8c5e40'], [.35, '#6e4a3a'], [.65, '#5b5049'], [1, '#8b877a']],
-    rock: '#433b48', ice: '#efe9f0', snow: .68, polar: 1, bed: '#a89a84', ground: [SAND, GRASS, DRY],
+    ramp: [[0, '#cbbda2'], [.05, '#7f8a4a'], [.2, '#86507a'], [.45, '#68485f'], [.72, '#6b6a58'], [1, '#9a968a']],
+    dry: [[0, '#d2c3a4'], [.06, '#a8803e'], [.3, '#96562f'], [.6, '#62524a'], [1, '#9a968a']],
+    rock: '#4a4248', ice: '#efe9f0', snow: .68, polar: 1, bed: '#a89a84', ground: [SAND, GRASS, DRY],
     sea: 1, deepCol: '#062a2b', shallow: '#3f8a7e',
-    tau: [.1, .085, .16], atmo: .38, cover: [.45, .6], cloudCol: '#f2ecf2',
+    tau: [.07, .09, .17], atmo: .38, cover: [.45, .6], cloudCol: '#f4f0f4',
     props: [{ mat: TREE, n: 7000, col: '#2c4a3c', r: [1.2, 2], h: [3, 8], hn: [.03, .45], wet: .45, glow: .35, glowCol: '#9ef07c', night: true }],
     signal: '#ffd23f',
   },
@@ -1766,8 +1766,8 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
     float det = mix(n3(p * sc + i * 7.3), n3(p * sc * .5 + i * 7.3 + 7.3), l - i);
     alb *= mix(1., .55 + .9 * det, (1. - smoothstep(3., 6., l)) * fine(F, 1.5 * Fd));
     float em = step(.01, al.a) * (al.a - .004);
-    // on a world whose trees glow only at night, so does everything lit by them
-    if (uTreeNight > .5) em *= 1. - day;
+    // on a world whose trees glow only in the dark, so does everything lit by them
+    if (uTreeNight > .5) em *= smoothstep(-.05, -.3, mu);
     // each crystal facet glows at its own brightness
     if (mat == ${CRYSTAL}.) em *= mix(1., .35 + .9 * abs(dot(n, normalize(vec3(.4, .8, .45)))), fine(F, 1.5));
     glow = em;
@@ -1911,8 +1911,8 @@ bool trees(vec3 ro, vec3 rd, inout float tEnd, out vec3 col) {
     col = needles(alb, n, up, mu, sun, sun, tips, rd)
         + alb * vec3(1.5, 1.4, 1.15) * (1. - day) * max(dot(n, -rd), 0.) / (1. + ts * ts / 250.)   // headlamp
         // a glowing tree glows most at the ends of its branches; some glow only at night, in a colour of their own
-        + (uTreeNight > .5 ? uTreeGlowCol * (1. - day) * (.4 + .6 * tips) : alb) * uTreeGlow * 3.2 * (.25 + 1.5 * tips);
-    glow = uTreeGlow * (.25 + .75 * tips) * (uTreeNight > .5 ? 1. - day : 1.);
+        + (uTreeNight > .5 ? uTreeGlowCol * smoothstep(-.05, -.3, mu) * (.4 + .6 * tips) : alb) * uTreeGlow * 3.2 * (.25 + 1.5 * tips);
+    glow = uTreeGlow * (.25 + .75 * tips) * (uTreeNight > .5 ? smoothstep(-.05, -.3, mu) : 1.);
     tEnd = ts;
     mat = ${TREE}.;
     found = true;
