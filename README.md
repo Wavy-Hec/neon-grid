@@ -70,8 +70,8 @@ The signals you have found are kept in your browser, so a planet you come back t
 | `?seed=glacier` at night: an aurora | `?seed=nova`: a giant planet over a molten world |
 
 Also worth a visit: `home` (a cratered moon with a ring) and `reef` (heather moors whose firs glow at night).
-A seed that is a plain word names its world; any other gets a word from rock, weather or the sea and a
-number, such as Haar 412.
+A seed that is a plain word of up to ten letters names its world; any other gets a word from rock,
+weather or the sea and a catalogue number, such as Haar 412.
 
 On some worlds the moon's path crosses the sun's, and every half hour or so it passes in front of it.
 Its shadow crosses the planet; where it is total the sky goes dark, the stars come out and the

@@ -1606,9 +1606,10 @@ vec3 aurora(vec3 ro, vec3 rd, float tEnd, float tCut, out vec3 far) {
   }
   vec3 sum = vec3(0.), g0 = vec3(0.);
   // Each look compares cosines rather than angles, so it needs no acos: the cosine of a curtain's angle,
-  // which wavers by at most .063 rad about its mean, is taken to first order about the mean's (good to a
-  // metre). Nor does it need the longitude itself: its waves come from powers of e^(i longitude), turned
-  // by phases worked out once a frame (uWave: the waves' movement and each curtain's offset).
+  // which wavers by at most .063 rad about its mean, is taken to first order about the mean's (good to
+  // three metres or so, where the waves all peak together). Nor does it need the longitude itself: its
+  // waves come from powers of e^(i longitude), turned by phases worked out once a frame (uWave: the
+  // waves' movement and each curtain's offset).
   vec3 cm = cos(uAuroraB.x + vec3(0., .06, .12)), sm = sin(uAuroraB.x + vec3(0., .06, .12));
   vec2 hit[6];   // the crossings found: how far along the ray, and which curtain
   int n = 0;
@@ -1661,7 +1662,7 @@ vec3 aurora(vec3 ro, vec3 rd, float tEnd, float tCut, out vec3 far) {
     vec3 pole = cq < 0. ? -a : a;
     float cp = dot(q, pole), sa = sqrt(max(1. - cp * cp, 1e-6));
     vec3 ns = normalize((cp * q - pole) / sa - veil(ph, sk).y / sa * cross(a, q) / sa);
-    float c = abs(dot(rd, ns)), seen = min(1. / max(c, .25), 4.) * smoothstep(.03, .15, c);
+    float c = abs(dot(rd, ns)), seen = min(1. / max(c, .25), 4.) * smoothstep(.01, .06, c);
     float night = smoothstep(-.15, .35, -dot(q, uSun));
     vec3 e = (uAuroraLow * green + uAuroraHigh * red) * mix(rays, 1., u * .5) * arcs * seen * night * (1. - float(k) * .3);
     if (tc > tCut) far += e; else sum += e;
@@ -1701,7 +1702,9 @@ vec4 mist(vec3 ro, vec3 rd, float tEnd) {
     inside += max(min(q.y, tEnd) - max(q.x, 0.), 0.) * (k == 0 ? .5 : k == 1 ? .3 : .2);
   }
   float T = exp(-uMist.x * when * lie * inside), day = smoothstep(-.25, .25, mu);
-  vec3 L = uSunCol * sunTint(mu, 1.5) * smoothstep(-.05, .1, mu) * skyShade(ro + rd * (a + b) * .5) * (.45 + 1.4 * pow(max(dot(rd, uSun), 0.), 8.))
+  float lit = smoothstep(-.05, .1, mu);
+  if (lit > 0.) lit *= skyShade(ro + rd * (a + b) * .5);   // (its look at the clouds only where the sun is up)
+  vec3 L = uSunCol * sunTint(mu, 1.5) * lit * (.45 + 1.4 * pow(max(dot(rd, uSun), 0.), 8.))
          + skyCol() * smoothstep(-.3, .2, mu) * .3 + .01 + vec3(.1, .1, .09) * (1. - day) / (1. + a * a / 40.);
   return vec4(L * vec3(.92, .94, .97) * (1. - T), T);
 }
@@ -1842,16 +1845,15 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
   float sp = max(dot(reflect(rd, wn), uSun), 0.);
   float glint = pow(sp, mix(90., 34., calm)) * mix(4., 1.1, calm);
   glow = min(glint * .06, 1.) * vis;
-  // at night the water mirrors the aurora
   vec3 sky = skyCol() * day * .3 + .008;
-  if (uAurora.w > 0. && fres > .03 && mu < -.2) {
+  if (uAurora.w > 0. && fres > .03 && mu < -.3) {
     // at night the water mirrors the aurora, as much of it as the clouds over the water let through, and
     // only once the sky is dark enough for it to show at all
     vec3 r = reflect(rd, wn), beyond;
     vec2 cs = sphere(p, r, uR + uCloud.y);
     bool deck = uCloud.w > 0. && cs.y > 0.;
     vec3 seen = aurora(p + d * .05, r, 1e5, deck ? cs.y : 1e9, beyond);
-    sky += (seen + beyond * (deck ? 1. - cloudAt(normalize(p + r * cs.y)) * uCloud.w : 1.)) * smoothstep(-.2, -.45, mu);
+    sky += (seen + beyond * (deck ? 1. - cloudAt(normalize(p + r * cs.y)) * uCloud.w : 1.)) * smoothstep(-.3, -.45, mu);
   }
   return wc * light * (1. - fres) + sky * fres + sun * (glint + pow(sp, 10.) * .2);
 }
@@ -2128,7 +2130,7 @@ void main() {
         }
         tEnd = ts;
         mat = part > 4.5 ? (what < 1.5 ? ${SPIRE}. : ${ROCK}.) : ${SHIP}.;
-        st = mt = vec3(0.);
+        st = mt = icy = vec3(0.);
       }
     }
   }
@@ -2185,7 +2187,11 @@ void main() {
     }
     // flying through the layer itself, within 8 m of it
     float band = 1. - smoothstep(0., 8., abs(length(ro) - uR - uCloud.y));
-    if (band > 0.) col = mix(col, cloudLit(normalize(ro)), cloudAt(normalize(ro)) * uCloud.w * band * .9);
+    if (band > 0.) {
+      float f = cloudAt(normalize(ro)) * uCloud.w * band * .9;
+      col = mix(col, cloudLit(normalize(ro)), f);
+      clear *= 1. - f;
+    }
   }
 
   // the ice's halo, in the air above the clouds
@@ -2688,7 +2694,7 @@ function snowCells() {
   if (snow.tex.length !== n) snow.tex = new Uint8Array(n);
   snow.tex.fill(0);
   snow.drawn = count > 0;
-  const up = cross(cam.right, cam.fwd), day = smooth(-.25, .25, dot(norm(cam.pos), sunDir())) * sunShows(cam.pos);
+  const up = cross(cam.right, cam.fwd), day = smooth(-.25, .25, dot(norm(cam.pos), sunDir())), shows = sunShows(cam.pos);
   for (let i = 0; i < count; i++) {
     const r = [flakes[i * 3] - cam.pos[0], flakes[i * 3 + 1] - cam.pos[1], flakes[i * 3 + 2] - cam.pos[2]];
     const z = dot(r, cam.fwd);
@@ -2699,7 +2705,8 @@ function snowCells() {
     const d = len(r), far = 255 * (1 - Math.exp(-d / 120));
     if (snow.tex[k] && snow.tex[k + 1] <= far) continue;   // a nearer one is there already
     // lit by the day, or at night a little by the sky and close by by the headlamp
-    snow.tex[k] = 255 * clamp((.4 + .6 * day + (1 - day) * 1.2 / (1 + d * d / 40)) * (d < 10 ? 1 : .75), .05, 1);
+    // (the moon's shadow takes the daylight; the headlamp goes by the sun's height alone, as it does in the picture)
+    snow.tex[k] = 255 * clamp((.4 + .6 * day * shows + (1 - day) * 1.2 / (1 + d * d / 40)) * (d < 10 ? 1 : .75), .05, 1);
     snow.tex[k + 1] = far;
     snow.tex[k + 2] = 255 * (cy % 1);
     snow.tex[k + 3] = d < 10 ? 255 : 0;
