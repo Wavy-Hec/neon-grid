@@ -357,6 +357,10 @@ function design(seed) {
   // the whole, by the height of the plains
   const mi = mulberry(hashStr(seed + ' mist')), wet = { temperate: 1, ocean: .8, overgrown: 1.2, frozen: .35 }[K.label] || 0;
   planet.mist = wet ? { thick: .1 * wet * (.6 + .8 * mi()), deep: K.low * (.5 + .4 * mi()) } : null;
+  // Snow in spells of a few minutes: everywhere on a frozen world; on the other wet ones only where the
+  // ground is snow or ice, on their mountains and round their poles
+  const sn = mulberry(hashStr(seed + ' snow'));
+  planet.snow = wet ? { all: K.label === 'frozen', every: 240 + 180 * sn(), ph: sn() * 6.283, heavy: .6 + .4 * sn(), wind: sn() * 6.283, gust: .4 + 1.6 * sn() } : null;
 }
 
 function terrain(x, y, z, craters) {
@@ -2109,6 +2113,8 @@ uniform vec2 uGrid;
 uniform int uCount;
 uniform float uInk;
 uniform float uBack[${RAMPS.length}], uGain[${RAMPS.length}], uLift[${RAMPS.length}];
+uniform sampler2D uFlakes;   // a snowflake in the cell: how bright, how far (as the info buffer has it), how far up the cell, whether near
+uniform ivec3 uFlakeChars;   // the characters it is drawn with: a mark at the top of the cell, a star, a mark at the bottom
 const float DITHER = .06, FAR_TONE = .6, EDGE_FAR = .75;
 layout(location = 0) out vec4 o0;
 layout(location = 1) out vec4 o1;
@@ -2189,6 +2195,15 @@ void main() {
   fg = max(mix(vec3(dot(fg, vec3(.299, .587, .114))), fg, 1.2), 0.) * mix(uGain[m], 2., edge);
   fg /= max(1., max(fg.r, max(fg.g, fg.b)));
 
+  // A snowflake in front of everything in the cell: close by a star; further off a mark at the top of the
+  // cell while it is in the top half and one at the bottom in the bottom half, so it is seen to fall
+  // through it
+  vec4 fl = texelFetch(uFlakes, ivec2(cell), 0);
+  if (fl.r > 0. && fl.g < nearest) {
+    glyph = fl.a > .5 ? uFlakeChars.y : fl.b > .5 ? uFlakeChars.x : uFlakeChars.z;
+    fg = vec3(.86, .9, 1.) * fl.r;
+  }
+
   o0 = vec4(fg, float(glyph) / 255.);
   // lighter characters carry less of the brightness, so far off the colour behind them carries more
   o1 = vec4((m == ${VOID} ? dark : avg) * (sky ? uBack[m] : mix(uBack[m], max(uBack[m], .9), centre.b)), 1.);
@@ -2251,6 +2266,8 @@ texture(9, gl.TEXTURE_2D, gl.NEAREST);                       // glyph atlas
 texture(11, gl.TEXTURE_CUBE_MAP, gl.NEAREST);                // material
 texture(12, gl.TEXTURE_CUBE_MAP, gl.NEAREST_MIPMAP_NEAREST); // highest ground and steepest slope in blocks of the height map, in a pyramid
 texture(13, gl.TEXTURE_2D, gl.NEAREST);                      // interface text
+texture(14, gl.TEXTURE_2D, gl.NEAREST);                      // snowflakes, by cell
+snow.tex = new Uint8Array(4);                                // so it is filled in again at the size of the grid
 texture(15, gl.TEXTURE_2D, gl.NEAREST);                      // interface font
 gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
 {
@@ -2478,6 +2495,75 @@ function sunShows(p) {
 function moonPos() {
   const m = planet.moon, a = time * m.speed + m.phase, c = Math.cos(m.incl);
   return [Math.cos(a) * c * m.dist, Math.sin(m.incl) * m.dist, Math.sin(a) * c * m.dist];
+}
+
+// Snow. Flakes in a box round the eye, 32 m across and 20 m high, square to the ground under it, carried
+// down and along by the wind; one that leaves the box comes back in on the far side, so there are always
+// as many and the box never shows. They are kept where they are in the world, so walking or flying through
+// them they go past as near things do. Each frame each cell gets the nearest flake seen in it, for the cell
+// pass to draw over the picture where nothing nearer is in the way.
+const FLAKES = 3200, flakes = new Float32Array(FLAKES * 3);
+const snow = { now: 0, cold: 0, at: null, tex: new Uint8Array(4), drawn: false };
+// how hard it is snowing where the eye is, 0 to 1; never above the clouds
+function snowfall(dt) {
+  const w = planet.snow;
+  if (!w || mode === 'title' || len(cam.pos) - planet.R > planet.cloudAlt) return 0;
+  const spell = smooth(.4, .7, .5 + .5 * Math.sin(time * Math.PI * 2 / w.every + w.ph)) * w.heavy;
+  if (w.all) return spell;
+  // on the warmer worlds it comes and goes with the snow on the ground, but not at once
+  const m = matAt(norm(cam.pos));
+  snow.cold += ((m === SNOW || m === ICE ? 1 : 0) - snow.cold) * Math.min(1, dt * .4);
+  return spell * snow.cold;
+}
+function snowStep(dt) {
+  snow.now = snowfall(dt);
+  if (!snow.now) return;
+  const up = norm(cam.pos), e = norm(cross(up, Math.abs(up[1]) < .9 ? [0, 1, 0] : [1, 0, 0])), g = cross(up, e);
+  const wrap = (v, h) => ((v + h) % (2 * h) + 2 * h) % (2 * h) - h;
+  // after a jump (a new planet, the first snow) they are scattered through the box afresh
+  if (!snow.at || len(sub(cam.pos, snow.at)) > 25) {
+    const r = mulberry(hashStr(planet.seed + ' flakes'));
+    for (let i = 0; i < FLAKES; i++) {
+      const x = (r() * 2 - 1) * 16, y = (r() * 2 - 1) * 16, z = r() * 20 - 6;
+      for (let c = 0; c < 3; c++) flakes[i * 3 + c] = cam.pos[c] + e[c] * x + g[c] * y + up[c] * z;
+    }
+  }
+  snow.at = cam.pos.slice();
+  const w = planet.snow, wd = [Math.cos(w.wind), 0, Math.sin(w.wind)], flat = sub(wd, mul(up, dot(wd, up)));
+  const wind = mul(norm(len(flat) > .01 ? flat : e), w.gust * (.6 + .4 * Math.sin(time * .3)));
+  for (let i = 0; i < FLAKES; i++) {
+    const k = i * 3, fall = .8 + .8 * (i * .618 % 1), sway = Math.sin(time * (.7 + i % 7 * .1) + i) * .35;
+    for (let c = 0; c < 3; c++) flakes[k + c] += (wind[c] - up[c] * fall + e[c] * sway) * dt;
+    const r = [flakes[k] - cam.pos[0], flakes[k + 1] - cam.pos[1], flakes[k + 2] - cam.pos[2]];
+    const x = dot(r, e), y = dot(r, g), z = dot(r, up), wx = wrap(x, 16), wy = wrap(y, 16), wz = wrap(z - 4, 10) + 4;
+    if (wx !== x || wy !== y || wz !== z) for (let c = 0; c < 3; c++) flakes[k + c] = cam.pos[c] + e[c] * wx + g[c] * wy + up[c] * wz;
+  }
+}
+// The flakes into a texture of the cells: how bright, how far, how far up its cell, whether near
+function snowCells() {
+  const { cols, rows } = view, n = cols * rows * 4, count = Math.round(FLAKES * snow.now);
+  if (snow.tex.length === n && !count && !snow.drawn) return;   // still empty, and the size of the grid
+  if (snow.tex.length !== n) snow.tex = new Uint8Array(n);
+  snow.tex.fill(0);
+  snow.drawn = count > 0;
+  const up = cross(cam.right, cam.fwd), day = smooth(-.25, .25, dot(norm(cam.pos), sunDir()));
+  for (let i = 0; i < count; i++) {
+    const r = [flakes[i * 3] - cam.pos[0], flakes[i * 3 + 1] - cam.pos[1], flakes[i * 3 + 2] - cam.pos[2]];
+    const z = dot(r, cam.fwd);
+    if (z < .3) continue;
+    const sx = dot(r, cam.right) / z / cam.fx, sy = dot(r, up) / z / cam.fy;
+    if (Math.abs(sx) >= 1 || Math.abs(sy) >= 1) continue;
+    const cx = (sx * .5 + .5) * cols, cy = (sy * .5 + .5) * rows, k = (Math.floor(cy) * cols + Math.floor(cx)) * 4;
+    const d = len(r), far = 255 * (1 - Math.exp(-d / 120));
+    if (snow.tex[k] && snow.tex[k + 1] <= far) continue;   // a nearer one is there already
+    // lit by the day, or at night a little by the sky and close by by the headlamp
+    snow.tex[k] = 255 * clamp((.4 + .6 * day + (1 - day) * 1.2 / (1 + d * d / 40)) * (d < 10 ? 1 : .75), .05, 1);
+    snow.tex[k + 1] = far;
+    snow.tex[k + 2] = 255 * (cy % 1);
+    snow.tex[k + 3] = d < 10 ? 255 : 0;
+  }
+  gl.activeTexture(gl.TEXTURE14);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, cols, rows, 0, gl.RGBA, gl.UNSIGNED_BYTE, snow.tex);
 }
 
 // How strong the aurora is: it swells and dies down over a few minutes, never quite to nothing. Its
@@ -3225,6 +3311,9 @@ function drawScene() {
   gl.uniform1fv(u.uBack, BACKING);
   gl.uniform1fv(u.uGain, GAIN);
   gl.uniform1fv(u.uLift, LIFT);
+  gl.uniform1i(u.uFlakes, 14);
+  gl.uniform3i(u.uFlakeChars, GLYPHS.indexOf("'"), GLYPHS.indexOf('*'), GLYPHS.indexOf(','));
+  snowCells();
   gl.drawArrays(gl.TRIANGLES, 0, 3);
   gl.activeTexture(gl.TEXTURE8);
   gl.generateMipmap(gl.TEXTURE_2D);
@@ -3536,6 +3625,7 @@ function frame(now) {
     if (mode === 'title') orbit();
     else if (mode === 'fly') fly(dt);
     else if (mode === 'walk') walk(dt);
+    snowStep(dt);
     drawScene();
     soundTick();
   }
