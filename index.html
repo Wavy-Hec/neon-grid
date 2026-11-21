@@ -1171,6 +1171,7 @@ uniform vec4 uMet[2], uMetB[2], uMetC[2];   // up to two meteors: where each sta
 uniform vec4 uFlash;   // a fireball's light on the ground: where it is in the sky and how bright
 uniform vec2 uMist;   // how thick the mist is at the bottom (0: none) and the height it thins over, metres
 uniform float uHalo;   // 1 where the air holds ice: a ring round the sun, and a bright spot either side of it
+uniform float uChorus;   // 1 once every signal is read: the beams burn again, all together
 uniform vec3 uBeta, uShallow, uCloudCol, uRingN, uRingCol, uBeaconCol;
 uniform vec4 uSea, uCloud, uRing, uMoon, uShip;
 uniform vec3 uShipFwd, uRock;
@@ -2146,11 +2147,11 @@ void main() {
     // closest approach between the view ray and the beam
     vec3 v = normalize(b.xyz), w = ro - b.xyz;
     float bb = dot(rd, v), dd = dot(rd, w), e = dot(v, w), den = 1. - bb * bb;
-    float reach = uR * .5, sb = clamp(den < 1e-4 ? e : (e - bb * dd) / den, 0., reach);
+    float reach = uR * (.5 + .3 * uChorus), sb = clamp(den < 1e-4 ? e : (e - bb * dd) / den, 0., reach);
     float tb = clamp(sb * bb - dd, 0., tEnd);
     float dist = length(ro + rd * tb - b.xyz - v * sb), wid = .3 + tb * .0035;
     float g = 1. / (1. + dist * dist / (wid * wid));
-    float pulse = .75 + .25 * sin(uTime * 3. - sb * .08 + float(i));
+    float pulse = .75 + .25 * sin(uTime * 3. - sb * .08 + float(i) * (1. - uChorus));
     col += mix(vec3(.6), uBeaconCol, step(.5, b.w)) * b.w * g * pulse * 2.6 * (1. - smoothstep(reach * .35, reach, sb));
     glow = max(glow, g * b.w);
     if (g * b.w > .45) { mat = ${SPIRE}.; seen = min(seen, tb); }
@@ -3374,9 +3375,12 @@ function drawScene() {
   gl.uniform3fv(u.uTreeGlowCol, p.treeGlowCol);
   gl.uniform1f(u.uTreeNight, p.treeNight);
   gl.uniform3fv(u.uBeaconCol, p.signal);
-  const beams = new Float32Array(20);
-  p.beacons.forEach((b, i) => beams.set([...b.base, b.got ? .25 : 1], i * 4));
+  // A read signal's beam burns low and grey. Once all are read they come back up in the world's colour,
+  // reach higher and pulse together, as the drone's chord completes.
+  const beams = new Float32Array(20), done = p.beacons.length > 0 && p.beacons.every(b => b.got);
+  p.beacons.forEach((b, i) => beams.set([...b.base, b.got && !done ? .25 : 1], i * 4));
   gl.uniform4fv(u.uBeacon, beams);
+  gl.uniform1f(u.uChorus, done ? 1 : 0);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 
   gl.bindFramebuffer(gl.FRAMEBUFFER, cellFbo);
