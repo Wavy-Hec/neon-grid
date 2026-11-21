@@ -1468,6 +1468,7 @@ float shadow(vec3 p) {
 
 float cloudAt(vec3 d);
 float ringBand(float r);
+vec3 atmosphere(vec3 ro, vec3 rd, float tMax, out vec3 trans);
 // what dims the sun at p besides the terrain: cloud, the ring's shadow, the parked ship
 // How much of the sun's disc the moon leaves showing from p. The two discs are taken as flat circles in the
 // sky; the part of the sun's that the moon's covers is the area where they overlap.
@@ -1846,14 +1847,17 @@ vec3 surface(vec3 ro, vec3 rd, float t) {
   float glint = pow(sp, mix(90., 34., calm)) * mix(4., 1.1, calm);
   glow = min(glint * .06, 1.) * vis;
   vec3 sky = skyCol() * day * .3 + .008;
-  if (uAurora.w > 0. && fres > .03 && mu < -.3) {
-    // at night the water mirrors the aurora, as much of it as the clouds over the water let through, and
-    // only once the sky is dark enough for it to show at all
-    vec3 r = reflect(rd, wn), beyond;
+  if (uAurora.w > 0. && fres > .03 && mu < -.2) {
+    // At night the water mirrors the aurora: as much of it as the clouds over the water let through, and
+    // as much as the light of the sky along the mirrored ray leaves showing, as with the aurora in the sky
+    vec3 r = reflect(rd, wn), beyond, through;
     vec2 cs = sphere(p, r, uR + uCloud.y);
     bool deck = uCloud.w > 0. && cs.y > 0.;
     vec3 seen = aurora(p + d * .05, r, 1e5, deck ? cs.y : 1e9, beyond);
-    sky += (seen + beyond * (deck ? 1. - cloudAt(normalize(p + r * cs.y)) * uCloud.w : 1.)) * smoothstep(-.3, -.45, mu);
+    if (dot(seen + beyond, vec3(1.)) > 0.) {
+      float dark = clamp(1. - dot(atmosphere(p + d * .05, r, 1e5, through), vec3(4.)), 0., 1.);
+      sky += (seen + beyond * (deck ? 1. - cloudAt(normalize(p + r * cs.y)) * uCloud.w : 1.)) * dark * through;
+    }
   }
   return wc * light * (1. - fres) + sky * fres + sun * (glint + pow(sp, 10.) * .2);
 }
@@ -2168,7 +2172,7 @@ void main() {
     if (ringA > .3) mat = ${RING}.;
   }
 
-  float tAir = tEnd, clear = 1.;   // clear: how much of what is above the clouds they let through
+  float tAir = tEnd, clear = 1., fog = 1.;   // clear: how much of what is above the clouds they let through; fog: the cloud round the eye
   if (uCloud.w > 0.) {
     vec2 s = sphere(ro, rd, uR + uCloud.y);
     for (int i = 0; i < 2; i++) {
@@ -2185,17 +2189,21 @@ void main() {
       clear *= 1. - a;
       if (a > .5) mat = ${CLOUD}.;
     }
-    // flying through the layer itself, within 8 m of it
+    // flying through the layer itself, within 8 m of it: the cloud round the eye is in front of everything,
+    // and covers alike whatever is added after it (the halo, the aurora, stars, meteors, glow)
     float band = 1. - smoothstep(0., 8., abs(length(ro) - uR - uCloud.y));
     if (band > 0.) {
       float f = cloudAt(normalize(ro)) * uCloud.w * band * .9;
       col = mix(col, cloudLit(normalize(ro)), f);
-      clear *= 1. - f;
+      fog = 1. - f;
+      st *= fog;
+      mt *= fog;
+      glow *= fog;
     }
   }
 
   // the ice's halo, in the air above the clouds
-  col += icy * clear;
+  col += icy * clear * fog;
   if (!high) { col = col * ms.a + ms.rgb; st *= ms.a; mt *= ms.a; glow *= ms.a; }
   if (ms.a < .4) mat = ${CLOUD}.;
 
@@ -2204,7 +2212,7 @@ void main() {
   vec3 auFar;
   vec2 deck = sphere(ro, rd, uR + uCloud.y);
   vec3 au = aurora(ro, rd, tEnd, uCloud.w > 0. && deck.y > 0. ? deck.y : 1e9, auFar);
-  au = (au + auFar * clear) * (high ? 1. : ms.a);
+  au = (au + auFar * clear) * fog * (high ? 1. : ms.a);
 
   vec3 tr;
   float halo = dot(col, vec3(1.));   // the sun's glow, where the ray is in open space
