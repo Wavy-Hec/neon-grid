@@ -21,7 +21,7 @@
 <body>
 <canvas id="view"></canvas>
 <div id="pad"><button data-k="c">down</button><button data-k=" ">up</button><button data-k="f">f</button></div>
-<div id="pad2"><button data-k="tab">map</button><button data-k="j">log</button><button data-k="m">sound</button><button data-k="n">new</button></div>
+<div id="pad2"><button data-k="tab">map</button><button data-k="j">log</button><button data-k="t">today</button><button data-k="m">sound</button><button data-k="n">new</button></div>
 <div id="notice" hidden>graphics reset, restoring</div>
 
 <script>
@@ -1765,26 +1765,35 @@ const me = { dir: [0, 1, 0], h: 0, fwd: [1, 0, 0], pitch: 0, vr: 0, lean: [0, 0,
 const look = { x: 0, y: 0 }, stick = { x: 0, y: 0 };
 const keys = new Set();
 const held = k => (keys.has(k) ? 1 : 0);
-const ui = { note: '', msg: '', until: 0, minor: false, help: false, helped: false, chart: false, journal: false, told: false, stats: false, leave: -1, padRow: 1e9 };
+const ui = { note: '', msg: '', until: 0, minor: false, help: false, helped: false, chart: false, journal: false, told: false, stats: false, leave: -1, padRow: 1e9, padTop: 2 };
 
 // What has been found is kept in the browser, by seed, so a planet you come back to is as you left it:
 // one character for each signal, a dot, one for each of the other things, then the world's name, its
 // kind and the time of the last find, which is what the journal lists. Where the browser gives no
 // storage (a private window) nothing is kept.
 const kept = Object.create(null);
-const recall = () => { try { Object.assign(kept, JSON.parse(localStorage.getItem('planet.txt') || '{}')); } catch (e) { /* no storage, or not ours */ } };
+const when = v => (typeof v === 'string' && +v.split('|')[3]) || 0;
+const recall = () => {
+  try {
+    // of two records of a world the later is kept, so a store that can no longer be written does not undo
+    // what this tab has found
+    const stored = JSON.parse(localStorage.getItem('planet.txt') || '{}');
+    for (const seed of Object.keys(stored)) if (!(when(kept[seed]) > when(stored[seed]))) kept[seed] = stored[seed];
+  } catch (e) { /* no storage, or not ours */ }
+};
 recall();
 function keep() {
-  recall();   // another tab may have found something on another planet since
-  const marks = list => list.map(x => (x.got ? 1 : 0)).join('');
-  kept[planet.seed] = [`${marks(planet.beacons)}.${marks(planet.finds)}`, planet.name, planet.K.label, Math.floor(Date.now() / 1000)].join('|');
+  recall();   // another tab may have found something since, on another planet or on this one
+  const [sig = '', fnd = ''] = typeof kept[planet.seed] === 'string' ? kept[planet.seed].split('|')[0].split('.') : [];
+  const marks = (list, old) => list.map((x, i) => (x.got || old[i] === '1' ? 1 : 0)).join('');
+  kept[planet.seed] = [`${marks(planet.beacons, sig)}.${marks(planet.finds, fnd)}`, planet.name, planet.K.label, Math.floor(Date.now() / 1000)].join('|');
   try { localStorage.setItem('planet.txt', JSON.stringify(kept)); } catch (e) { /* no storage */ }
 }
 const count = (n, what) => `${n} ${what}${n === 1 ? '' : 's'}`;
 // the worlds where something has been found, the latest first
 function journal() {
-  return Object.keys(kept).map(seed => {
-    const [flags, name, kind, at] = String(kept[seed]).split('|'), [sig, fnd = ''] = flags.split('.');
+  return Object.keys(kept).filter(seed => typeof kept[seed] === 'string').map(seed => {
+    const [flags, name, kind, at] = kept[seed].split('|'), [sig, fnd = ''] = flags.split('.');
     return { seed, name, kind, of: sig.length, found: sig.split('1').length - 1, finds: fnd.split('1').length - 1, at: +at || 0 };
   }).filter(w => w.name && w.kind).sort((a, b) => b.at - a.at);
 }
@@ -2092,7 +2101,7 @@ function press(k) {
     const midway = (mode === 'fly' || mode === 'walk') && signals > 0 && signals < planet.beacons.length;
     if (midway && !(time < ui.leave)) {
       ui.leave = time + 3;
-      return say(`${touched ? 'tap new' : `press ${k}`} again to leave ${planet.name}`, 3);
+      return say(`${touched ? `tap ${k === 't' ? 'today' : 'new'}` : `press ${k}`} again to leave ${planet.name}`, 3);
     }
     return newPlanet(k === 't' ? today() : randomSeed());
   }
@@ -2166,7 +2175,10 @@ function showPads() {
 }
 // messages end above the touch buttons
 function padRows() {
-  ui.padRow = pad.style.display === 'flex' ? Math.floor(pad.getBoundingClientRect().top * gl.drawingBufferWidth / innerWidth / tgrid.ch) : 1e9;
+  const row = y => y * gl.drawingBufferWidth / innerWidth / tgrid.ch;
+  ui.padRow = pad.style.display === 'flex' ? Math.floor(row(pad.getBoundingClientRect().top)) : 1e9;
+  // and the journal starts below the ones at the top
+  ui.padTop = pad2.style.display === 'flex' ? Math.ceil(row(pad2.getBoundingClientRect().bottom)) : 2;
 }
 if (touched) showPads();
 canvas.addEventListener('touchstart', e => {
@@ -2432,7 +2444,7 @@ const HELP = [
   ['tab', 'chart of the planet'],
   ['n', 'next planet'],
   ['t', "today's world, the same for everyone"],
-  ['j', 'journal of the worlds you have been to'],
+  ['j', 'journal of worlds with something found'],
   ['p', 'save the view as a text file'],
   ['v', 'show the render under the text'],
   ['- =', 'bigger or smaller characters'],
@@ -2512,10 +2524,6 @@ function drawText() {
   put(left, bar, side(0), 3);
   put(cols - side(1).length - 1, bar, side(1), playing ? 3 : 6);
 
-  if (time < ui.until) {
-    const lines = wrap(ui.msg, cols - 4), low = Math.min(bar - 2, ui.padRow - 1);
-    lines.forEach((l, i) => put((cols - l.length) / 2 - 1, low - lines.length + 1 + i, ` ${l} `, ui.until - time < .6 ? 2 : 1));
-  }
   const wide = Math.max(...HELP.map(h => h[1].length)) + 1;
   if (ui.help) HELP.forEach(([k, what], i) => {
     put(2, 2 + i, ` ${k.padEnd(9)}`, 1);
@@ -2524,16 +2532,27 @@ function drawText() {
   if (ui.chart && playing) drawChart(cols, bar);
   if (ui.journal && mode !== 'loading') {
     const list = journal(), done = list.filter(w => w.found === w.of).length;
-    const rows = list.slice(0, 9).map((w, i) => [`${i + 1}`, `${w.name.padEnd(14)} ${w.kind.padEnd(10)} ${w.found === w.of ? 'surveyed' : `${w.found} of ${w.of}`}${w.finds ? `, ${count(w.finds, 'find')}` : ''}`]);
+    // a name is 15 characters at most; a screen under 50 characters wide has no room for the kind of world
+    const top = ui.padTop, kind = w => (cols < 50 ? '' : `${w.kind.padEnd(10)} `);
+    const rows = list.slice(0, 9).map((w, i) => [`${i + 1}`, `${w.name.padEnd(15)} ${kind(w)}${w.found === w.of ? 'surveyed' : `${w.found} of ${w.of}`}${w.finds ? `, ${count(w.finds, 'find')}` : ''}`]);
     if (!touched) rows.push(['t', "today's world"]);
     const foot = !list.length ? 'nothing found yet' : `${count(list.length, 'world')}, ${done} surveyed${touched ? '' : '. a number goes back to one'}`;
     const width = Math.max(foot.length - 3, ...rows.map(r => r[1].length)) + 1;
-    put(2, 2, ` ${'journal'.padEnd(width + 3)}`, 1);
+    put(2, top, ` ${'journal'.padEnd(width + 3)}`, 1);
     rows.forEach(([k, what], i) => {
-      put(2, 3 + i, ` ${k} `, 1);
-      put(5, 3 + i, ` ${what.padEnd(width)}`, 2);
+      put(2, top + 1 + i, ` ${k} `, 1);
+      put(5, top + 1 + i, ` ${what.padEnd(width)}`, 2);
     });
-    put(2, 3 + rows.length, ` ${foot.padEnd(width + 3)}`, 2);
+    put(2, top + 1 + rows.length, ` ${foot.padEnd(width + 3)}`, 2);
+  }
+  // a message goes over the chart and the lists, on a line cleared of them
+  if (time < ui.until) {
+    const lines = wrap(ui.msg, cols - 4), low = Math.min(bar - 2, ui.padRow - 1);
+    lines.forEach((l, i) => {
+      const y = low - lines.length + 1 + i;
+      for (let x = 0; x < tgrid.cols; x++) if (y >= 0 && text[(y * tgrid.cols + x) * 2 + 1]) text[(y * tgrid.cols + x) * 2] = 0;
+      put((cols - l.length) / 2 - 1, y, ` ${l} `, ui.until - time < .6 ? 2 : 1);
+    });
   }
 }
 
@@ -2547,8 +2566,8 @@ let chartPlan = null;   // for each character of the disk, where on the planet i
 function drawChart(cols, bar) {
   const p = planet, ry = Math.min(13, Math.floor((bar - 5) / 2), Math.floor((cols - 2) / 2 * tgrid.cw / tgrid.ch) - 1), rx = ry * tgrid.ch / tgrid.cw;
   if (ry < 4) return;
-  if (!chartPlan || chartPlan.ry !== ry) {
-    chartPlan = { ry, cells: [] };
+  if (!chartPlan || chartPlan.ry !== ry || chartPlan.rx !== rx) {
+    chartPlan = { ry, rx, cells: [] };
     for (let y = -ry; y <= ry; y++) for (let x = -Math.ceil(rx); x <= Math.ceil(rx); x++) {
       if (Math.hypot(x / (rx + .5), y / (ry + .5)) > 1) continue;
       // a sounding is a mix of three directions: straight down from you, to your right, and ahead
@@ -2561,9 +2580,9 @@ function drawChart(cols, bar) {
     }
   }
   const c0 = Math.floor(cols / 2), r0 = Math.floor((bar - 2) / 2), d = norm(cam.pos), f = mode === 'walk' ? me.fwd : ship.fwd;
-  // straight up or down has no heading: the top of the view is ahead then
+  // straight up or down has no heading: looking down, the top of the view is ahead; looking up, it is behind
   let ahead = sub(f, mul(d, dot(f, d)));
-  if (len(ahead) < .05) ahead = sub(cam.up, mul(d, dot(cam.up, d)));
+  if (len(ahead) < .05) ahead = mul(sub(cam.up, mul(d, dot(cam.up, d))), dot(f, d) < 0 ? 1 : -1);
   ahead = norm(ahead);
   const right = cross(ahead, d), q = [0, 0, 0];
   for (const [x, y, k] of chartPlan.cells) {
@@ -2647,7 +2666,8 @@ async function newPlanet(seed) {
     placeBeacons();
     placeFinds();
     uploadPlanet();
-    // what was found here on an earlier visit stays found
+    // what was found here on an earlier visit, or since in another tab, stays found
+    recall();
     const [sig = '', fnd = ''] = typeof kept[seed] === 'string' ? kept[seed].split('|')[0].split('.') : [];
     planet.beacons.forEach((b, i) => { b.got = sig[i] === '1'; });
     planet.finds.forEach((f, i) => { f.got = fnd[i] === '1'; });

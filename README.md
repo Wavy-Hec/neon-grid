@@ -15,9 +15,10 @@ a signal only counts on foot. Hold `W` and the ship dives, levels out and skims 
 The status line at the bottom says how far the next signal is and which way to turn, and names
 the key that does something where you are, such as `f land` once you are low enough.
 
-There is a little more to find. The first three signals you read each mark a place on the chart
-(`tab`) where something else stands: a ring of stones, the wreck of a lander, a cairn on the planet's highest
-ground. They count for nothing; they are there to be walked up to. The rest is looking around.
+There is a little more to find. The first signals you read each mark a place on the chart (`tab`)
+where something else stands, three at most: a ring of stones, the wreck of a lander, a cairn on the
+planet's highest ground. They count for nothing; they are there to be walked up to. The rest is
+looking around.
 
 ![a whole run: down from orbit through the ring, in over fir trees, a walk up to a signal beam, then back out to orbit](shots/run.gif)
 
@@ -34,7 +35,7 @@ ground. They count for nothing; they are there to be walked up to. The rest is l
 | `tab` | chart of the planet: you in the middle, the way you face at the top |
 | `N` | next planet (press twice if you are partway through a survey) |
 | `T` | today's world: one planet a day, the same for everyone |
-| `J` | journal of the worlds you have been to; a number goes back to one |
+| `J` | journal of the worlds where you have found something; a number goes back to one |
 | `P` | save the view as a text file |
 | `V` | show the render under the text |
 | `-` `=` | bigger or smaller characters |
@@ -43,7 +44,7 @@ ground. They count for nothing; they are there to be walked up to. The rest is l
 
 `W` `A` `S` `D` and the other movement keys go by position, so they work on any keyboard layout.
 On a phone, the left half of the screen moves and the right half looks; there are buttons for up,
-down, `F`, the chart, the journal, sound and a new planet.
+down, `F`, the chart, the journal, today's world, sound and a new planet.
 
 The planet comes from the seed in the address bar, so `?seed=dust` is the same place for everyone.
 The signals you have found are kept in your browser, so a planet you come back to is as you left it.
